@@ -1,0 +1,470 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─────────────────────────────────────────────
+// LOKASYON
+// ─────────────────────────────────────────────
+
+model City {
+  id            Int            @id @default(autoincrement())
+  name          String
+  neighborhoods Neighborhood[]
+  venues        Venue[]
+  users         User[]
+  leaderboards  MonthlyLeaderboard[]
+  createdAt     DateTime       @default(now())
+}
+
+model Neighborhood {
+  id           Int                  @id @default(autoincrement())
+  name         String
+  latitude     Float
+  longitude    Float
+  city         City                 @relation(fields: [cityId], references: [id])
+  cityId       Int
+  users        User[]
+  venues       Venue[]
+  leaderboards MonthlyLeaderboard[]
+}
+
+// ─────────────────────────────────────────────
+// SPOR KATEGORİLERİ
+// ─────────────────────────────────────────────
+
+model SportCategory {
+  id            Int                  @id @default(autoincrement())
+  name          String
+  iconUrl       String?
+  colorHex      String?
+  hasInstructor Boolean              @default(true)
+  classes       Class[]
+  dropInSlots   DropInSlot[]
+  venueSports   VenueSportCategory[]
+  activityLogs  ActivityLog[]
+  leaderboards  MonthlyLeaderboard[]
+  userBadges    UserBadge[]
+  tierHistories UserTierHistory[]
+}
+
+// ─────────────────────────────────────────────
+// TİER SİSTEMİ
+// ─────────────────────────────────────────────
+
+model Tier {
+  id              Int               @id @default(autoincrement())
+  name            String
+  minLessons      Int
+  discountPercent Int               @default(0)
+  iconUrl         String?
+  colorHex        String?
+  users           User[]
+  tierHistories   UserTierHistory[]
+  activityLogs    ActivityLog[]
+}
+
+model UserTierHistory {
+  id              Int           @id @default(autoincrement())
+  user            User          @relation(fields: [userId], references: [id])
+  userId          Int
+  tier            Tier          @relation(fields: [tierId], references: [id])
+  tierId          Int
+  sportCategory   SportCategory @relation(fields: [sportCategoryId], references: [id])
+  sportCategoryId Int
+  startedAt       DateTime      @default(now())
+  endedAt         DateTime?
+}
+
+// ─────────────────────────────────────────────
+// ROZETLER
+// ─────────────────────────────────────────────
+
+model Badge {
+  id            Int           @id @default(autoincrement())
+  name          String
+  description   String
+  iconUrl       String?
+  criteriaType  String
+  criteriaValue Int?
+  userBadges    UserBadge[]
+  activityLogs  ActivityLog[]
+}
+
+model UserBadge {
+  id              Int            @id @default(autoincrement())
+  user            User           @relation(fields: [userId], references: [id])
+  userId          Int
+  badge           Badge          @relation(fields: [badgeId], references: [id])
+  badgeId         Int
+  sportCategory   SportCategory? @relation(fields: [sportCategoryId], references: [id])
+  sportCategoryId Int?
+  venue           Venue?         @relation(fields: [venueId], references: [id])
+  venueId         Int?
+  earnedAt        DateTime       @default(now())
+}
+
+// ─────────────────────────────────────────────
+// KULLANICI
+// ─────────────────────────────────────────────
+
+model User {
+  id                    Int                  @id @default(autoincrement())
+  username              String               @unique
+  email                 String               @unique
+  phone                 String?
+  passwordHash          String
+  fullName              String
+  avatarUrl             String?
+  bio                   String?
+  neighborhood          Neighborhood?        @relation(fields: [neighborhoodId], references: [id])
+  neighborhoodId        Int?
+  city                  City?                @relation(fields: [cityId], references: [id])
+  cityId                Int?
+  latitude              Float?
+  longitude             Float?
+  profilePrivacy        String               @default("public")
+  activityPrivacy       String               @default("public")
+  tier                  Tier?                @relation(fields: [tierId], references: [id])
+  tierId                Int?
+  tierSportCounts       Json                 @default("{}")
+  yearlyTierResetDate   DateTime?
+  totalLessonsCompleted Int                  @default(0)
+  rewardPoints          Int                  @default(0)
+  createdAt             DateTime             @default(now())
+
+  venuesOwned           Venue[]
+  instructorProfile     Instructor?
+  bookings              Booking[]
+  reviews               Review[]
+  tierHistories         UserTierHistory[]
+  badges                UserBadge[]
+  activityLogs          ActivityLog[]
+  following             Follow[]             @relation("Follower")
+  followers             Follow[]             @relation("Following")
+  rewardPointLogs       RewardPoint[]
+  rewardRedemptions     RewardRedemption[]
+  leaderboards          MonthlyLeaderboard[]
+  dropInParticipants    DropInParticipant[]
+}
+
+// ─────────────────────────────────────────────
+// VENUE & HOCA
+// ─────────────────────────────────────────────
+
+model Venue {
+  id             Int                  @id @default(autoincrement())
+  name           String
+  description    String?
+  owner          User                 @relation(fields: [ownerUserId], references: [id])
+  ownerUserId    Int
+  address        String
+  neighborhood   Neighborhood         @relation(fields: [neighborhoodId], references: [id])
+  neighborhoodId Int
+  city           City                 @relation(fields: [cityId], references: [id])
+  cityId         Int
+  latitude       Float
+  longitude      Float
+  phone          String?
+  email          String?
+  website        String?
+  coverImageUrl  String?
+  images         Json                 @default("[]")
+  isActive       Boolean              @default(true)
+  isVerified     Boolean              @default(false)
+  avgRating      Float                @default(0)
+  totalReviews   Int                  @default(0)
+  createdAt      DateTime             @default(now())
+
+  sportCategories VenueSportCategory[]
+  instructors     Instructor[]
+  classes         Class[]
+  dropInSlots     DropInSlot[]
+  reviews         Review[]
+  userBadges      UserBadge[]
+  payouts         VenuePayout[]
+}
+
+model VenueSportCategory {
+  id              Int           @id @default(autoincrement())
+  venue           Venue         @relation(fields: [venueId], references: [id])
+  venueId         Int
+  sportCategory   SportCategory @relation(fields: [sportCategoryId], references: [id])
+  sportCategoryId Int
+}
+
+model Instructor {
+  id           Int        @id @default(autoincrement())
+  user         User?      @relation(fields: [userId], references: [id])
+  userId       Int?       @unique
+  venue        Venue      @relation(fields: [venueId], references: [id])
+  venueId      Int
+  fullName     String
+  bio          String?
+  avatarUrl    String?
+  avgRating    Float      @default(0)
+  totalReviews Int        @default(0)
+  isActive     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+
+  classes  Class[]
+  reviews  Review[]
+}
+
+// ─────────────────────────────────────────────
+// DERS & SEANS
+// ─────────────────────────────────────────────
+
+model Class {
+  id              Int           @id @default(autoincrement())
+  venue           Venue         @relation(fields: [venueId], references: [id])
+  venueId         Int
+  instructor      Instructor?   @relation(fields: [instructorId], references: [id])
+  instructorId    Int?
+  sportCategory   SportCategory @relation(fields: [sportCategoryId], references: [id])
+  sportCategoryId Int
+  title           String
+  description     String?
+  durationMinutes Int
+  basePrice       Float
+  capacity        Int
+  classType       String        @default("regular")
+  recurrence      Json?
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+
+  sessions Class_Session[]
+}
+
+model Class_Session {
+  id              Int      @id @default(autoincrement())
+  class           Class    @relation(fields: [classId], references: [id])
+  classId         Int
+  startsAt        DateTime
+  endsAt          DateTime
+  availableSpots  Int
+  status          String   @default("open")
+  cancelledReason String?
+  createdAt       DateTime @default(now())
+
+  bookings Booking[]
+}
+
+// ─────────────────────────────────────────────
+// DROP-IN MAÇ
+// ─────────────────────────────────────────────
+
+model DropInSlot {
+  id              Int           @id @default(autoincrement())
+  venue           Venue         @relation(fields: [venueId], references: [id])
+  venueId         Int
+  sportCategory   SportCategory @relation(fields: [sportCategoryId], references: [id])
+  sportCategoryId Int
+  title           String
+  startsAt        DateTime
+  endsAt          DateTime
+  format          String
+  totalPlayers    Int
+  currentPlayers  Int           @default(0)
+  totalPrice      Float
+  pricePerPerson  Float
+  status          String        @default("open")
+  visibility      String        @default("open")
+  privateCode     String?
+  bookedBy        Int?
+  createdAt       DateTime      @default(now())
+
+  participants DropInParticipant[]
+  bookings     Booking[]
+}
+
+model DropInParticipant {
+  id        Int        @id @default(autoincrement())
+  slot      DropInSlot @relation(fields: [slotId], references: [id])
+  slotId    Int
+  user      User       @relation(fields: [userId], references: [id])
+  userId    Int
+  team      String?
+  payment   Payment?   @relation(fields: [paymentId], references: [id])
+  paymentId Int?
+  joinedAt  DateTime   @default(now())
+  status    String     @default("confirmed")
+}
+
+// ─────────────────────────────────────────────
+// BOOKING & ÖDEME
+// ─────────────────────────────────────────────
+
+model Booking {
+  id               Int            @id @default(autoincrement())
+  user             User           @relation(fields: [userId], references: [id])
+  userId           Int
+  session          Class_Session? @relation(fields: [sessionId], references: [id])
+  sessionId        Int?
+  dropInSlot       DropInSlot?    @relation(fields: [dropInSlotId], references: [id])
+  dropInSlotId     Int?
+  bookingType      String
+  status           String         @default("pending")
+  baseAmount       Float
+  discountAmount   Float          @default(0)
+  commissionAmount Float
+  userCommission   Float          @default(0)
+  venueCommission  Float
+  finalAmount      Float
+  venuePayout      Float
+  bookingNumber    String         @unique
+  taggedFriends    Json           @default("[]")
+  createdAt        DateTime       @default(now())
+  confirmedAt      DateTime?
+  cancelledAt      DateTime?
+
+  payment           Payment?
+  commissionHistory CommissionHistory?
+  review            Review?
+  activityLog       ActivityLog?
+}
+
+model CommissionHistory {
+  id               Int      @id @default(autoincrement())
+  booking          Booking  @relation(fields: [bookingId], references: [id])
+  bookingId        Int      @unique
+  userId           Int
+  venueId          Int
+  instructorId     Int?
+  bookingIndex     Int
+  commissionRate   Float
+  commissionAmount Float
+  payer            String
+  createdAt        DateTime @default(now())
+}
+
+model Payment {
+  id              Int      @id @default(autoincrement())
+  booking         Booking  @relation(fields: [bookingId], references: [id])
+  bookingId       Int      @unique
+  userId          Int
+  amount          Float
+  currency        String   @default("TRY")
+  status          String   @default("pending")
+  iyzicoPaymentId String?
+  iyzicoResponse  Json?
+  refundAmount    Float?
+  refundedAt      DateTime?
+  createdAt       DateTime @default(now())
+
+  dropInParticipants DropInParticipant[]
+}
+
+model VenuePayout {
+  id               Int      @id @default(autoincrement())
+  venue            Venue    @relation(fields: [venueId], references: [id])
+  venueId          Int
+  bookingId        Int
+  amount           Float
+  status           String   @default("pending")
+  iyzicoTransferId String?
+  transferredAt    DateTime?
+  createdAt        DateTime @default(now())
+}
+
+// ─────────────────────────────────────────────
+// DEĞERLENDİRME
+// ─────────────────────────────────────────────
+
+model Review {
+  id             Int         @id @default(autoincrement())
+  booking        Booking     @relation(fields: [bookingId], references: [id])
+  bookingId      Int         @unique
+  reviewer       User        @relation(fields: [reviewerUserId], references: [id])
+  reviewerUserId Int
+  targetType     String
+  venue          Venue?      @relation(fields: [venueId], references: [id])
+  venueId        Int?
+  instructor     Instructor? @relation(fields: [instructorId], references: [id])
+  instructorId   Int?
+  rating         Int
+  comment        String?
+  isAnonymous    Boolean     @default(true)
+  createdAt      DateTime    @default(now())
+}
+
+// ─────────────────────────────────────────────
+// SOSYAL
+// ─────────────────────────────────────────────
+
+model Follow {
+  id          Int      @id @default(autoincrement())
+  follower    User     @relation("Follower", fields: [followerId], references: [id])
+  followerId  Int
+  following   User     @relation("Following", fields: [followingId], references: [id])
+  followingId Int
+  status      String   @default("pending")
+  createdAt   DateTime @default(now())
+
+  @@unique([followerId, followingId])
+}
+
+model ActivityLog {
+  id              Int            @id @default(autoincrement())
+  user            User           @relation(fields: [userId], references: [id])
+  userId          Int
+  activityType    String
+  booking         Booking?       @relation(fields: [bookingId], references: [id])
+  bookingId       Int?           @unique
+  dropInSlotId    Int?
+  badge           Badge?         @relation(fields: [badgeId], references: [id])
+  badgeId         Int?
+  tier            Tier?          @relation(fields: [tierId], references: [id])
+  tierId          Int?
+  sportCategory   SportCategory  @relation(fields: [sportCategoryId], references: [id])
+  sportCategoryId Int
+  venueId         Int?
+  description     String
+  isVisible       Boolean        @default(true)
+  createdAt       DateTime       @default(now())
+}
+
+// ─────────────────────────────────────────────
+// LIDERBOARD & REWARD
+// ─────────────────────────────────────────────
+
+model MonthlyLeaderboard {
+  id              Int            @id @default(autoincrement())
+  user            User           @relation(fields: [userId], references: [id])
+  userId          Int
+  sportCategory   SportCategory? @relation(fields: [sportCategoryId], references: [id])
+  sportCategoryId Int?
+  scope           String
+  city            City?          @relation(fields: [cityId], references: [id])
+  cityId          Int?
+  neighborhood    Neighborhood?  @relation(fields: [neighborhoodId], references: [id])
+  neighborhoodId  Int?
+  year            Int
+  month           Int
+  lessonCount     Int            @default(0)
+  rank            Int?
+  updatedAt       DateTime       @updatedAt
+}
+
+model RewardPoint {
+  id        Int      @id @default(autoincrement())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    Int
+  points    Int
+  source    String
+  bookingId Int?
+  createdAt DateTime @default(now())
+}
+
+model RewardRedemption {
+  id             Int      @id @default(autoincrement())
+  user           User     @relation(fields: [userId], references: [id])
+  userId         Int
+  pointsUsed     Int
+  discountAmount Float
+  bookingId      Int
+  createdAt      DateTime @default(now())
+}
