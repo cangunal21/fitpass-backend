@@ -87,7 +87,7 @@ export const getMyBookings = async (req: Request, res: Response) => {
 export const cancelBooking = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId
-    const bookingId = parseInt(req.params.id)
+    const bookingId = parseInt(req.params.id as string)
 
     const booking = await prisma.booking.findUnique({
       where: { id: bookingId },
