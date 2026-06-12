@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import bcrypt from 'bcryptjs'
 import prisma from '../utils/prisma'
 import { generateToken } from '../utils/jwt'
+import { sendWelcomeEmail } from '../utils/email'
 
 // KAYIT OL
 export const register = async (req: Request, res: Response) => {
@@ -49,6 +50,9 @@ export const register = async (req: Request, res: Response) => {
     })
 
     const token = generateToken({ userId: user.id, email: user.email })
+
+    // Hoş geldin maili gönder (hata olsa bile kayıt tamamlanır)
+    sendWelcomeEmail(user.email, user.fullName).catch(err => console.error('Mail gönderilemedi:', err))
 
     return res.status(201).json({
       message: 'Kayıt başarılı!',
