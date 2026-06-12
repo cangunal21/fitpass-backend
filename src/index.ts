@@ -3,6 +3,7 @@ import cors from 'cors'
 import dotenv from 'dotenv'
 import authRoutes from './routes/auth'
 import bookingRoutes from './routes/bookings'
+import venueRoutes from './routes/venue'
 
 dotenv.config()
 
@@ -15,6 +16,7 @@ app.use(express.json())
 // Routes
 app.use('/api/auth', authRoutes)
 app.use('/api/bookings', bookingRoutes)
+app.use('/api/venue', venueRoutes)
 
 // Test route
 app.get('/', (req, res) => {
