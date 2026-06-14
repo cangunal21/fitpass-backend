@@ -5,6 +5,7 @@ import authRoutes from './routes/auth'
 import bookingRoutes from './routes/bookings'
 import venueRoutes from './routes/venue'
 import adminRoutes from './routes/admin'
+import publicRoutes from './routes/public'
 
 dotenv.config()
 
@@ -19,6 +20,7 @@ app.use('/api/auth', authRoutes)
 app.use('/api/bookings', bookingRoutes)
 app.use('/api/venue', venueRoutes)
 app.use('/api/admin', adminRoutes)
+app.use('/api/public', publicRoutes)
 
 // Test route
 app.get('/', (req, res) => {
