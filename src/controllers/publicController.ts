@@ -164,6 +164,25 @@ export const getVenueById = async (req: Request, res: Response) => {
   }
 }
 
+// GET /api/public/dropin
+export const getDropInSlots = async (req: Request, res: Response) => {
+  try {
+    const slots = await prisma.dropInSlot.findMany({
+      where: { status: 'open', visibility: 'open', startsAt: { gte: new Date() } },
+      include: {
+        venue: { select: { id: true, name: true, address: true } },
+        sportCategory: { select: { name: true, colorHex: true, iconUrl: true } },
+        participants: { select: { id: true } },
+      },
+      orderBy: { startsAt: 'asc' },
+    })
+    return res.json({ slots })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
 // GET /api/public/categories
 export const getCategories = async (req: Request, res: Response) => {
   try {

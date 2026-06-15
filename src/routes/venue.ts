@@ -1,7 +1,8 @@
 import { Router } from 'express'
 import {
   venueRegister, venueLogin, getVenueMe,
-  createClass, updateClass, createSession, getVenueBookings
+  createClass, updateClass, createSession, getVenueBookings,
+  createDropInSlot, getVenueDropInSlots
 } from '../controllers/venueController'
 import { createInstructor, getVenueInstructors, updateInstructor } from '../controllers/instructorController'
 import { venueAuthMiddleware } from '../middlewares/venueAuth'
@@ -18,5 +19,7 @@ router.post('/classes/:classId/sessions', venueAuthMiddleware, createSession)
 router.get('/instructors', venueAuthMiddleware, getVenueInstructors)
 router.post('/instructors', venueAuthMiddleware, createInstructor)
 router.put('/instructors/:id', venueAuthMiddleware, updateInstructor)
+router.get('/dropin', venueAuthMiddleware, getVenueDropInSlots)
+router.post('/dropin', venueAuthMiddleware, createDropInSlot)
 
 export default router

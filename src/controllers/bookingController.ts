@@ -127,6 +127,36 @@ export const getMyBookings = async (req: Request, res: Response) => {
   }
 }
 
+// Drop-in'e katıl
+export const joinDropIn = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    const slotId = parseInt(req.params.slotId as string)
+
+    const slot = await prisma.dropInSlot.findUnique({ where: { id: slotId } })
+    if (!slot) return res.status(404).json({ error: 'Slot bulunamadı.' })
+    if (slot.status !== 'open') return res.status(400).json({ error: 'Bu slot artık açık değil.' })
+    if (slot.currentPlayers >= slot.totalPlayers) return res.status(400).json({ error: 'Slot dolu.' })
+
+    const existing = await prisma.dropInParticipant.findFirst({ where: { slotId, userId } })
+    if (existing) return res.status(400).json({ error: 'Zaten katılıyorsunuz.' })
+
+    const participant = await prisma.dropInParticipant.create({
+      data: { slotId, userId, status: 'confirmed' }
+    })
+
+    await prisma.dropInSlot.update({
+      where: { id: slotId },
+      data: { currentPlayers: { increment: 1 } }
+    })
+
+    return res.status(201).json({ message: "Drop-in'e katıldınız!", participant })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
 // Rezervasyon iptal et
 export const cancelBooking = async (req: Request, res: Response) => {
   try {

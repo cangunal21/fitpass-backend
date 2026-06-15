@@ -250,6 +250,83 @@ export const createSession = async (req: Request, res: Response) => {
   }
 }
 
+// DROP-IN
+
+const DROP_IN_SPORTS = ['Basketbol', 'Padel', 'Halı Saha']
+
+const DROP_IN_FORMATS: Record<string, string[]> = {
+  'Basketbol': ['4v4 Yarım Saha', '5v5 Tam Saha'],
+  'Padel': ['1v1', '2v2'],
+  'Halı Saha': ['6v6', '7v7'],
+}
+
+export const createDropInSlot = async (req: Request, res: Response) => {
+  try {
+    const venueId = (req as any).venueId
+    const { sport, format, date, time, totalPlayers, pricePerPerson, visibility, privateCode } = req.body
+
+    if (!sport || !format || !date || !time || !totalPlayers || !pricePerPerson) {
+      return res.status(400).json({ error: 'Tüm zorunlu alanları doldurun.' })
+    }
+
+    if (!DROP_IN_SPORTS.includes(sport)) {
+      return res.status(400).json({ error: 'Bu spor için drop-in desteklenmiyor.' })
+    }
+
+    const validFormats = DROP_IN_FORMATS[sport] || []
+    if (!validFormats.includes(format)) {
+      return res.status(400).json({ error: 'Geçersiz format.' })
+    }
+
+    const sportCat = await prisma.sportCategory.findFirst({ where: { name: { equals: sport, mode: 'insensitive' } } })
+
+    const startsAt = new Date(`${date}T${time}:00`)
+    const endsAt = new Date(startsAt.getTime() + 90 * 60000)
+
+    const players = parseInt(totalPlayers)
+    const price = parseFloat(pricePerPerson)
+
+    const slot = await prisma.dropInSlot.create({
+      data: {
+        venueId,
+        sportCategoryId: sportCat?.id || 1,
+        title: `${sport} — ${format}`,
+        startsAt,
+        endsAt,
+        format,
+        totalPlayers: players,
+        currentPlayers: 0,
+        totalPrice: players * price,
+        pricePerPerson: price,
+        status: 'open',
+        visibility: visibility || 'open',
+        privateCode: privateCode || null,
+        bookedBy: null,
+      }
+    })
+
+    return res.status(201).json({ message: 'Drop-in slot oluşturuldu!', slot })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+export const getVenueDropInSlots = async (req: Request, res: Response) => {
+  try {
+    const venueId = (req as any).venueId
+    const slots = await prisma.dropInSlot.findMany({
+      where: { venueId },
+      include: { participants: { select: { id: true, userId: true, status: true } } },
+      orderBy: { startsAt: 'asc' },
+    })
+    return res.json({ slots })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
 // SALON RESERVASYONLARİ
 export const getVenueBookings = async (req: Request, res: Response) => {
   try {
