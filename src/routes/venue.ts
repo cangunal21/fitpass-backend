@@ -5,7 +5,7 @@ import {
   createDropInSlot, getVenueDropInSlots
 } from '../controllers/venueController'
 import { createInstructor, getVenueInstructors, updateInstructor } from '../controllers/instructorController'
-import { venueAuthMiddleware } from '../middlewares/venueAuth'
+import { venueAuthMiddleware, venueApprovedMiddleware } from '../middlewares/venueAuth'
 
 const router = Router()
 
@@ -13,13 +13,13 @@ router.post('/register', venueRegister)
 router.post('/login', venueLogin)
 router.get('/me', venueAuthMiddleware, getVenueMe)
 router.get('/bookings', venueAuthMiddleware, getVenueBookings)
-router.post('/classes', venueAuthMiddleware, createClass)
-router.put('/classes/:id', venueAuthMiddleware, updateClass)
-router.post('/classes/:classId/sessions', venueAuthMiddleware, createSession)
+router.post('/classes', venueAuthMiddleware, venueApprovedMiddleware, createClass)
+router.put('/classes/:id', venueAuthMiddleware, venueApprovedMiddleware, updateClass)
+router.post('/classes/:classId/sessions', venueAuthMiddleware, venueApprovedMiddleware, createSession)
 router.get('/instructors', venueAuthMiddleware, getVenueInstructors)
-router.post('/instructors', venueAuthMiddleware, createInstructor)
-router.put('/instructors/:id', venueAuthMiddleware, updateInstructor)
+router.post('/instructors', venueAuthMiddleware, venueApprovedMiddleware, createInstructor)
+router.put('/instructors/:id', venueAuthMiddleware, venueApprovedMiddleware, updateInstructor)
 router.get('/dropin', venueAuthMiddleware, getVenueDropInSlots)
-router.post('/dropin', venueAuthMiddleware, createDropInSlot)
+router.post('/dropin', venueAuthMiddleware, venueApprovedMiddleware, createDropInSlot)
 
 export default router
