@@ -120,6 +120,93 @@ export const sendBookingConfirmationEmail = async (
   })
 }
 
+export const sendCancellationEmail = async (
+  to: string,
+  fullName: string,
+  classTitle: string,
+  date: string,
+  time: string,
+) => {
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to,
+    subject: `Rezervasyon İptal Edildi: ${classTitle}`,
+    html: baseTemplate(`
+      <div style="text-align: center; margin-bottom: 28px;">
+        <div style="width: 64px; height: 64px; background: #FEF2F2; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 16px;">
+          <span style="font-size: 32px;">❌</span>
+        </div>
+        <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0;">Rezervasyon İptal Edildi</h2>
+      </div>
+      <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
+        Merhaba ${fullName}, aşağıdaki rezervasyonun iptal edildi.
+      </p>
+      <div style="background: #FAFAFA; border-radius: 16px; padding: 20px; margin-bottom: 24px; border: 1px solid #F0F0F0;">
+        <p style="font-size: 17px; font-weight: 700; color: #111; margin: 0 0 16px;">${classTitle}</p>
+        <div style="display: flex; gap: 24px;">
+          <div>
+            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Tarih</p>
+            <p style="font-size: 14px; font-weight: 600; color: #111; margin: 0;">${date}</p>
+          </div>
+          <div>
+            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Saat</p>
+            <p style="font-size: 14px; font-weight: 600; color: #111; margin: 0;">${time}</p>
+          </div>
+        </div>
+      </div>
+      <div style="background: #EEF2FF; border-radius: 12px; padding: 14px; margin-bottom: 24px;">
+        <p style="font-size: 13px; color: ${BRAND_COLOR}; margin: 0;">Başka bir derse katılmak için platformumuzu ziyaret edebilirsin.</p>
+      </div>
+      <div style="text-align: center;">
+        <a href="${SITE_URL}" style="display: inline-block; padding: 12px 28px; background: ${BRAND_COLOR}; color: #fff; border-radius: 12px; text-decoration: none; font-size: 14px; font-weight: 700;">Ders Bul →</a>
+      </div>
+    `),
+  })
+}
+
+export const sendVenueCancellationEmail = async (
+  to: string,
+  venueName: string,
+  customerName: string,
+  classTitle: string,
+  date: string,
+  time: string,
+) => {
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to,
+    subject: `Rezervasyon İptal: ${classTitle}`,
+    html: baseTemplate(`
+      <div style="text-align: center; margin-bottom: 28px;">
+        <div style="width: 64px; height: 64px; background: #FEF2F2; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 16px;">
+          <span style="font-size: 32px;">📋</span>
+        </div>
+        <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0;">Bir rezervasyon iptal edildi</h2>
+      </div>
+      <div style="background: #FAFAFA; border-radius: 16px; padding: 20px; margin-bottom: 24px; border: 1px solid #F0F0F0;">
+        <p style="font-size: 17px; font-weight: 700; color: #111; margin: 0 0 16px;">${classTitle}</p>
+        <div style="display: flex; gap: 24px; flex-wrap: wrap;">
+          <div>
+            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Müşteri</p>
+            <p style="font-size: 14px; font-weight: 600; color: #111; margin: 0;">${customerName}</p>
+          </div>
+          <div>
+            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Tarih</p>
+            <p style="font-size: 14px; font-weight: 600; color: #111; margin: 0;">${date}</p>
+          </div>
+          <div>
+            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Saat</p>
+            <p style="font-size: 14px; font-weight: 600; color: #111; margin: 0;">${time}</p>
+          </div>
+        </div>
+      </div>
+      <div style="text-align: center;">
+        <a href="${SITE_URL}/salon-paneli" style="display: inline-block; padding: 12px 28px; background: ${BRAND_COLOR}; color: #fff; border-radius: 12px; text-decoration: none; font-size: 14px; font-weight: 700;">Salon Paneline Git →</a>
+      </div>
+    `),
+  })
+}
+
 export const sendVenueBookingNotificationEmail = async (
   to: string,
   venueName: string,

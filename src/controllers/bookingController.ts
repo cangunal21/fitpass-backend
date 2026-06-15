@@ -1,6 +1,6 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
-import { sendVenueBookingNotificationEmail } from '../utils/email'
+import { sendVenueBookingNotificationEmail, sendCancellationEmail, sendVenueCancellationEmail } from '../utils/email'
 
 // Rezervasyon oluştur
 export const createBooking = async (req: Request, res: Response) => {
@@ -144,6 +144,37 @@ export const cancelBooking = async (req: Request, res: Response) => {
       where: { id: bookingId },
       data: { status: 'cancelled' },
     })
+
+    // İptal email bildirimleri
+    try {
+      const fullBooking = await prisma.booking.findUnique({
+        where: { id: bookingId },
+        include: {
+          user: { select: { fullName: true, email: true } },
+          classSession: { include: { class: { include: { venue: { select: { email: true, name: true } } } } } },
+        },
+      })
+
+      if (fullBooking) {
+        const startsAt = new Date(fullBooking.classSession!.startsAt)
+        const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
+        const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+        const classTitle = fullBooking.classSession!.class.title
+        const venue = fullBooking.classSession!.class.venue
+
+        // Kullanıcıya iptal bildirimi
+        if (fullBooking.user?.email) {
+          await sendCancellationEmail(fullBooking.user.email, fullBooking.user.fullName, classTitle, date, time)
+        }
+
+        // Salona iptal bildirimi
+        if (venue?.email) {
+          await sendVenueCancellationEmail(venue.email, venue.name, fullBooking.user?.fullName || 'Kullanıcı', classTitle, date, time)
+        }
+      }
+    } catch (emailErr) {
+      console.error('Cancellation email error:', emailErr)
+    }
 
     res.json({ message: 'Rezervasyon iptal edildi.', booking: updated })
   } catch (err) {
