@@ -310,6 +310,42 @@ export const sendVenueRegistrationAdminEmail = async (
   })
 }
 
+export const sendReminderEmail = async (to: string, fullName: string, classTitle: string, date: string, time: string, venueName: string) => {
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to,
+    subject: `⏰ Dersiniz 2 saat sonra başlıyor — ${classTitle}`,
+    html: baseTemplate(`
+      <h2 style="font-size:22px;font-weight:800;color:#1a1a1a;margin:0 0 8px;">Dersiniz yaklaşıyor! ⏰</h2>
+      <p style="color:#555;font-size:15px;margin:0 0 24px;">Merhaba <strong>${fullName}</strong>, bugünkü dersinizi hatırlatmak istedik.</p>
+      <div style="background:#F5F3FF;border-radius:12px;padding:20px 24px;margin-bottom:24px;">
+        <p style="margin:0 0 8px;font-size:16px;font-weight:700;color:#4F46E5;">${classTitle}</p>
+        <p style="margin:0 0 4px;color:#555;font-size:14px;">📍 ${venueName}</p>
+        <p style="margin:0;color:#555;font-size:14px;">🗓 ${date} · ⏰ ${time}</p>
+      </div>
+      <p style="color:#888;font-size:13px;">Unutma: derse 12 saatten az kaldığında iptal yapılamaz.</p>
+    `)
+  })
+}
+
+export const sendWaitlistNotificationEmail = async (to: string, fullName: string, classTitle: string, date: string, time: string) => {
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to,
+    subject: `🎉 Yer açıldı! ${classTitle} dersine katılabilirsiniz`,
+    html: baseTemplate(`
+      <h2 style="font-size:22px;font-weight:800;color:#1a1a1a;margin:0 0 8px;">Yer açıldı! 🎉</h2>
+      <p style="color:#555;font-size:15px;margin:0 0 24px;">Merhaba <strong>${fullName}</strong>, bekleme listesinde olduğunuz ders için yer açıldı!</p>
+      <div style="background:#F0FDF4;border-radius:12px;padding:20px 24px;margin-bottom:24px;">
+        <p style="margin:0 0 8px;font-size:16px;font-weight:700;color:#16a34a;">${classTitle}</p>
+        <p style="margin:0;color:#555;font-size:14px;">🗓 ${date} · ⏰ ${time}</p>
+      </div>
+      <p style="color:#888;font-size:13px;">Hemen rezervasyon yap, yer dolmadan önce!</p>
+      <a href="${process.env.SITE_URL || 'https://sipsakspor.com'}" style="display:inline-block;margin-top:16px;padding:14px 28px;background:#4F46E5;color:#fff;border-radius:12px;text-decoration:none;font-weight:700;font-size:15px;">Hemen Rezervasyon Yap</a>
+    `)
+  })
+}
+
 export const sendVenueApprovedEmail = async (
   to: string,
   venueName: string

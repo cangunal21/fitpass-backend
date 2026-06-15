@@ -254,6 +254,14 @@ export const cancelBooking = async (req: Request, res: Response) => {
       console.error('Cancellation email error:', emailErr)
     }
 
+    // Waitlist'teki ilk kişiye bildir
+    try {
+      const { notifyFirstWaitlistUser } = await import('./waitlistController')
+      await notifyFirstWaitlistUser(booking.sessionId!)
+    } catch (e) {
+      console.error('Waitlist notify error:', e)
+    }
+
     res.json({
       message: `Rezervasyon iptal edildi. ${refundType === 'full' ? 'Tam iade' : 'Yarım iade'} (₺${refundAmount}) uygulandı.`,
       booking: updated,

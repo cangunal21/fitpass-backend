@@ -150,6 +150,7 @@ model User {
   leaderboards          MonthlyLeaderboard[]
   dropInParticipants    DropInParticipant[]
   passwordResetTokens   PasswordResetToken[]
+  waitlistEntries       Waitlist[]
 }
 
 // ─────────────────────────────────────────────
@@ -256,6 +257,7 @@ model Class_Session {
   createdAt       DateTime @default(now())
 
   bookings Booking[]
+  waitlist Waitlist[]
 }
 
 // ─────────────────────────────────────────────
@@ -322,6 +324,7 @@ model Booking {
   venuePayout      Float
   bookingNumber    String         @unique
   taggedFriends    Json           @default("[]")
+  reminderSent     Boolean        @default(false)
   createdAt        DateTime       @default(now())
   confirmedAt      DateTime?
   cancelledAt      DateTime?
@@ -482,4 +485,17 @@ model RewardRedemption {
   discountAmount Float
   bookingId      Int
   createdAt      DateTime @default(now())
+}
+
+model Waitlist {
+  id         Int           @id @default(autoincrement())
+  user       User          @relation(fields: [userId], references: [id])
+  userId     Int
+  session    Class_Session @relation(fields: [sessionId], references: [id])
+  sessionId  Int
+  status     String        @default("waiting") // waiting, notified, expired
+  notifiedAt DateTime?
+  createdAt  DateTime      @default(now())
+
+  @@unique([userId, sessionId])
 }

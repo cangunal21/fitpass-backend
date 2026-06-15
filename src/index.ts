@@ -8,6 +8,8 @@ import adminRoutes from './routes/admin'
 import publicRoutes from './routes/public'
 import socialRouter from './routes/social'
 import reviewRoutes from './routes/reviews'
+import cronRoutes from './routes/cron'
+import waitlistRoutes from './routes/waitlist'
 
 dotenv.config()
 
@@ -25,6 +27,8 @@ app.use('/api/admin', adminRoutes)
 app.use('/api/public', publicRoutes)
 app.use('/api/social', socialRouter)
 app.use('/api/reviews', reviewRoutes)
+app.use('/api/cron', cronRoutes)
+app.use('/api/waitlist', waitlistRoutes)
 
 // Test route
 app.get('/', (req, res) => {
