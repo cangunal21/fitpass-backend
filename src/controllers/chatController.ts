@@ -1,7 +1,7 @@
 import { Request, Response } from 'express'
-import Anthropic from '@anthropic-ai/sdk'
+import Groq from 'groq-sdk'
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+const client = new Groq({ apiKey: process.env.GROQ_API_KEY })
 
 // Basit rate limiting: IP başına dakikada max 5 mesaj
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
@@ -56,14 +56,16 @@ export const chat = async (req: Request, res: Response) => {
       content: String(m.content).slice(0, 500), // mesaj başına max 500 karakter
     }))
 
-    const response = await client.messages.create({
-      model: 'claude-haiku-4-5',
+    const completion = await client.chat.completions.create({
+      model: 'llama-3.1-8b-instant',
       max_tokens: 300,
-      system: SYSTEM_PROMPT,
-      messages: recent,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        ...recent,
+      ],
     })
 
-    const text = response.content[0].type === 'text' ? response.content[0].text : ''
+    const text = completion.choices[0]?.message?.content || ''
     return res.json({ reply: text })
   } catch (err) {
     console.error('Chat error:', err)
