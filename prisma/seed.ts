@@ -18,6 +18,7 @@ const sports = [
   { name: 'Dans', iconUrl: 'dance', colorHex: '#C026D3', hasInstructor: true },
   { name: 'Yüzme', iconUrl: 'swimming', colorHex: '#0284C7', hasInstructor: true },
   { name: 'Crossfit', iconUrl: 'crossfit', colorHex: '#B45309', hasInstructor: true },
+  { name: 'Binicilik', iconUrl: 'equestrian', colorHex: '#92400E', hasInstructor: true },
   { name: 'Diğer', iconUrl: 'zap', colorHex: '#6B7280', hasInstructor: false },
 ]
 
