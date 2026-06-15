@@ -119,13 +119,14 @@ export const getMe = async (req: Request & { userId?: number }, res: Response) =
         avatarUrl: true,
         bio: true,
         phone: true,
-        neighborhoodId: true,
-        tierId: true,
         totalLessonsCompleted: true,
         rewardPoints: true,
         profilePrivacy: true,
         activityPrivacy: true,
         createdAt: true,
+        neighborhood: { select: { name: true } },
+        city: { select: { name: true } },
+        tier: { select: { name: true, discountPercent: true, colorHex: true, iconUrl: true } },
       }
     })
 
@@ -136,6 +137,31 @@ export const getMe = async (req: Request & { userId?: number }, res: Response) =
     return res.json({ user })
   } catch (error) {
     console.error('GetMe error:', error)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// KENDİ REZERVASYONLARIMı GETİR
+export const getMyBookingsAuth = async (req: Request & { userId?: number }, res: Response) => {
+  try {
+    const bookings = await prisma.booking.findMany({
+      where: { userId: req.userId },
+      include: {
+        session: {
+          include: {
+            class: {
+              include: {
+                venue: { select: { id: true, name: true } }
+              }
+            }
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+    return res.json({ bookings })
+  } catch (err) {
+    console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
