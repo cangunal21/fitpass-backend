@@ -41,7 +41,7 @@ export const sendWelcomeEmail = async (to: string, fullName: string) => {
 }
 
 export const sendPasswordResetEmail = async (to: string, fullName: string, resetToken: string) => {
-  const resetUrl = `https://fitpasswebtr.vercel.app/sifre-sifirla?token=${resetToken}`
+  const resetUrl = `https://sipsakspor.com/sifre-sifirla?token=${resetToken}`
 
   await resend.emails.send({
     from: FROM_EMAIL,

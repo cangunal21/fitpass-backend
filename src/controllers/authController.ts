@@ -1,8 +1,9 @@
 import { Request, Response } from 'express'
 import bcrypt from 'bcryptjs'
+import crypto from 'crypto'
 import prisma from '../utils/prisma'
 import { generateToken } from '../utils/jwt'
-import { sendWelcomeEmail } from '../utils/email'
+import { sendWelcomeEmail, sendPasswordResetEmail } from '../utils/email'
 
 // KAYIT OL
 export const register = async (req: Request, res: Response) => {
@@ -135,6 +136,71 @@ export const getMe = async (req: Request & { userId?: number }, res: Response) =
     return res.json({ user })
   } catch (error) {
     console.error('GetMe error:', error)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// ŞİFRE SIFIRLAMA - EMAIL GÖNDER
+export const forgotPassword = async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body
+
+    const user = await prisma.user.findUnique({ where: { email } })
+
+    if (!user) {
+      return res.json({ message: 'Email gönderildi' })
+    }
+
+    const token = crypto.randomBytes(32).toString('hex')
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000)
+
+    await prisma.passwordResetToken.create({
+      data: { userId: user.id, token, expiresAt }
+    })
+
+    sendPasswordResetEmail(user.email, user.fullName, token).catch(err =>
+      console.error('Reset mail gönderilemedi:', err)
+    )
+
+    return res.json({ message: 'Email gönderildi' })
+  } catch (error) {
+    console.error('ForgotPassword error:', error)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// ŞİFRE SIFIRLAMA - YENİ ŞİFRE BELİRLE
+export const resetPassword = async (req: Request, res: Response) => {
+  try {
+    const { token, password } = req.body
+
+    const resetToken = await prisma.passwordResetToken.findFirst({
+      where: {
+        token,
+        used: false,
+        expiresAt: { gt: new Date() }
+      }
+    })
+
+    if (!resetToken) {
+      return res.status(400).json({ error: 'Geçersiz veya süresi dolmuş token' })
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12)
+
+    await prisma.user.update({
+      where: { id: resetToken.userId },
+      data: { passwordHash }
+    })
+
+    await prisma.passwordResetToken.update({
+      where: { id: resetToken.id },
+      data: { used: true }
+    })
+
+    return res.json({ message: 'Şifre güncellendi' })
+  } catch (error) {
+    console.error('ResetPassword error:', error)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }

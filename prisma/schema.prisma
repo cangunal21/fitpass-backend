@@ -149,6 +149,7 @@ model User {
   rewardRedemptions     RewardRedemption[]
   leaderboards          MonthlyLeaderboard[]
   dropInParticipants    DropInParticipant[]
+  passwordResetTokens   PasswordResetToken[]
 }
 
 // ─────────────────────────────────────────────
@@ -457,6 +458,16 @@ model RewardPoint {
   source    String
   bookingId Int?
   createdAt DateTime @default(now())
+}
+
+model PasswordResetToken {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  token     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
 }
 
 model RewardRedemption {
