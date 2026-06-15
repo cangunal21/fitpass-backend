@@ -1,5 +1,6 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
+import { sendVenueApprovedEmail } from '../utils/email'
 
 // İstatistikler
 export const getStats = async (req: Request, res: Response) => {
@@ -47,6 +48,17 @@ export const approveVenue = async (req: Request, res: Response) => {
       data: { isApproved: approve },
     })
 
+    if (approve) {
+      try {
+        const venueWithEmail = await prisma.venue.findUnique({ where: { id: venueId }, select: { email: true, name: true } })
+        if (venueWithEmail?.email) {
+          await sendVenueApprovedEmail(venueWithEmail.email, venueWithEmail.name)
+        }
+      } catch (e) {
+        console.error('Venue approval email error:', e)
+      }
+    }
+
     return res.json({ message: approve ? 'Salon onaylandı.' : 'Salon reddedildi.', venue })
   } catch (err) {
     console.error(err)
@@ -78,7 +90,7 @@ export const getAllBookings = async (req: Request, res: Response) => {
     const bookings = await prisma.booking.findMany({
       include: {
         user: { select: { fullName: true, email: true } },
-        classSession: {
+        session: {
           include: { class: { include: { venue: { select: { name: true } } } } }
         }
       },

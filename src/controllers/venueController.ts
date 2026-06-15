@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import bcrypt from 'bcryptjs'
 import prisma from '../utils/prisma'
 import { generateToken } from '../utils/jwt'
+import { sendVenueRegistrationAdminEmail } from '../utils/email'
 
 // SALON KAYIT
 export const venueRegister = async (req: Request, res: Response) => {
@@ -63,6 +64,18 @@ export const venueRegister = async (req: Request, res: Response) => {
           bio: null,
         }
       })
+    }
+
+    try {
+      await sendVenueRegistrationAdminEmail(
+        venue.name,
+        venue.email || '',
+        phone,
+        address,
+        sportCategories || []
+      )
+    } catch (e) {
+      console.error('Admin notification email error:', e)
     }
 
     const token = generateToken({ venueId: venue.id, email: venue.email, role: 'venue' })

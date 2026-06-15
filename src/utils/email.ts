@@ -261,3 +261,85 @@ export const sendVenueBookingNotificationEmail = async (
     `),
   })
 }
+
+export const sendVenueRegistrationAdminEmail = async (
+  venueName: string,
+  venueEmail: string,
+  venuePhone: string,
+  venueAddress: string,
+  sportCategories: string[]
+) => {
+  const adminEmail = process.env.ADMIN_EMAIL || 'cangunal21@gmail.com'
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to: adminEmail,
+    subject: `Yeni Salon Başvurusu: ${venueName}`,
+    html: baseTemplate(`
+      <div style="text-align: center; margin-bottom: 28px;">
+        <div style="width: 64px; height: 64px; background: #FEF2F2; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 16px;">
+          <span style="font-size: 32px;">⚠️</span>
+        </div>
+        <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0;">Onay Bekleyen Yeni Başvuru</h2>
+        <p style="font-size: 14px; color: #DC2626; margin: 8px 0 0;">Yeni bir salon kayıt başvurusunda bulundu.</p>
+      </div>
+      <div style="background: #FEF2F2; border-radius: 16px; padding: 20px; margin-bottom: 24px; border: 1px solid #FECACA;">
+        <p style="font-size: 16px; font-weight: 700; color: #111; margin: 0 0 16px;">${venueName}</p>
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+          <div>
+            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 2px;">E-posta</p>
+            <p style="font-size: 14px; color: #111; margin: 0;">${venueEmail}</p>
+          </div>
+          <div>
+            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 2px;">Telefon</p>
+            <p style="font-size: 14px; color: #111; margin: 0;">${venuePhone}</p>
+          </div>
+          <div>
+            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 2px;">Adres</p>
+            <p style="font-size: 14px; color: #111; margin: 0;">${venueAddress}</p>
+          </div>
+          <div>
+            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 2px;">Spor Kategorileri</p>
+            <p style="font-size: 14px; color: #111; margin: 0;">${sportCategories.join(', ') || '—'}</p>
+          </div>
+        </div>
+      </div>
+      <div style="text-align: center;">
+        <a href="${SITE_URL}/admin" style="display: inline-block; padding: 14px 32px; background: #DC2626; color: #fff; border-radius: 14px; text-decoration: none; font-size: 15px; font-weight: 700;">Admin Paneline Git →</a>
+      </div>
+    `),
+  })
+}
+
+export const sendVenueApprovedEmail = async (
+  to: string,
+  venueName: string
+) => {
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to,
+    subject: `Salonunuz Onaylandı! 🎉`,
+    html: baseTemplate(`
+      <div style="text-align: center; margin-bottom: 28px;">
+        <div style="width: 64px; height: 64px; background: #F0FDF4; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 16px;">
+          <span style="font-size: 32px;">✅</span>
+        </div>
+        <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0;">Tebrikler!</h2>
+      </div>
+      <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
+        <strong>${venueName}</strong> salonunuz Şipşakspor'da yayında! Artık derslerinizi ve seanslarınızı ekleyebilirsiniz.
+      </p>
+      <div style="background: #F0FDF4; border-radius: 16px; padding: 20px; margin-bottom: 28px; border: 1px solid #BBF7D0;">
+        <p style="font-size: 14px; color: #166534; font-weight: 700; margin: 0 0 10px;">Sonraki adımlar:</p>
+        <ul style="font-size: 14px; color: #555; line-height: 2; margin: 0; padding-left: 20px;">
+          <li>Salon panelinize giriş yapın</li>
+          <li>Sunduğunuz dersleri ekleyin</li>
+          <li>Seans tarihleri ve saatlerini belirleyin</li>
+          <li>Müşterilerinizin rezervasyon yapmasına izin verin</li>
+        </ul>
+      </div>
+      <div style="text-align: center;">
+        <a href="${SITE_URL}/salon-paneli" style="display: inline-block; padding: 14px 32px; background: #16A34A; color: #fff; border-radius: 14px; text-decoration: none; font-size: 15px; font-weight: 700;">Salon Paneline Git →</a>
+      </div>
+    `),
+  })
+}

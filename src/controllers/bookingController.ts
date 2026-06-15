@@ -6,15 +6,15 @@ import { sendVenueBookingNotificationEmail, sendCancellationEmail, sendVenueCanc
 export const createBooking = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId
-    const { classSessionId, notes } = req.body
+    const { sessionId, notes } = req.body
 
-    if (!classSessionId) {
+    if (!sessionId) {
       return res.status(400).json({ error: 'Ders seansı gerekli.' })
     }
 
     // Seans var mı?
     const session = await prisma.class_Session.findUnique({
-      where: { id: classSessionId },
+      where: { id: sessionId },
       include: { class: true },
     })
 
@@ -24,32 +24,42 @@ export const createBooking = async (req: Request, res: Response) => {
 
     // Kapasite dolu mu?
     const bookingCount = await prisma.booking.count({
-      where: { classSessionId, status: { in: ['confirmed', 'pending'] } },
+      where: { sessionId, status: { in: ['confirmed', 'pending'] } },
     })
 
-    if (session.capacity && bookingCount >= session.capacity) {
+    if (session.availableSpots && bookingCount >= session.availableSpots) {
       return res.status(400).json({ error: 'Bu ders seansı dolu.' })
     }
 
     // Zaten rezervasyon var mı?
     const existing = await prisma.booking.findFirst({
-      where: { userId, classSessionId, status: { in: ['confirmed', 'pending'] } },
+      where: { userId, sessionId, status: { in: ['confirmed', 'pending'] } },
     })
 
     if (existing) {
       return res.status(400).json({ error: 'Bu derse zaten kayıtlısınız.' })
     }
 
+    const basePrice = session.class?.basePrice || 0
+
     const booking = await prisma.booking.create({
       data: {
         userId,
-        classSessionId,
+        sessionId,
+        bookingType: 'class',
         status: 'confirmed',
         notes: notes || null,
-        totalPrice: session.price,
+        baseAmount: basePrice,
+        discountAmount: 0,
+        commissionAmount: 0,
+        userCommission: 0,
+        venueCommission: 0,
+        finalAmount: basePrice,
+        venuePayout: basePrice,
+        bookingNumber: `BK-${Date.now()}`,
       },
       include: {
-        classSession: {
+        session: {
           include: { class: true },
         },
       },
@@ -58,7 +68,7 @@ export const createBooking = async (req: Request, res: Response) => {
     // Salon email bildirimi
     try {
       const venue = await prisma.venue.findUnique({
-        where: { id: booking.classSession.class.venueId },
+        where: { id: booking.session!.class.venueId },
         select: { email: true, name: true },
       })
 
@@ -76,11 +86,11 @@ export const createBooking = async (req: Request, res: Response) => {
           venue.email,
           venue.name,
           user?.fullName || 'Kullanıcı',
-          booking.classSession.class.title,
+          booking.session!.class.title,
           date,
           time,
-          session.capacity ?? 0,
-          (session.capacity ?? 0) - bookingCount - 1
+          session.availableSpots ?? 0,
+          (session.availableSpots ?? 0) - bookingCount - 1
         )
       }
     } catch (emailErr) {
@@ -103,7 +113,7 @@ export const getMyBookings = async (req: Request, res: Response) => {
     const bookings = await prisma.booking.findMany({
       where: { userId },
       include: {
-        classSession: {
+        session: {
           include: { class: true },
         },
       },
@@ -125,7 +135,7 @@ export const cancelBooking = async (req: Request, res: Response) => {
 
     const booking = await prisma.booking.findUnique({
       where: { id: bookingId },
-      include: { classSession: true },
+      include: { session: true },
     })
 
     if (!booking) {
@@ -151,16 +161,16 @@ export const cancelBooking = async (req: Request, res: Response) => {
         where: { id: bookingId },
         include: {
           user: { select: { fullName: true, email: true } },
-          classSession: { include: { class: { include: { venue: { select: { email: true, name: true } } } } } },
+          session: { include: { class: { include: { venue: { select: { email: true, name: true } } } } } },
         },
       })
 
       if (fullBooking) {
-        const startsAt = new Date(fullBooking.classSession!.startsAt)
+        const startsAt = new Date(fullBooking.session!.startsAt)
         const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
         const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
-        const classTitle = fullBooking.classSession!.class.title
-        const venue = fullBooking.classSession!.class.venue
+        const classTitle = fullBooking.session!.class.title
+        const venue = fullBooking.session!.class.venue
 
         // Kullanıcıya iptal bildirimi
         if (fullBooking.user?.email) {
