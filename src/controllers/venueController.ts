@@ -6,7 +6,7 @@ import { generateToken } from '../utils/jwt'
 // SALON KAYIT
 export const venueRegister = async (req: Request, res: Response) => {
   try {
-    const { name, email, password, phone, address, description, cityId, neighborhoodId } = req.body
+    const { name, email, password, phone, address, description, cityId, neighborhoodId, sportCategories, instructor } = req.body
 
     if (!name || !email || !password || !phone || !address) {
       return res.status(400).json({ error: 'Ad, email, şifre, telefon ve adres zorunludur.' })
@@ -45,6 +45,25 @@ export const venueRegister = async (req: Request, res: Response) => {
         createdAt: true,
       }
     })
+
+    if (sportCategories && Array.isArray(sportCategories)) {
+      for (const catName of sportCategories) {
+        const cat = await prisma.sportCategory.findFirst({ where: { name: { equals: catName, mode: 'insensitive' } } })
+        if (cat) {
+          await prisma.venueSportCategory.create({ data: { venueId: venue.id, sportCategoryId: cat.id } })
+        }
+      }
+    }
+
+    if (instructor?.fullName) {
+      await prisma.instructor.create({
+        data: {
+          venueId: venue.id,
+          fullName: instructor.fullName,
+          bio: null,
+        }
+      })
+    }
 
     const token = generateToken({ venueId: venue.id, email: venue.email, role: 'venue' })
 
