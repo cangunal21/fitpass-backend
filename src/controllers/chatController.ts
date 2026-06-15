@@ -42,11 +42,11 @@ KATÎ KURALLAR — bunlara kesinlikle uy:
 // Konu dışı anahtar kelimeler — bunlar gelirse modele gitmeden direkt reddedilir
 const OFF_TOPIC_KEYWORDS = [
   // matematik
-  'kaç eder', 'kaç eder?', 'hesapla', 'toplam', 'çarp', 'böl', 'kök', 'integral',
+  'kaç eder', 'hesapla', 'çarp', 'böl', 'kök', 'integral',
   // okul/eğitim
-  'okul', 'ders notu', 'sınav', 'ödev', 'üniversite', 'lise', 'matematik',
+  'ders notu', 'sınav', 'ödev', 'matematik dersi',
   // siyaset/haber
-  'siyaset', 'seçim', 'haber', 'ekonomi', 'borsa', 'döviz', 'cumhurbaşkan',
+  'siyaset', 'seçim', 'borsa', 'döviz', 'cumhurbaşkan',
   // prompt injection denemeleri
   'kuralları unut', 'ignore', 'forget', 'jailbreak', 'pretend you',
   // dil/yazım
