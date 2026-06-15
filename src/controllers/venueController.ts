@@ -105,7 +105,7 @@ export const getVenueMe = async (req: Request, res: Response) => {
         classes: {
           select: {
             id: true, title: true, category: true, basePrice: true, isActive: true,
-            sessions: { select: { id: true, date: true, time: true, capacity: true, _count: { select: { bookings: true } } } }
+            sessions: { select: { id: true, startsAt: true, endsAt: true, availableSpots: true, _count: { select: { bookings: true } } } }
           }
         }
       }
@@ -137,6 +137,7 @@ export const createClass = async (req: Request, res: Response) => {
         category,
         basePrice: parseFloat(basePrice),
         duration: parseInt(duration),
+        durationMinutes: parseInt(duration),
         capacity: parseInt(capacity),
         venueId,
         instructorId: instructorId || null,
@@ -169,6 +170,7 @@ export const updateClass = async (req: Request, res: Response) => {
         title, description, category,
         basePrice: basePrice ? parseFloat(basePrice) : undefined,
         duration: duration ? parseInt(duration) : undefined,
+        durationMinutes: duration ? parseInt(duration) : undefined,
         capacity: capacity ? parseInt(capacity) : undefined,
         isActive,
       }
@@ -197,13 +199,15 @@ export const createSession = async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Bu derse seans ekleme yetkiniz yok.' })
     }
 
+    const startsAt = new Date(`${date}T${time}:00`)
+    const endsAt = new Date(startsAt.getTime() + (cls.durationMinutes || cls.duration || 60) * 60000)
+
     const session = await prisma.class_Session.create({
       data: {
         classId,
-        date: new Date(date),
-        time,
-        capacity: parseInt(capacity),
-        price: price ? parseFloat(price) : cls.basePrice,
+        startsAt,
+        endsAt,
+        availableSpots: parseInt(capacity),
       }
     })
 
@@ -220,10 +224,10 @@ export const getVenueBookings = async (req: Request, res: Response) => {
     const venueId = (req as any).venueId
 
     const bookings = await prisma.booking.findMany({
-      where: { classSession: { class: { venueId } } },
+      where: { session: { class: { venueId } } },
       include: {
         user: { select: { id: true, fullName: true, email: true, username: true } },
-        classSession: { include: { class: { select: { title: true, category: true } } } }
+        session: { include: { class: { select: { title: true, category: true } } } }
       },
       orderBy: { createdAt: 'desc' },
     })

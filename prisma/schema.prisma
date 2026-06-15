@@ -170,12 +170,14 @@ model Venue {
   latitude       Float
   longitude      Float
   phone          String?
-  email          String?
+  email          String?              @unique
+  passwordHash   String?
   website        String?
   coverImageUrl  String?
   images         Json                 @default("[]")
   isActive       Boolean              @default(true)
   isVerified     Boolean              @default(false)
+  isApproved     Boolean              @default(false)
   avgRating      Float                @default(0)
   totalReviews   Int                  @default(0)
   createdAt      DateTime             @default(now())
@@ -225,10 +227,12 @@ model Class {
   venueId         Int
   instructor      Instructor?   @relation(fields: [instructorId], references: [id])
   instructorId    Int?
-  sportCategory   SportCategory @relation(fields: [sportCategoryId], references: [id])
-  sportCategoryId Int
+  sportCategory   SportCategory? @relation(fields: [sportCategoryId], references: [id])
+  sportCategoryId Int?
   title           String
   description     String?
+  category        String?
+  duration        Int?
   durationMinutes Int
   basePrice       Float
   capacity        Int
