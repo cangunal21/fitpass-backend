@@ -4,18 +4,23 @@ import prisma from '../utils/prisma'
 // GET /api/public/sessions
 export const getSessions = async (req: Request, res: Response) => {
   try {
-    const { category, date, venueId, neighborhoodId, search } = req.query
+    const { category, date, dateFrom, dateTo, venueId, neighborhoodId, search, sort, userNeighborhoodId } = req.query
 
     const where: any = {
       status: 'open',
-      startsAt: { gte: new Date() },
     }
 
-    if (date) {
+    if (dateFrom || dateTo) {
+      where.startsAt = {}
+      if (dateFrom) where.startsAt.gte = new Date(dateFrom as string)
+      if (dateTo) where.startsAt.lt = new Date(dateTo as string)
+    } else if (date) {
       const d = new Date(date as string)
       const nextDay = new Date(d)
       nextDay.setDate(nextDay.getDate() + 1)
       where.startsAt = { gte: d, lt: nextDay }
+    } else {
+      where.startsAt = { gte: new Date() }
     }
 
     // Build class filter
@@ -26,6 +31,10 @@ export const getSessions = async (req: Request, res: Response) => {
     if (neighborhoodId) classWhere.venue = { neighborhoodId: parseInt(neighborhoodId as string) }
     if (Object.keys(classWhere).length > 0) where.class = classWhere
 
+    const orderBy: any = sort === 'rating'
+      ? [{ class: { venue: { avgRating: 'desc' } } }]
+      : [{ startsAt: 'asc' }]
+
     const sessions = await prisma.class_Session.findMany({
       where,
       include: {
@@ -33,17 +42,17 @@ export const getSessions = async (req: Request, res: Response) => {
           include: {
             sportCategory: true,
             venue: {
-              include: { neighborhood: true },
+              include: { neighborhood: { select: { id: true, name: true, latitude: true, longitude: true } } },
             },
             instructor: true,
           },
         },
       },
-      orderBy: { startsAt: 'asc' },
+      orderBy,
       take: 50,
     })
 
-    const result = sessions.map((s) => ({
+    let formattedSessions = sessions.map((s) => ({
       id: s.id,
       title: s.class.title,
       venueId: s.class.venueId,
@@ -60,11 +69,46 @@ export const getSessions = async (req: Request, res: Response) => {
       capacity: s.class.capacity,
       neighborhood: s.class.venue.neighborhood?.name ?? null,
       neighborhoodId: s.class.venue.neighborhoodId ?? null,
+      neighborhoodLat: (s.class.venue.neighborhood as any)?.latitude ?? null,
+      neighborhoodLng: (s.class.venue.neighborhood as any)?.longitude ?? null,
       rating: s.class.venue.avgRating,
       totalReviews: s.class.venue.totalReviews,
     }))
 
-    return res.json({ sessions: result })
+    // Nearby sort
+    if (sort === 'nearby' && userNeighborhoodId) {
+      const userNeighborhood = await prisma.neighborhood.findUnique({
+        where: { id: parseInt(userNeighborhoodId as string) },
+        select: { latitude: true, longitude: true },
+      })
+      if (userNeighborhood?.latitude && userNeighborhood?.longitude) {
+        const dist = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+          const R = 6371
+          const dLat = (lat2 - lat1) * Math.PI / 180
+          const dLon = (lon2 - lon1) * Math.PI / 180
+          const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2
+          return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+        }
+        formattedSessions = formattedSessions.sort((a: any, b: any) => {
+          const dA = (a.neighborhoodLat && a.neighborhoodLng)
+            ? dist(userNeighborhood.latitude!, userNeighborhood.longitude!, a.neighborhoodLat, a.neighborhoodLng)
+            : Infinity
+          const dB = (b.neighborhoodLat && b.neighborhoodLng)
+            ? dist(userNeighborhood.latitude!, userNeighborhood.longitude!, b.neighborhoodLat, b.neighborhoodLng)
+            : Infinity
+          return dA - dB
+        })
+      } else {
+        // Fallback: match by neighborhoodId
+        formattedSessions = formattedSessions.sort((a: any, b: any) => {
+          const aMatch = a.neighborhoodId === parseInt(userNeighborhoodId as string) ? 0 : 1
+          const bMatch = b.neighborhoodId === parseInt(userNeighborhoodId as string) ? 0 : 1
+          return aMatch - bMatch
+        })
+      }
+    }
+
+    return res.json({ sessions: formattedSessions })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })

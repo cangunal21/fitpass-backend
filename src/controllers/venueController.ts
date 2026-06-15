@@ -263,12 +263,17 @@ const DROP_IN_FORMATS: Record<string, string[]> = {
   'Halı Saha': ['6v6', '7v7'],
 }
 
+const FORMAT_PLAYERS_MAP: Record<string, number> = {
+  '4v4 Yarım Saha': 8, '5v5 Tam Saha': 10,
+  '1v1': 2, '2v2': 4, '6v6': 12, '7v7': 14,
+}
+
 export const createDropInSlot = async (req: Request, res: Response) => {
   try {
     const venueId = (req as any).venueId
     const { sport, format, date, time, totalPlayers, pricePerPerson, visibility, privateCode } = req.body
 
-    if (!sport || !format || !date || !time || !totalPlayers || !pricePerPerson) {
+    if (!sport || !format || !date || !time || !pricePerPerson) {
       return res.status(400).json({ error: 'Tüm zorunlu alanları doldurun.' })
     }
 
@@ -289,7 +294,7 @@ export const createDropInSlot = async (req: Request, res: Response) => {
     }
     const endsAt = new Date(startsAt.getTime() + 90 * 60000)
 
-    const players = parseInt(totalPlayers)
+    const players = FORMAT_PLAYERS_MAP[format] || parseInt(totalPlayers) || 8
     const price = parseFloat(pricePerPerson)
 
     const slot = await prisma.dropInSlot.create({

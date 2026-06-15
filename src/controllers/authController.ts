@@ -244,6 +244,33 @@ export const resetPassword = async (req: Request, res: Response) => {
   }
 }
 
+// PROFİL GÜNCELLE
+export const updateProfile = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    const { fullName, bio, neighborhoodId, avatarUrl } = req.body
+
+    const data: any = {}
+    if (fullName !== undefined) data.fullName = fullName
+    if (bio !== undefined) data.bio = bio
+    if (avatarUrl !== undefined) data.avatarUrl = avatarUrl
+    if (neighborhoodId !== undefined) {
+      data.neighborhoodId = parseInt(neighborhoodId)
+      data.cityId = 1
+    }
+
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data,
+      select: { id: true, fullName: true, bio: true, avatarUrl: true, neighborhoodId: true, neighborhood: { select: { name: true } } }
+    })
+    return res.json({ message: 'Profil güncellendi.', user })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
 // GİZLİLİK AYARINI GÜNCELLE
 export const updatePrivacy = async (req: Request, res: Response) => {
   try {
