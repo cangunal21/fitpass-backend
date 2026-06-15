@@ -2,7 +2,7 @@ import { Router } from 'express'
 import {
   venueRegister, venueLogin, getVenueMe,
   createClass, updateClass, deleteClass,
-  createSession, deleteSession,
+  createSession, updateSession, deleteSession,
   getVenueBookings,
   createDropInSlot, getVenueDropInSlots, deleteDropInSlot,
   updateVenueImages
@@ -25,6 +25,7 @@ router.put('/instructors/:id', venueAuthMiddleware, venueApprovedMiddleware, upd
 router.get('/dropin', venueAuthMiddleware, getVenueDropInSlots)
 router.post('/dropin', venueAuthMiddleware, venueApprovedMiddleware, createDropInSlot)
 router.delete('/classes/:id', venueAuthMiddleware, deleteClass)
+router.put('/classes/:classId/sessions/:sessionId', venueAuthMiddleware, updateSession)
 router.delete('/classes/:classId/sessions/:sessionId', venueAuthMiddleware, deleteSession)
 router.delete('/dropin/:id', venueAuthMiddleware, deleteDropInSlot)
 router.put('/images', venueAuthMiddleware, updateVenueImages)

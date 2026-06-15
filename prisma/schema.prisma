@@ -151,6 +151,7 @@ model User {
   dropInParticipants    DropInParticipant[]
   passwordResetTokens   PasswordResetToken[]
   waitlistEntries       Waitlist[]
+  favoriteVenues        FavoriteVenue[]
 }
 
 // ─────────────────────────────────────────────
@@ -190,6 +191,7 @@ model Venue {
   reviews         Review[]
   userBadges      UserBadge[]
   payouts         VenuePayout[]
+  favoritedBy     FavoriteVenue[]
 }
 
 model VenueSportCategory {
@@ -485,6 +487,17 @@ model RewardRedemption {
   discountAmount Float
   bookingId      Int
   createdAt      DateTime @default(now())
+}
+
+model FavoriteVenue {
+  id        Int      @id @default(autoincrement())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    Int
+  venue     Venue    @relation(fields: [venueId], references: [id])
+  venueId   Int
+  createdAt DateTime @default(now())
+
+  @@unique([userId, venueId])
 }
 
 model Waitlist {

@@ -10,6 +10,7 @@ import socialRouter from './routes/social'
 import reviewRoutes from './routes/reviews'
 import cronRoutes from './routes/cron'
 import waitlistRoutes from './routes/waitlist'
+import favoriteRoutes from './routes/favorites'
 
 dotenv.config()
 
@@ -29,6 +30,7 @@ app.use('/api/social', socialRouter)
 app.use('/api/reviews', reviewRoutes)
 app.use('/api/cron', cronRoutes)
 app.use('/api/waitlist', waitlistRoutes)
+app.use('/api/favorites', favoriteRoutes)
 
 // Test route
 app.get('/', (req, res) => {

@@ -422,6 +422,39 @@ export const getVenueBookings = async (req: Request, res: Response) => {
   }
 }
 
+// SEANS GÜNCELLE
+export const updateSession = async (req: Request, res: Response) => {
+  try {
+    const venueId = (req as any).venueId
+    const sessionId = parseInt(req.params.sessionId as string)
+    const { date, time, capacity } = req.body
+
+    const session = await prisma.class_Session.findUnique({
+      where: { id: sessionId },
+      include: { class: true }
+    })
+    if (!session || session.class.venueId !== venueId) {
+      return res.status(403).json({ error: 'Bu seansı düzenleme yetkiniz yok.' })
+    }
+
+    const startsAt = new Date(`${date}T${time}:00`)
+    if (startsAt <= new Date()) {
+      return res.status(400).json({ error: 'Geçmiş tarihli seans eklenemez.' })
+    }
+    const endsAt = new Date(startsAt.getTime() + (session.class.durationMinutes || session.class.duration || 60) * 60000)
+
+    const updated = await prisma.class_Session.update({
+      where: { id: sessionId },
+      data: { startsAt, endsAt, availableSpots: parseInt(capacity) }
+    })
+
+    return res.json({ message: 'Seans güncellendi!', session: updated })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
 // SALON RESİMLERİ GÜNCELLE
 export const updateVenueImages = async (req: Request, res: Response) => {
   try {
