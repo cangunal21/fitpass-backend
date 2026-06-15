@@ -56,7 +56,7 @@ export const createBooking = async (req: Request, res: Response) => {
         venueCommission: 0,
         finalAmount: basePrice,
         venuePayout: basePrice,
-        bookingNumber: `BK-${Date.now()}`,
+        bookingNumber: `BK-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`,
       },
       include: {
         session: {
