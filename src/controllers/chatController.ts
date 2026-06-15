@@ -39,6 +39,30 @@ KATÎ KURALLAR — bunlara kesinlikle uy:
 5. Türkçe konuş, samimi ve enerjik ol.
 6. Fiyat bilgisi için "salon sayfasını kontrol et" de, kesin fiyat verme.`
 
+// Konu dışı anahtar kelimeler — bunlar gelirse modele gitmeden direkt reddedilir
+const OFF_TOPIC_KEYWORDS = [
+  // matematik
+  'kaç eder', 'kaç eder?', 'hesapla', 'toplam', 'çarp', 'böl', 'kök', 'integral',
+  // okul/eğitim
+  'okul', 'ders notu', 'sınav', 'ödev', 'üniversite', 'lise', 'matematik',
+  // siyaset/haber
+  'siyaset', 'seçim', 'haber', 'ekonomi', 'borsa', 'döviz', 'cumhurbaşkan',
+  // genel sohbet tuzakları
+  'adın ne', 'kaç yaşındasın', 'nereden', 'sen kimsin', 'sen bir ai', 'sen robot',
+  'kural', 'kuralları unut', 'prompt', 'sistem', 'ignore', 'forget',
+  // dil/yazım
+  'yazım', 'dilbilgisi', 'gramer', 'kelime anlamı',
+]
+
+const isOffTopic = (text: string): boolean => {
+  const lower = text.toLowerCase()
+  // Basit aritmetik: "2+2", "3*5" gibi
+  if (/\d+\s*[\+\-\*\/]\s*\d+/.test(lower)) return true
+  return OFF_TOPIC_KEYWORDS.some(kw => lower.includes(kw))
+}
+
+const OFF_TOPIC_REPLY = 'Ben sadece Şipşakspor ve spor konularında yardımcı olabilirim 🏃 Rezervasyon, salonlar veya spor branşları hakkında soru sorabilirsin!'
+
 export const chat = async (req: Request, res: Response) => {
   try {
     const ip = req.ip || req.socket.remoteAddress || 'unknown'
@@ -51,10 +75,16 @@ export const chat = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Mesaj gerekli.' })
     }
 
+    // Son kullanıcı mesajını konu dışı kontrolünden geçir
+    const lastUserMsg = [...messages].reverse().find((m: any) => m.role === 'user')
+    if (lastUserMsg && isOffTopic(String(lastUserMsg.content))) {
+      return res.json({ reply: OFF_TOPIC_REPLY })
+    }
+
     // Son 10 mesajı al (context limiti)
     const recent = messages.slice(-10).map((m: any) => ({
       role: m.role as 'user' | 'assistant',
-      content: String(m.content).slice(0, 500), // mesaj başına max 500 karakter
+      content: String(m.content).slice(0, 500),
     }))
 
     const completion = await client.chat.completions.create({
