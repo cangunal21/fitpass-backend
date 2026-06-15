@@ -45,10 +45,17 @@ const OFF_TOPIC_KEYWORDS = [
   'kaç eder', 'hesapla', 'çarp', 'böl', 'kök', 'integral',
   // okul/eğitim
   'ders notu', 'sınav', 'ödev', 'matematik dersi',
-  // siyaset/haber
-  'siyaset', 'seçim', 'borsa', 'döviz', 'cumhurbaşkan',
-  // prompt injection denemeleri
-  'kuralları unut', 'ignore', 'forget', 'jailbreak', 'pretend you',
+  // siyaset — parti/isim bazlı (çift anlam riski olmayan)
+  'siyaset', 'cumhurbaşkan', 'akp', 'chp', 'mhp', 'hdp', 'iyip', 'dem parti',
+  'erdoğan', 'kılıçdaroğlu', 'özel özgür', 'muhalefet', 'iktidar partisi',
+  'meclis', 'milletvekili', 'anayasa', 'referandum',
+  'borsa', 'döviz', 'enflasyon', 'faiz oranı',
+  // cinsel içerik — açıkça müstehcen, çift anlam taşımayan
+  'porno', 'porn', 'erotik', 'müstehcen', 'seks videosu', 'seks filmi',
+  'cinsel içerik', 'cinsel video', 'strip', 'striptiz', 'eskort', 'fahişe',
+  // prompt injection
+  'kuralları unut', 'ignore instructions', 'forget your rules', 'jailbreak',
+  'pretend you', 'sen aslında', 'rol yap', 'karakter ol',
   // dil/yazım
   'dilbilgisi', 'gramer', 'kelime anlamı',
 ]
