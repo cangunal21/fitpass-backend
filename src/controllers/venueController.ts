@@ -263,6 +263,74 @@ export const createSession = async (req: Request, res: Response) => {
   }
 }
 
+// TEKRARLAYAN SEANSLAR
+// body: { time, capacity, weekDays: [1,3,5], weeks: 4, instructorId? }
+// weekDays: 0=Pazar, 1=Pazartesi, ..., 6=Cumartesi
+export const createRecurringSessions = async (req: Request, res: Response) => {
+  try {
+    const venueId = (req as any).venueId
+    const classId = parseInt(req.params.classId as string)
+    const { time, capacity, weekDays, weeks } = req.body
+
+    if (!time || !capacity || !weekDays || !Array.isArray(weekDays) || weekDays.length === 0 || !weeks) {
+      return res.status(400).json({ error: 'Saat, kapasite, günler ve hafta sayısı zorunludur.' })
+    }
+
+    const cls = await prisma.class.findUnique({ where: { id: classId } })
+    if (!cls || cls.venueId !== venueId) {
+      return res.status(403).json({ error: 'Bu derse seans ekleme yetkiniz yok.' })
+    }
+
+    const [h, m] = time.split(':').map(Number)
+    const created: any[] = []
+    const skipped: string[] = []
+    const now = new Date()
+    const totalWeeks = Math.min(parseInt(weeks), 12) // max 12 hafta
+
+    // Bu haftadan başla, toplam totalWeeks hafta
+    const startDate = new Date()
+    startDate.setHours(0, 0, 0, 0)
+
+    for (let w = 0; w < totalWeeks; w++) {
+      for (const day of weekDays) {
+        const date = new Date(startDate)
+        // Bu haftanın başı (Pazartesi)
+        const dayOfWeek = date.getDay()
+        const diff = (day - dayOfWeek + 7) % 7
+        date.setDate(date.getDate() + diff + w * 7)
+        date.setHours(h, m, 0, 0)
+
+        if (date <= now) continue // geçmiş, atla
+
+        const endsAt = new Date(date.getTime() + (cls.durationMinutes || 60) * 60000)
+
+        // Aynı seans var mı kontrol et
+        const existing = await prisma.class_Session.findFirst({
+          where: { classId, startsAt: date }
+        })
+        if (existing) {
+          skipped.push(date.toISOString())
+          continue
+        }
+
+        const session = await prisma.class_Session.create({
+          data: { classId, startsAt: date, endsAt, availableSpots: parseInt(capacity) }
+        })
+        created.push(session)
+      }
+    }
+
+    return res.status(201).json({
+      message: `${created.length} seans oluşturuldu.${skipped.length > 0 ? ` ${skipped.length} seans zaten mevcuttu, atlandı.` : ''}`,
+      created: created.length,
+      skipped: skipped.length,
+    })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
 // DROP-IN
 
 const DROP_IN_SPORTS = ['Basketbol', 'Padel', 'Halı Saha']
