@@ -4,7 +4,8 @@ import {
   createClass, updateClass, deleteClass,
   createSession, deleteSession,
   getVenueBookings,
-  createDropInSlot, getVenueDropInSlots, deleteDropInSlot
+  createDropInSlot, getVenueDropInSlots, deleteDropInSlot,
+  updateVenueImages
 } from '../controllers/venueController'
 import { createInstructor, getVenueInstructors, updateInstructor } from '../controllers/instructorController'
 import { venueAuthMiddleware, venueApprovedMiddleware } from '../middlewares/venueAuth'
@@ -26,5 +27,6 @@ router.post('/dropin', venueAuthMiddleware, venueApprovedMiddleware, createDropI
 router.delete('/classes/:id', venueAuthMiddleware, deleteClass)
 router.delete('/classes/:classId/sessions/:sessionId', venueAuthMiddleware, deleteSession)
 router.delete('/dropin/:id', venueAuthMiddleware, deleteDropInSlot)
+router.put('/images', venueAuthMiddleware, updateVenueImages)
 
 export default router

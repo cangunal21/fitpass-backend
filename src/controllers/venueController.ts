@@ -421,3 +421,23 @@ export const getVenueBookings = async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
+
+// SALON RESİMLERİ GÜNCELLE
+export const updateVenueImages = async (req: Request, res: Response) => {
+  try {
+    const venueId = (req as any).venueId
+    const { images, coverImageUrl } = req.body
+    const updated = await prisma.venue.update({
+      where: { id: venueId },
+      data: {
+        images: images || [],
+        coverImageUrl: coverImageUrl || null,
+      },
+      select: { id: true, images: true, coverImageUrl: true }
+    })
+    return res.json({ message: 'Resimler güncellendi.', venue: updated })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
