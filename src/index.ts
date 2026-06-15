@@ -1,6 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
+import { sendRemindersJob } from './jobs/reminderJob'
 import authRoutes from './routes/auth'
 import bookingRoutes from './routes/bookings'
 import venueRoutes from './routes/venue'
@@ -39,6 +40,9 @@ app.get('/', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`✅ Fitpass sunucusu http://localhost:${PORT} adresinde çalışıyor`)
+  // Her 30 dakikada hatırlatma maili gönder
+  sendRemindersJob()
+  setInterval(sendRemindersJob, 30 * 60 * 1000)
 })
 
 export default app
