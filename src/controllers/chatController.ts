@@ -47,11 +47,10 @@ const OFF_TOPIC_KEYWORDS = [
   'okul', 'ders notu', 'sınav', 'ödev', 'üniversite', 'lise', 'matematik',
   // siyaset/haber
   'siyaset', 'seçim', 'haber', 'ekonomi', 'borsa', 'döviz', 'cumhurbaşkan',
-  // genel sohbet tuzakları
-  'adın ne', 'kaç yaşındasın', 'nereden', 'sen kimsin', 'sen bir ai', 'sen robot',
-  'kural', 'kuralları unut', 'prompt', 'sistem', 'ignore', 'forget',
+  // prompt injection denemeleri
+  'kuralları unut', 'ignore', 'forget', 'jailbreak', 'pretend you',
   // dil/yazım
-  'yazım', 'dilbilgisi', 'gramer', 'kelime anlamı',
+  'dilbilgisi', 'gramer', 'kelime anlamı',
 ]
 
 const isOffTopic = (text: string): boolean => {
