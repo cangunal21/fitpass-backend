@@ -144,8 +144,9 @@ export const getMe = async (req: Request & { userId?: number }, res: Response) =
 // KENDİ REZERVASYONLARIMı GETİR
 export const getMyBookingsAuth = async (req: Request & { userId?: number }, res: Response) => {
   try {
+    const userId = req.userId!
     const bookings = await prisma.booking.findMany({
-      where: { userId: req.userId },
+      where: { userId },
       include: {
         session: {
           include: {
@@ -159,7 +160,19 @@ export const getMyBookingsAuth = async (req: Request & { userId?: number }, res:
       },
       orderBy: { createdAt: 'desc' },
     })
-    return res.json({ bookings })
+    const dropInParticipations = await prisma.dropInParticipant.findMany({
+      where: { userId },
+      include: {
+        slot: {
+          include: {
+            venue: { select: { id: true, name: true } },
+            sportCategory: { select: { name: true, iconUrl: true, colorHex: true } },
+          }
+        }
+      },
+      orderBy: { joinedAt: 'desc' },
+    })
+    return res.json({ bookings, dropInParticipations })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })

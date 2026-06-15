@@ -232,6 +232,9 @@ export const createSession = async (req: Request, res: Response) => {
     }
 
     const startsAt = new Date(`${date}T${time}:00`)
+    if (startsAt <= new Date()) {
+      return res.status(400).json({ error: 'Geçmiş tarihli seans eklenemez. Lütfen gelecekteki bir tarih ve saat seçin.' })
+    }
     const endsAt = new Date(startsAt.getTime() + (cls.durationMinutes || cls.duration || 60) * 60000)
 
     const session = await prisma.class_Session.create({
@@ -281,6 +284,9 @@ export const createDropInSlot = async (req: Request, res: Response) => {
     const sportCat = await prisma.sportCategory.findFirst({ where: { name: { equals: sport, mode: 'insensitive' } } })
 
     const startsAt = new Date(`${date}T${time}:00`)
+    if (startsAt <= new Date()) {
+      return res.status(400).json({ error: 'Geçmiş tarihli slot eklenemez.' })
+    }
     const endsAt = new Date(startsAt.getTime() + 90 * 60000)
 
     const players = parseInt(totalPlayers)
