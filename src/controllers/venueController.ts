@@ -137,7 +137,17 @@ export const getVenueMe = async (req: Request, res: Response) => {
         classes: {
           select: {
             id: true, title: true, category: true, basePrice: true, isActive: true,
-            sessions: { select: { id: true, startsAt: true, endsAt: true, availableSpots: true, _count: { select: { bookings: true } } } }
+            sessions: {
+              select: {
+                id: true, startsAt: true, endsAt: true, availableSpots: true,
+                _count: { select: { bookings: true } },
+                bookings: {
+                  where: { status: { in: ['confirmed', 'pending'] } },
+                  select: { id: true, status: true, user: { select: { id: true, fullName: true, username: true } } }
+                }
+              },
+              orderBy: { startsAt: 'asc' }
+            }
           }
         }
       }
@@ -328,10 +338,63 @@ export const getVenueDropInSlots = async (req: Request, res: Response) => {
     const venueId = (req as any).venueId
     const slots = await prisma.dropInSlot.findMany({
       where: { venueId },
-      include: { participants: { select: { id: true, userId: true, status: true } } },
+      include: { participants: { select: { id: true, status: true, user: { select: { fullName: true, username: true } } } } },
       orderBy: { startsAt: 'asc' },
     })
     return res.json({ slots })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// DERS SİL
+export const deleteClass = async (req: Request, res: Response) => {
+  try {
+    const venueId = (req as any).venueId
+    const classId = parseInt(req.params.id as string)
+    const cls = await prisma.class.findUnique({ where: { id: classId } })
+    if (!cls || cls.venueId !== venueId) return res.status(403).json({ error: 'Yetki yok.' })
+    // First delete sessions and their bookings
+    const sessions = await prisma.class_Session.findMany({ where: { classId } })
+    for (const s of sessions) {
+      await prisma.booking.deleteMany({ where: { sessionId: s.id } })
+    }
+    await prisma.class_Session.deleteMany({ where: { classId } })
+    await prisma.class.delete({ where: { id: classId } })
+    return res.json({ message: 'Ders silindi.' })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// SEANS SİL
+export const deleteSession = async (req: Request, res: Response) => {
+  try {
+    const venueId = (req as any).venueId
+    const sessionId = parseInt(req.params.sessionId as string)
+    const session = await prisma.class_Session.findUnique({ where: { id: sessionId }, include: { class: true } })
+    if (!session || session.class.venueId !== venueId) return res.status(403).json({ error: 'Yetki yok.' })
+    await prisma.booking.deleteMany({ where: { sessionId } })
+    await prisma.class_Session.delete({ where: { id: sessionId } })
+    return res.json({ message: 'Seans silindi.' })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// DROP-IN SLOT SİL
+export const deleteDropInSlot = async (req: Request, res: Response) => {
+  try {
+    const venueId = (req as any).venueId
+    const slotId = parseInt(req.params.id as string)
+    const slot = await prisma.dropInSlot.findUnique({ where: { id: slotId } })
+    if (!slot || slot.venueId !== venueId) return res.status(403).json({ error: 'Yetki yok.' })
+    await prisma.dropInParticipant.deleteMany({ where: { slotId } })
+    await prisma.dropInSlot.delete({ where: { id: slotId } })
+    return res.json({ message: 'Drop-in slot silindi.' })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
