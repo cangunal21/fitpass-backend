@@ -6,6 +6,9 @@ import {
   getVenueById,
   getCategories,
   getDropInSlots,
+  getDropInSlotById,
+  getNeighborhoods,
+  getVenuesList,
 } from '../controllers/publicController'
 
 const router = Router()
@@ -13,8 +16,11 @@ const router = Router()
 router.get('/sessions', getSessions)
 router.get('/sessions/:id', getSessionById)
 router.get('/venues', getVenues)
+router.get('/venues-list', getVenuesList)
 router.get('/venues/:id', getVenueById)
 router.get('/categories', getCategories)
 router.get('/dropin', getDropInSlots)
+router.get('/dropin/:id', getDropInSlotById)
+router.get('/neighborhoods', getNeighborhoods)
 
 export default router

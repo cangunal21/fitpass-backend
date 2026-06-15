@@ -1,6 +1,6 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
-import { sendVenueBookingNotificationEmail, sendCancellationEmail, sendVenueCancellationEmail } from '../utils/email'
+import { sendVenueBookingNotificationEmail, sendCancellationEmail, sendVenueCancellationEmail, sendBookingConfirmationEmail } from '../utils/email'
 
 // Rezervasyon oluştur
 export const createBooking = async (req: Request, res: Response) => {
@@ -96,6 +96,19 @@ export const createBooking = async (req: Request, res: Response) => {
     } catch (emailErr) {
       console.error('Venue email notification error:', emailErr)
       // Don't fail the booking if email fails
+    }
+
+    // Kullanıcıya onay emaili
+    try {
+      const userForEmail = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, fullName: true } })
+      if (userForEmail?.email) {
+        const startsAt = new Date(session.startsAt)
+        const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
+        const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+        await sendBookingConfirmationEmail(userForEmail.email, userForEmail.fullName, booking.session!.class.title, date, time, booking.finalAmount)
+      }
+    } catch (emailErr) {
+      console.error('User confirmation email error:', emailErr)
     }
 
     res.status(201).json({ message: 'Rezervasyon başarıyla oluşturuldu!', booking })

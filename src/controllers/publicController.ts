@@ -4,11 +4,30 @@ import prisma from '../utils/prisma'
 // GET /api/public/sessions
 export const getSessions = async (req: Request, res: Response) => {
   try {
+    const { category, date, venueId, neighborhoodId, search } = req.query
+
+    const where: any = {
+      status: 'open',
+      startsAt: { gte: new Date() },
+    }
+
+    if (date) {
+      const d = new Date(date as string)
+      const nextDay = new Date(d)
+      nextDay.setDate(nextDay.getDate() + 1)
+      where.startsAt = { gte: d, lt: nextDay }
+    }
+
+    // Build class filter
+    const classWhere: any = {}
+    if (category) classWhere.sportCategory = { name: { equals: category as string, mode: 'insensitive' } }
+    if (venueId) classWhere.venueId = parseInt(venueId as string)
+    if (search) classWhere.title = { contains: search as string, mode: 'insensitive' }
+    if (neighborhoodId) classWhere.venue = { neighborhoodId: parseInt(neighborhoodId as string) }
+    if (Object.keys(classWhere).length > 0) where.class = classWhere
+
     const sessions = await prisma.class_Session.findMany({
-      where: {
-        status: 'open',
-        startsAt: { gt: new Date() },
-      },
+      where,
       include: {
         class: {
           include: {
@@ -40,6 +59,7 @@ export const getSessions = async (req: Request, res: Response) => {
       availableSpots: s.availableSpots,
       capacity: s.class.capacity,
       neighborhood: s.class.venue.neighborhood?.name ?? null,
+      neighborhoodId: s.class.venue.neighborhoodId ?? null,
       rating: s.class.venue.avgRating,
       totalReviews: s.class.venue.totalReviews,
     }))
@@ -183,6 +203,25 @@ export const getDropInSlots = async (req: Request, res: Response) => {
   }
 }
 
+// GET /api/public/dropin/:id
+export const getDropInSlotById = async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id as string)
+    const slot = await prisma.dropInSlot.findUnique({
+      where: { id },
+      include: {
+        venue: { select: { id: true, name: true, address: true } },
+        sportCategory: { select: { name: true, colorHex: true, iconUrl: true } },
+        participants: { select: { id: true, userId: true } },
+      }
+    })
+    if (!slot) return res.status(404).json({ error: 'Slot bulunamadı.' })
+    return res.json({ slot })
+  } catch (err) {
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
 // GET /api/public/categories
 export const getCategories = async (req: Request, res: Response) => {
   try {
@@ -193,6 +232,34 @@ export const getCategories = async (req: Request, res: Response) => {
     return res.json({ categories })
   } catch (err) {
     console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// GET /api/public/neighborhoods
+export const getNeighborhoods = async (req: Request, res: Response) => {
+  try {
+    const neighborhoods = await prisma.neighborhood.findMany({
+      where: { city: { name: 'İstanbul' } },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    })
+    return res.json({ neighborhoods })
+  } catch (err) {
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// GET /api/public/venues-list
+export const getVenuesList = async (req: Request, res: Response) => {
+  try {
+    const venues = await prisma.venue.findMany({
+      where: { isApproved: true },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    })
+    return res.json({ venues })
+  } catch (err) {
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
