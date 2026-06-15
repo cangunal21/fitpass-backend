@@ -263,3 +263,65 @@ export const getVenuesList = async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
+
+// GET /api/public/users/:username
+export const getUserActivities = async (req: Request, res: Response) => {
+  try {
+    const { username } = req.params
+
+    const user = await prisma.user.findUnique({
+      where: { username },
+      select: {
+        id: true, username: true, fullName: true, avatarUrl: true,
+        activityPrivacy: true,
+        neighborhood: { select: { name: true } },
+        tier: { select: { name: true, discountPercent: true, colorHex: true, iconUrl: true } },
+        totalLessonsCompleted: true,
+        badges: { include: { badge: true } },
+      }
+    })
+
+    if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
+
+    // If private, return user info only (no activities)
+    if (user.activityPrivacy === 'private') {
+      return res.json({ user, activities: null, isPrivate: true })
+    }
+
+    // Fetch bookings
+    const bookings = await prisma.booking.findMany({
+      where: { userId: user.id, status: 'confirmed' },
+      include: {
+        session: {
+          include: {
+            class: {
+              include: { venue: { select: { id: true, name: true } } }
+            }
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    })
+
+    // Fetch drop-in participations
+    const dropIns = await prisma.dropInParticipant.findMany({
+      where: { userId: user.id, status: 'confirmed' },
+      include: {
+        slot: {
+          include: {
+            venue: { select: { id: true, name: true } },
+            sportCategory: { select: { name: true, iconUrl: true, colorHex: true } },
+          }
+        }
+      },
+      orderBy: { joinedAt: 'desc' },
+      take: 20,
+    })
+
+    return res.json({ user, bookings, dropInParticipations: dropIns, isPrivate: false })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}

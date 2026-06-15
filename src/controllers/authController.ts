@@ -244,6 +244,29 @@ export const resetPassword = async (req: Request, res: Response) => {
   }
 }
 
+// GİZLİLİK AYARINI GÜNCELLE
+export const updatePrivacy = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    const { activityPrivacy } = req.body
+
+    if (!['public', 'private'].includes(activityPrivacy)) {
+      return res.status(400).json({ error: 'Geçersiz gizlilik ayarı.' })
+    }
+
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: { activityPrivacy },
+      select: { id: true, activityPrivacy: true }
+    })
+
+    return res.json({ message: 'Gizlilik ayarı güncellendi.', user })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
 // ŞİFRE DEĞİŞTİR
 export const changePassword = async (req: Request & { userId?: number }, res: Response) => {
   try {

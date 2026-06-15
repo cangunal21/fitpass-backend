@@ -9,6 +9,7 @@ import {
   getDropInSlotById,
   getNeighborhoods,
   getVenuesList,
+  getUserActivities,
 } from '../controllers/publicController'
 
 const router = Router()
@@ -22,5 +23,6 @@ router.get('/categories', getCategories)
 router.get('/dropin', getDropInSlots)
 router.get('/dropin/:id', getDropInSlotById)
 router.get('/neighborhoods', getNeighborhoods)
+router.get('/users/:username', getUserActivities)
 
 export default router

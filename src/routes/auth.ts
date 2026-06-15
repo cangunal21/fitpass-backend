@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { register, login, getMe, getMyBookingsAuth, changePassword, forgotPassword, resetPassword } from '../controllers/authController'
+import { register, login, getMe, getMyBookingsAuth, changePassword, forgotPassword, resetPassword, updatePrivacy } from '../controllers/authController'
 import { authMiddleware } from '../middlewares/auth'
 
 const router = Router()
@@ -11,5 +11,6 @@ router.get('/my-bookings', authMiddleware, getMyBookingsAuth)
 router.put('/change-password', authMiddleware, changePassword)
 router.post('/forgot-password', forgotPassword)
 router.post('/reset-password', resetPassword)
+router.put('/privacy', authMiddleware, updatePrivacy)
 
 export default router
