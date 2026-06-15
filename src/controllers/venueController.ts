@@ -302,7 +302,7 @@ export const createRecurringSessions = async (req: Request, res: Response) => {
 
         if (date <= now) continue // geçmiş, atla
 
-        const endsAt = new Date(date.getTime() + (cls.durationMinutes || 60) * 60000)
+        const endsAt = new Date(date.getTime() + (cls.durationMinutes || cls.duration || 60) * 60000)
 
         // Aynı seans var mı kontrol et
         const existing = await prisma.class_Session.findFirst({
