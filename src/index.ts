@@ -7,6 +7,7 @@ import venueRoutes from './routes/venue'
 import adminRoutes from './routes/admin'
 import publicRoutes from './routes/public'
 import socialRouter from './routes/social'
+import reviewRoutes from './routes/reviews'
 
 dotenv.config()
 
@@ -23,6 +24,7 @@ app.use('/api/venue', venueRoutes)
 app.use('/api/admin', adminRoutes)
 app.use('/api/public', publicRoutes)
 app.use('/api/social', socialRouter)
+app.use('/api/reviews', reviewRoutes)
 
 // Test route
 app.get('/', (req, res) => {

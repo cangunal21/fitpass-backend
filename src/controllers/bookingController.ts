@@ -178,7 +178,7 @@ export const cancelBooking = async (req: Request, res: Response) => {
 
     const booking = await prisma.booking.findUnique({
       where: { id: bookingId },
-      include: { session: true },
+      include: { session: { select: { startsAt: true } } },
     })
 
     if (!booking) {
@@ -193,9 +193,34 @@ export const cancelBooking = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Rezervasyon zaten iptal edilmiş.' })
     }
 
+    // İptal politikası: 12 saat içinde iptal yok, 12-24 saat yarım iade, 24 saat üstü tam iade
+    const sessionStartsAt = booking.session?.startsAt
+    if (sessionStartsAt) {
+      const now = new Date()
+      const hoursUntilSession = (new Date(sessionStartsAt).getTime() - now.getTime()) / (1000 * 60 * 60)
+
+      if (hoursUntilSession < 12) {
+        return res.status(400).json({
+          error: 'Derse 12 saatten az kaldığı için iptal yapılamaz.',
+          hoursLeft: Math.round(hoursUntilSession * 10) / 10
+        })
+      }
+    }
+
+    // Determine refund type
+    const sessionStartsAt2 = booking.session?.startsAt
+    const hoursUntil = sessionStartsAt2
+      ? (new Date(sessionStartsAt2).getTime() - new Date().getTime()) / (1000 * 60 * 60)
+      : 999
+    const refundType = hoursUntil >= 24 ? 'full' : 'half'
+    const refundAmount = refundType === 'full' ? booking.finalAmount : (booking.finalAmount || 0) / 2
+
     const updated = await prisma.booking.update({
       where: { id: bookingId },
-      data: { status: 'cancelled' },
+      data: {
+        status: 'cancelled',
+        notes: `${booking.notes ? booking.notes + ' | ' : ''}İptal: ${refundType === 'full' ? 'Tam iade' : 'Yarım iade'} (₺${refundAmount})`
+      },
     })
 
     // İptal email bildirimleri
@@ -229,7 +254,12 @@ export const cancelBooking = async (req: Request, res: Response) => {
       console.error('Cancellation email error:', emailErr)
     }
 
-    res.json({ message: 'Rezervasyon iptal edildi.', booking: updated })
+    res.json({
+      message: `Rezervasyon iptal edildi. ${refundType === 'full' ? 'Tam iade' : 'Yarım iade'} (₺${refundAmount}) uygulandı.`,
+      booking: updated,
+      refundType,
+      refundAmount,
+    })
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'Sunucu hatası.' })
