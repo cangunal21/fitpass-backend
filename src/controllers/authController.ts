@@ -322,3 +322,24 @@ export const changePassword = async (req: Request & { userId?: number }, res: Re
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
+
+export const updateNotificationSettings = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    const { emailReminders, smsReminders } = req.body
+
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(typeof emailReminders === 'boolean' ? { emailReminders } : {}),
+        ...(typeof smsReminders === 'boolean' ? { smsReminders } : {}),
+      },
+      select: { id: true, emailReminders: true, smsReminders: true }
+    })
+
+    return res.json({ message: 'Bildirim tercihleri güncellendi.', user })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}

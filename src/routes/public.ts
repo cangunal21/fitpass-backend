@@ -12,6 +12,7 @@ import {
   getUserActivities,
   submitComplaint,
 } from '../controllers/publicController'
+import { validateCoupon } from '../controllers/couponController'
 
 const router = Router()
 
@@ -26,5 +27,6 @@ router.get('/dropin/:id', getDropInSlotById)
 router.get('/neighborhoods', getNeighborhoods)
 router.get('/users/:username', getUserActivities)
 router.post('/complaint', submitComplaint)
+router.post('/validate-coupon', validateCoupon)
 
 export default router

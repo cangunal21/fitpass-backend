@@ -128,6 +128,8 @@ model User {
   longitude             Float?
   profilePrivacy        String               @default("public")
   activityPrivacy       String               @default("public")
+  emailReminders        Boolean              @default(true)
+  smsReminders          Boolean              @default(false)
   tier                  Tier?                @relation(fields: [tierId], references: [id])
   tierId                Int?
   tierSportCounts       Json                 @default("{}")
@@ -192,6 +194,7 @@ model Venue {
   userBadges      UserBadge[]
   payouts         VenuePayout[]
   favoritedBy     FavoriteVenue[]
+  coupons         Coupon[]
 }
 
 model VenueSportCategory {
@@ -327,6 +330,8 @@ model Booking {
   bookingNumber    String         @unique
   taggedFriends    Json           @default("[]")
   reminderSent     Boolean        @default(false)
+  coupon           Coupon?        @relation(fields: [couponId], references: [id])
+  couponId         Int?
   createdAt        DateTime       @default(now())
   confirmedAt      DateTime?
   cancelledAt      DateTime?
@@ -511,4 +516,19 @@ model Waitlist {
   createdAt  DateTime      @default(now())
 
   @@unique([userId, sessionId])
+}
+
+model Coupon {
+  id            Int       @id @default(autoincrement())
+  venue         Venue     @relation(fields: [venueId], references: [id])
+  venueId       Int
+  code          String    @unique
+  discountType  String    // "percent" | "fixed"
+  discountValue Float
+  maxUses       Int?
+  usedCount     Int       @default(0)
+  expiresAt     DateTime?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  bookings      Booking[]
 }

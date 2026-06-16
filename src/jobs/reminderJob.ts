@@ -14,7 +14,7 @@ export const sendRemindersJob = async () => {
         session: { startsAt: { gte: from, lte: to } }
       },
       include: {
-        user: { select: { email: true, fullName: true } },
+        user: { select: { email: true, fullName: true, emailReminders: true } },
         session: {
           include: {
             class: { include: { venue: { select: { name: true } } } }
@@ -26,6 +26,7 @@ export const sendRemindersJob = async () => {
     for (const booking of bookings) {
       try {
         if (!booking.user?.email) continue
+        if (booking.user.emailReminders === false) continue
         const startsAt = new Date(booking.session!.startsAt)
         const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
         const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
