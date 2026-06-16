@@ -346,6 +346,37 @@ export const sendWaitlistNotificationEmail = async (to: string, fullName: string
   })
 }
 
+export const sendComplaintEmail = async (
+  name: string,
+  email: string,
+  subject: string,
+  message: string
+) => {
+  const adminEmail = process.env.ADMIN_EMAIL || 'cgunal21@gmail.com'
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to: adminEmail,
+    replyTo: email,
+    subject: `[Şikayet] ${subject}`,
+    html: baseTemplate(`
+      <h2 style="font-size:20px;font-weight:800;color:#1a1a1a;margin:0 0 20px;">Yeni Şikayet / Geri Bildirim</h2>
+      <div style="background:#F8F8F8;border-radius:12px;padding:20px 24px;margin-bottom:20px;">
+        <p style="margin:0 0 8px;font-size:13px;color:#888;">Gönderen</p>
+        <p style="margin:0;font-size:15px;font-weight:700;color:#1a1a1a;">${name} · <a href="mailto:${email}" style="color:#4F46E5;">${email}</a></p>
+      </div>
+      <div style="background:#F8F8F8;border-radius:12px;padding:20px 24px;margin-bottom:20px;">
+        <p style="margin:0 0 8px;font-size:13px;color:#888;">Konu</p>
+        <p style="margin:0;font-size:15px;font-weight:700;color:#1a1a1a;">${subject}</p>
+      </div>
+      <div style="background:#F8F8F8;border-radius:12px;padding:20px 24px;">
+        <p style="margin:0 0 8px;font-size:13px;color:#888;">Mesaj</p>
+        <p style="margin:0;font-size:15px;color:#333;line-height:1.7;white-space:pre-wrap;">${message}</p>
+      </div>
+      <p style="margin-top:20px;font-size:12px;color:#aaa;">Bu maile yanıt vererek kullanıcıya direkt ulaşabilirsiniz.</p>
+    `)
+  })
+}
+
 export const sendVenueApprovedEmail = async (
   to: string,
   venueName: string

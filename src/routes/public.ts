@@ -10,6 +10,7 @@ import {
   getNeighborhoods,
   getVenuesList,
   getUserActivities,
+  submitComplaint,
 } from '../controllers/publicController'
 
 const router = Router()
@@ -24,5 +25,6 @@ router.get('/dropin', getDropInSlots)
 router.get('/dropin/:id', getDropInSlotById)
 router.get('/neighborhoods', getNeighborhoods)
 router.get('/users/:username', getUserActivities)
+router.post('/complaint', submitComplaint)
 
 export default router

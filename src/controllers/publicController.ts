@@ -1,5 +1,6 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
+import { sendComplaintEmail } from '../utils/email'
 
 // GET /api/public/sessions
 export const getSessions = async (req: Request, res: Response) => {
@@ -364,6 +365,28 @@ export const getUserActivities = async (req: Request, res: Response) => {
     })
 
     return res.json({ user, bookings, dropInParticipations: dropIns, isPrivate: false })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+
+export const submitComplaint = async (req: Request, res: Response) => {
+  try {
+    const { name, email, subject, message } = req.body
+    if (!name || !email || !subject || !message) {
+      return res.status(400).json({ error: 'Tüm alanlar zorunludur.' })
+    }
+    if (message.length > 2000) {
+      return res.status(400).json({ error: 'Mesaj en fazla 2000 karakter olabilir.' })
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({ error: 'Geçerli bir email adresi girin.' })
+    }
+    await sendComplaintEmail(name, email, subject, message)
+    return res.json({ message: 'Şikayetiniz iletildi. En kısa sürede dönüş yapacağız.' })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
