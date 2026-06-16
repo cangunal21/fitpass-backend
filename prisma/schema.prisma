@@ -167,12 +167,12 @@ model Venue {
   owner          User                 @relation(fields: [ownerUserId], references: [id])
   ownerUserId    Int
   address        String
-  neighborhood   Neighborhood         @relation(fields: [neighborhoodId], references: [id])
-  neighborhoodId Int
-  city           City                 @relation(fields: [cityId], references: [id])
-  cityId         Int
-  latitude       Float
-  longitude      Float
+  neighborhood   Neighborhood?        @relation(fields: [neighborhoodId], references: [id])
+  neighborhoodId Int?
+  city           City?                @relation(fields: [cityId], references: [id])
+  cityId         Int?
+  latitude       Float?
+  longitude      Float?
   phone          String?
   email          String?              @unique
   passwordHash   String?
