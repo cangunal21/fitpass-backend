@@ -392,3 +392,26 @@ export const submitComplaint = async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
+
+// Kullanıcı arama (etiketleme için autocomplete)
+export const searchUsers = async (req: Request, res: Response) => {
+  try {
+    const q = (req.query.q as string || '').trim().replace(/^@/, '')
+    if (!q || q.length < 2) return res.json({ users: [] })
+
+    const users = await prisma.user.findMany({
+      where: {
+        OR: [
+          { username: { contains: q, mode: 'insensitive' } },
+          { fullName: { contains: q, mode: 'insensitive' } },
+        ]
+      },
+      select: { username: true, fullName: true, avatarUrl: true },
+      take: 8,
+    })
+
+    return res.json({ users })
+  } catch (err) {
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}

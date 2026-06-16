@@ -1,13 +1,16 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
-import { sendVenueBookingNotificationEmail, sendCancellationEmail, sendVenueCancellationEmail, sendBookingConfirmationEmail } from '../utils/email'
+import { sendVenueBookingNotificationEmail, sendCancellationEmail, sendVenueCancellationEmail, sendBookingConfirmationEmail, sendGroupTagNotificationEmail, sendGroupInviteEmail } from '../utils/email'
 
 // Rezervasyon oluştur
 export const createBooking = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId
-    const { sessionId, notes, groupSize: rawGroupSize } = req.body
+    const { sessionId, notes, groupSize: rawGroupSize, taggedUsernames } = req.body
     const groupSize = Math.max(1, Math.min(parseInt(rawGroupSize) || 1, 10))
+    const rawTags: string[] = Array.isArray(taggedUsernames) ? taggedUsernames.slice(0, groupSize - 1) : []
+    // normalize: strip @ prefix, lowercase
+    const cleanTags = rawTags.map((u: string) => u.replace(/^@/, '').toLowerCase().trim()).filter(Boolean)
 
     if (!sessionId) {
       return res.status(400).json({ error: 'Ders seansı gerekli.' })
@@ -61,6 +64,7 @@ export const createBooking = async (req: Request, res: Response) => {
         finalAmount: basePrice,
         venuePayout: basePrice,
         bookingNumber: `BK-${crypto.randomUUID()}`,
+        taggedFriends: cleanTags.length ? cleanTags : [],
       },
       include: {
         session: {
@@ -115,7 +119,40 @@ export const createBooking = async (req: Request, res: Response) => {
       console.error('User confirmation email error:', emailErr)
     }
 
-    res.status(201).json({ message: 'Rezervasyon başarıyla oluşturuldu!', booking })
+    // Etiketlenen kullanıcılara bildirim gönder
+    if (cleanTags.length > 0) {
+      try {
+        const booker = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } })
+        const startsAt = new Date(session.startsAt)
+        const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
+        const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+        const venueName = booking.session!.class.venueId
+          ? (await prisma.venue.findUnique({ where: { id: booking.session!.class.venueId }, select: { name: true } }))?.name || ''
+          : ''
+
+        for (const username of cleanTags) {
+          const taggedUser = await prisma.user.findFirst({
+            where: { username: { equals: username, mode: 'insensitive' } },
+            select: { email: true, fullName: true, emailReminders: true }
+          })
+          if (taggedUser?.email && taggedUser.emailReminders !== false) {
+            await sendGroupTagNotificationEmail(
+              taggedUser.email,
+              taggedUser.fullName,
+              booker?.fullName || 'Bir kullanıcı',
+              booking.session!.class.title,
+              date,
+              time,
+              venueName
+            )
+          }
+        }
+      } catch (tagErr) {
+        console.error('Tag notification error:', tagErr)
+      }
+    }
+
+    res.status(201).json({ message: 'Rezervasyon başarıyla oluşturuldu!', booking, taggedCount: cleanTags.length })
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'Sunucu hatası.' })

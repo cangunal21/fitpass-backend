@@ -11,6 +11,7 @@ import {
   getVenuesList,
   getUserActivities,
   submitComplaint,
+  searchUsers,
 } from '../controllers/publicController'
 import { validateCoupon } from '../controllers/couponController'
 
@@ -27,6 +28,7 @@ router.get('/dropin/:id', getDropInSlotById)
 router.get('/neighborhoods', getNeighborhoods)
 router.get('/users/:username', getUserActivities)
 router.post('/complaint', submitComplaint)
+router.get('/users-search', searchUsers)
 router.post('/validate-coupon', validateCoupon)
 
 export default router
