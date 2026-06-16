@@ -87,3 +87,100 @@ export const getVenueStats = async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
+
+// Salon gelir raporu
+export const getVenueRevenue = async (req: Request, res: Response) => {
+  try {
+    const venueId = (req as any).venueId
+    const now = new Date()
+
+    // Son 6 ayın başlangıcı
+    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1)
+
+    // Tüm confirmed bookings (son 6 ay)
+    const bookings = await prisma.booking.findMany({
+      where: {
+        status: 'confirmed',
+        session: { class: { venueId } },
+        createdAt: { gte: sixMonthsAgo }
+      },
+      include: {
+        session: {
+          include: { class: { select: { title: true, basePrice: true, venueId: true } } }
+        }
+      }
+    })
+
+    // İptal edilen bookings
+    const cancelled = await prisma.booking.findMany({
+      where: {
+        status: 'cancelled',
+        session: { class: { venueId } },
+        createdAt: { gte: sixMonthsAgo }
+      },
+      select: { finalAmount: true, discountAmount: true, createdAt: true }
+    })
+
+    // Bu ay / geçen ay
+    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+
+    const thisMonthBookings = bookings.filter(b => new Date(b.createdAt) >= thisMonthStart)
+    const lastMonthBookings = bookings.filter(b => new Date(b.createdAt) >= lastMonthStart && new Date(b.createdAt) < thisMonthStart)
+
+    const thisMonthRevenue = thisMonthBookings.reduce((acc, b) => acc + b.finalAmount, 0)
+    const lastMonthRevenue = lastMonthBookings.reduce((acc, b) => acc + b.finalAmount, 0)
+    const totalRevenue = bookings.reduce((acc, b) => acc + b.finalAmount, 0)
+    const avgPerBooking = bookings.length > 0 ? totalRevenue / bookings.length : 0
+    const totalCancelledAmount = cancelled.reduce((acc, b) => acc + b.finalAmount, 0)
+
+    const monthChange = lastMonthRevenue > 0
+      ? Math.round(((thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue) * 100)
+      : null
+
+    // Aylık gelir (son 6 ay)
+    const MONTHS_TR = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara']
+    const monthlyRevenue: { month: string; revenue: number; bookings: number }[] = []
+    for (let i = 5; i >= 0; i--) {
+      const start = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 1)
+      const monthBookings = bookings.filter(b => {
+        const d = new Date(b.createdAt)
+        return d >= start && d < end
+      })
+      monthlyRevenue.push({
+        month: MONTHS_TR[start.getMonth()],
+        revenue: Math.round(monthBookings.reduce((acc, b) => acc + b.finalAmount, 0)),
+        bookings: monthBookings.length,
+      })
+    }
+
+    // Ders bazlı gelir
+    const classMap: Record<string, { title: string; sessions: number; bookings: number; revenue: number }> = {}
+    bookings.forEach(b => {
+      const title = b.session?.class?.title || 'Bilinmiyor'
+      if (!classMap[title]) classMap[title] = { title, sessions: 0, bookings: 0, revenue: 0 }
+      classMap[title].bookings++
+      classMap[title].revenue += b.finalAmount
+    })
+    const byClass = Object.values(classMap).sort((a, b) => b.revenue - a.revenue)
+
+    return res.json({
+      summary: {
+        thisMonthRevenue: Math.round(thisMonthRevenue),
+        lastMonthRevenue: Math.round(lastMonthRevenue),
+        monthChange,
+        totalRevenue: Math.round(totalRevenue),
+        avgPerBooking: Math.round(avgPerBooking),
+        totalBookings: bookings.length,
+        cancelledCount: cancelled.length,
+        totalCancelledAmount: Math.round(totalCancelledAmount),
+      },
+      monthlyRevenue,
+      byClass,
+    })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}

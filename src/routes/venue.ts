@@ -10,7 +10,7 @@ import {
 import { createInstructor, getVenueInstructors, updateInstructor } from '../controllers/instructorController'
 import { venueAuthMiddleware, venueApprovedMiddleware } from '../middlewares/venueAuth'
 import { createCoupon, getVenueCoupons, deleteCoupon } from '../controllers/couponController'
-import { getVenueStats } from '../controllers/statsController'
+import { getVenueStats, getVenueRevenue } from '../controllers/statsController'
 
 const router = Router()
 
@@ -33,6 +33,7 @@ router.delete('/classes/:classId/sessions/:sessionId', venueAuthMiddleware, dele
 router.delete('/dropin/:id', venueAuthMiddleware, deleteDropInSlot)
 router.put('/images', venueAuthMiddleware, updateVenueImages)
 router.get('/stats', venueAuthMiddleware, getVenueStats)
+router.get('/revenue', venueAuthMiddleware, getVenueRevenue)
 router.get('/coupons', venueAuthMiddleware, getVenueCoupons)
 router.post('/coupons', venueAuthMiddleware, venueApprovedMiddleware, createCoupon)
 router.delete('/coupons/:id', venueAuthMiddleware, deleteCoupon)
