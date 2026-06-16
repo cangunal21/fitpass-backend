@@ -269,7 +269,7 @@ export const sendVenueRegistrationAdminEmail = async (
   venueAddress: string,
   sportCategories: string[]
 ) => {
-  const adminEmail = process.env.ADMIN_EMAIL || 'cgunal21@gmail.com'
+  const adminEmail = process.env.ADMIN_EMAIL || 'admin@sipsakspor.com'
   await resend.emails.send({
     from: FROM_EMAIL,
     to: adminEmail,
@@ -352,7 +352,7 @@ export const sendComplaintEmail = async (
   subject: string,
   message: string
 ) => {
-  const adminEmail = process.env.ADMIN_EMAIL || 'cgunal21@gmail.com'
+  const adminEmail = process.env.ADMIN_EMAIL || 'admin@sipsakspor.com'
   await resend.emails.send({
     from: FROM_EMAIL,
     to: adminEmail,
