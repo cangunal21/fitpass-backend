@@ -60,6 +60,55 @@ export const createReview = async (req: Request, res: Response) => {
   }
 }
 
+// Salon yanıtı (venue auth)
+export const replyToReview = async (req: Request, res: Response) => {
+  try {
+    const venueId = (req as any).venueId
+    const reviewId = parseInt(req.params.id as string)
+    const { reply } = req.body
+
+    if (!reply?.trim()) return res.status(400).json({ error: 'Yanıt boş olamaz.' })
+    if (reply.length > 1000) return res.status(400).json({ error: 'Yanıt en fazla 1000 karakter olabilir.' })
+
+    const review = await prisma.review.findUnique({ where: { id: reviewId } })
+    if (!review || review.venueId !== venueId) {
+      return res.status(403).json({ error: 'Bu yoruma yanıt verme yetkiniz yok.' })
+    }
+
+    const updated = await prisma.review.update({
+      where: { id: reviewId },
+      data: { venueReply: reply.trim(), venueRepliedAt: new Date() }
+    })
+
+    return res.json({ message: 'Yanıtınız kaydedildi.', review: updated })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// Salon yanıtını sil (venue auth)
+export const deleteReviewReply = async (req: Request, res: Response) => {
+  try {
+    const venueId = (req as any).venueId
+    const reviewId = parseInt(req.params.id as string)
+
+    const review = await prisma.review.findUnique({ where: { id: reviewId } })
+    if (!review || review.venueId !== venueId) {
+      return res.status(403).json({ error: 'Yetki yok.' })
+    }
+
+    await prisma.review.update({
+      where: { id: reviewId },
+      data: { venueReply: null, venueRepliedAt: null }
+    })
+
+    return res.json({ message: 'Yanıt silindi.' })
+  } catch (err) {
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
 // Salon yorumlarını getir (public)
 export const getVenueReviews = async (req: Request, res: Response) => {
   try {

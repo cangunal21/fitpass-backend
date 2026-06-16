@@ -328,6 +328,7 @@ model Booking {
   finalAmount      Float
   venuePayout      Float
   bookingNumber    String         @unique
+  groupSize        Int            @default(1)
   taggedFriends    Json           @default("[]")
   reminderSent     Boolean        @default(false)
   coupon           Coupon?        @relation(fields: [couponId], references: [id])
@@ -400,10 +401,12 @@ model Review {
   venueId        Int?
   instructor     Instructor? @relation(fields: [instructorId], references: [id])
   instructorId   Int?
-  rating         Int
-  comment        String?
-  isAnonymous    Boolean     @default(true)
-  createdAt      DateTime    @default(now())
+  rating          Int
+  comment         String?
+  isAnonymous     Boolean     @default(true)
+  venueReply      String?
+  venueRepliedAt  DateTime?
+  createdAt       DateTime    @default(now())
 }
 
 // ─────────────────────────────────────────────

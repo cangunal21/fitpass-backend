@@ -6,7 +6,8 @@ import { sendVenueBookingNotificationEmail, sendCancellationEmail, sendVenueCanc
 export const createBooking = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId
-    const { sessionId, notes } = req.body
+    const { sessionId, notes, groupSize: rawGroupSize } = req.body
+    const groupSize = Math.max(1, Math.min(parseInt(rawGroupSize) || 1, 10))
 
     if (!sessionId) {
       return res.status(400).json({ error: 'Ders seansı gerekli.' })
@@ -27,8 +28,10 @@ export const createBooking = async (req: Request, res: Response) => {
       where: { sessionId, status: { in: ['confirmed', 'pending'] } },
     })
 
-    if (session.availableSpots && bookingCount >= session.availableSpots) {
-      return res.status(400).json({ error: 'Bu ders seansı dolu.' })
+    if (session.availableSpots && bookingCount + groupSize > session.availableSpots) {
+      const remaining = session.availableSpots - bookingCount
+      if (remaining <= 0) return res.status(400).json({ error: 'Bu ders seansı dolu.' })
+      return res.status(400).json({ error: `Sadece ${remaining} kontenjan kaldı.` })
     }
 
     // Zaten rezervasyon var mı?
@@ -40,7 +43,7 @@ export const createBooking = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Bu derse zaten kayıtlısınız.' })
     }
 
-    const basePrice = session.class?.basePrice || 0
+    const basePrice = (session.class?.basePrice || 0) * groupSize
 
     const booking = await prisma.booking.create({
       data: {
@@ -49,6 +52,7 @@ export const createBooking = async (req: Request, res: Response) => {
         bookingType: 'class',
         status: 'confirmed',
         notes: notes || null,
+        groupSize,
         baseAmount: basePrice,
         discountAmount: 0,
         commissionAmount: 0,
