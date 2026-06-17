@@ -164,8 +164,8 @@ model Venue {
   id             Int                  @id @default(autoincrement())
   name           String
   description    String?
-  owner          User                 @relation(fields: [ownerUserId], references: [id])
-  ownerUserId    Int
+  owner          User?                @relation(fields: [ownerUserId], references: [id])
+  ownerUserId    Int?
   address        String
   neighborhood   Neighborhood?        @relation(fields: [neighborhoodId], references: [id])
   neighborhoodId Int?
