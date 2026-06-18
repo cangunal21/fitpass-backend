@@ -265,7 +265,14 @@ export const getDropInSlotById = async (req: Request, res: Response) => {
       include: {
         venue: { select: { id: true, name: true, address: true } },
         sportCategory: { select: { name: true, colorHex: true, iconUrl: true } },
-        participants: { select: { id: true, userId: true } },
+        participants: {
+          where: { status: 'confirmed' },
+          select: {
+            id: true,
+            team: true,
+            user: { select: { id: true, username: true, fullName: true, avatarUrl: true } }
+          }
+        },
       }
     })
     if (!slot) return res.status(404).json({ error: 'Slot bulunamadı.' })
