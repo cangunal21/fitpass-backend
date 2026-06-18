@@ -107,6 +107,10 @@ export const venueLogin = async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Email veya şifre hatalı.' })
     }
 
+    if ((venue as any).isSuspended) {
+      return res.status(403).json({ error: 'Hesabınız askıya alınmıştır. Destek için admin@sipsakspor.com ile iletişime geçin.' })
+    }
+
     const token = generateToken({ venueId: venue.id, email: venue.email, role: 'venue' })
 
     return res.json({

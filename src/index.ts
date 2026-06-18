@@ -20,6 +20,8 @@ dotenv.config()
 const app = express()
 const PORT = process.env.PORT || 3000
 
+app.set('trust proxy', 1) // Railway reverse proxy arkasında gerçek IP'yi al
+
 app.use(cors())
 app.use(express.json())
 
