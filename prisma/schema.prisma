@@ -332,6 +332,9 @@ model Booking {
   groupSize        Int            @default(1)
   taggedFriends    Json           @default("[]")
   reminderSent     Boolean        @default(false)
+  checkInCode      String?        @unique
+  checkedIn        Boolean        @default(false)
+  checkedInAt      DateTime?
   coupon           Coupon?        @relation(fields: [couponId], references: [id])
   couponId         Int?
   createdAt        DateTime       @default(now())

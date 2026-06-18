@@ -64,6 +64,7 @@ export const createBooking = async (req: Request, res: Response) => {
         finalAmount: basePrice,
         venuePayout: basePrice,
         bookingNumber: `BK-${crypto.randomUUID()}`,
+        checkInCode: crypto.randomBytes(4).toString('hex').toUpperCase(),
         taggedFriends: cleanTags.length ? cleanTags : [],
       },
       include: {
@@ -312,5 +313,70 @@ export const cancelBooking = async (req: Request, res: Response) => {
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// Salon check-in: kodu doğrula ve check-in yap
+export const checkInBooking = async (req: Request, res: Response) => {
+  try {
+    const venueId = (req as any).venueId
+    const { code } = req.body
+
+    if (!code?.trim()) {
+      return res.status(400).json({ error: 'Check-in kodu gerekli.' })
+    }
+
+    const booking = await prisma.booking.findFirst({
+      where: { checkInCode: code.trim().toUpperCase() },
+      include: {
+        user: { select: { fullName: true, username: true, avatarUrl: true } },
+        session: { include: { class: { select: { title: true, venueId: true } } } }
+      }
+    })
+
+    if (!booking) {
+      return res.status(404).json({ error: 'Geçersiz kod. Rezervasyon bulunamadı.' })
+    }
+
+    // Bu salona ait mi?
+    if (booking.session?.class?.venueId !== venueId) {
+      return res.status(403).json({ error: 'Bu rezervasyon salonunuza ait değil.' })
+    }
+
+    if (booking.status !== 'confirmed') {
+      return res.status(400).json({ error: 'Rezervasyon onaylı değil.' })
+    }
+
+    if (booking.checkedIn) {
+      return res.json({
+        alreadyCheckedIn: true,
+        message: 'Bu rezervasyon zaten check-in yapılmış.',
+        booking: {
+          user: booking.user,
+          classTitle: booking.session?.class?.title,
+          checkedInAt: booking.checkedInAt,
+          groupSize: booking.groupSize,
+        }
+      })
+    }
+
+    await prisma.booking.update({
+      where: { id: booking.id },
+      data: { checkedIn: true, checkedInAt: new Date() }
+    })
+
+    return res.json({
+      success: true,
+      message: 'Check-in başarılı!',
+      booking: {
+        user: booking.user,
+        classTitle: booking.session?.class?.title,
+        groupSize: booking.groupSize,
+        checkedInAt: new Date(),
+      }
+    })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
