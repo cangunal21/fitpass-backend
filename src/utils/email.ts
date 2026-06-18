@@ -71,6 +71,28 @@ export const sendPasswordResetEmail = async (to: string, fullName: string, reset
   })
 }
 
+export const sendVenuePasswordResetEmail = async (to: string, venueName: string, resetToken: string) => {
+  const resetUrl = `${SITE_URL}/salon-sifre-sifirla?token=${resetToken}`
+
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to,
+    subject: 'Şipşakspor Salon Paneli — Şifre Sıfırlama',
+    html: baseTemplate(`
+      <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0 0 8px;">Salon Şifresi Sıfırlama</h2>
+      <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
+        Merhaba <strong>${venueName}</strong>, salon paneliniz için şifre sıfırlama talebinde bulunuldu. Aşağıdaki butona tıklayarak yeni şifrenizi belirleyebilirsiniz.
+      </p>
+      <div style="text-align: center; margin-bottom: 24px;">
+        <a href="${resetUrl}" style="display: inline-block; padding: 14px 32px; background: ${BRAND_COLOR}; color: #fff; border-radius: 14px; text-decoration: none; font-size: 15px; font-weight: 700;">Şifremi Sıfırla →</a>
+      </div>
+      <div style="background: #FEF2F2; border-radius: 12px; padding: 14px;">
+        <p style="font-size: 13px; color: #DC2626; margin: 0;">⚠️ Bu link 1 saat geçerlidir. Eğer bu talebi siz yapmadıysanız bu emaili görmezden gelebilirsiniz.</p>
+      </div>
+    `),
+  })
+}
+
 export const sendBookingConfirmationEmail = async (
   to: string,
   fullName: string,

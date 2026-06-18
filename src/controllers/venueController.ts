@@ -2,7 +2,8 @@ import { Request, Response } from 'express'
 import bcrypt from 'bcryptjs'
 import prisma from '../utils/prisma'
 import { generateToken } from '../utils/jwt'
-import { sendVenueRegistrationAdminEmail } from '../utils/email'
+import { sendVenueRegistrationAdminEmail, sendVenuePasswordResetEmail } from '../utils/email'
+import crypto from 'crypto'
 
 // SALON KAYIT
 export const venueRegister = async (req: Request, res: Response) => {
@@ -537,6 +538,60 @@ export const updateVenueImages = async (req: Request, res: Response) => {
       select: { id: true, images: true, coverImageUrl: true }
     })
     return res.json({ message: 'Resimler güncellendi.', venue: updated })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// SALON ŞİFRE SIFIRLAMA - MAIL GÖNDER
+export const venueForgotPassword = async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body
+    const venue = await prisma.venue.findUnique({ where: { email } })
+    // Güvenlik: email yoksa da aynı mesajı dön
+    if (!venue || !venue.email) {
+      return res.json({ message: 'Email gönderildi' })
+    }
+    const token = crypto.randomBytes(32).toString('hex')
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000)
+    await prisma.venuePasswordResetToken.create({
+      data: { venueId: venue.id, token, expiresAt }
+    })
+    // Kullanıcı reset maili ile aynı template, salon paneli linki
+    sendVenuePasswordResetEmail(venue.email, venue.name, token).catch(err =>
+      console.error('Venue reset mail gönderilemedi:', err)
+    )
+    return res.json({ message: 'Email gönderildi' })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// SALON ŞİFRE SIFIRLAMA - YENİ ŞİFRE BELİRLE
+export const venueResetPassword = async (req: Request, res: Response) => {
+  try {
+    const { token, password } = req.body
+    if (!token || !password || password.length < 6) {
+      return res.status(400).json({ error: 'Geçersiz istek.' })
+    }
+    const resetToken = await prisma.venuePasswordResetToken.findFirst({
+      where: { token, used: false, expiresAt: { gt: new Date() } }
+    })
+    if (!resetToken) {
+      return res.status(400).json({ error: 'Geçersiz veya süresi dolmuş link.' })
+    }
+    const passwordHash = await bcrypt.hash(password, 12)
+    await prisma.venue.update({
+      where: { id: resetToken.venueId },
+      data: { passwordHash }
+    })
+    await prisma.venuePasswordResetToken.update({
+      where: { id: resetToken.id },
+      data: { used: true }
+    })
+    return res.json({ message: 'Şifre güncellendi.' })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })

@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import {
-  venueRegister, venueLogin, getVenueMe,
+  venueRegister, venueLogin, getVenueMe, venueForgotPassword, venueResetPassword,
   createClass, updateClass, deleteClass,
   createSession, createRecurringSessions, updateSession, deleteSession,
   getVenueBookings,
@@ -16,6 +16,8 @@ const router = Router()
 
 router.post('/register', venueRegister)
 router.post('/login', venueLogin)
+router.post('/forgot-password', venueForgotPassword)
+router.post('/reset-password', venueResetPassword)
 router.get('/me', venueAuthMiddleware, getVenueMe)
 router.get('/bookings', venueAuthMiddleware, getVenueBookings)
 router.post('/classes', venueAuthMiddleware, venueApprovedMiddleware, createClass)

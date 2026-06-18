@@ -195,6 +195,7 @@ model Venue {
   payouts         VenuePayout[]
   favoritedBy     FavoriteVenue[]
   coupons         Coupon[]
+  passwordResetTokens VenuePasswordResetToken[]
 }
 
 model VenueSportCategory {
@@ -485,6 +486,16 @@ model PasswordResetToken {
   used      Boolean  @default(false)
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id])
+}
+
+model VenuePasswordResetToken {
+  id        Int      @id @default(autoincrement())
+  venueId   Int
+  token     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+  venue     Venue    @relation(fields: [venueId], references: [id])
 }
 
 model RewardRedemption {
