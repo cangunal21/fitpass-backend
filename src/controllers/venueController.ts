@@ -135,6 +135,9 @@ export const getVenueMe = async (req: Request, res: Response) => {
       select: {
         id: true, name: true, email: true, phone: true, address: true,
         description: true, isApproved: true, avgRating: true, totalReviews: true, createdAt: true,
+        sportCategories: {
+          select: { sportCategory: { select: { name: true } } }
+        },
         classes: {
           select: {
             id: true, title: true, category: true, basePrice: true, isActive: true,
