@@ -28,8 +28,16 @@ export const getSessions = async (req: Request, res: Response) => {
     const classWhere: any = {}
     if (category) classWhere.sportCategory = { name: { equals: category as string, mode: 'insensitive' } }
     if (venueId) classWhere.venueId = parseInt(venueId as string)
-    if (search) classWhere.title = { contains: search as string, mode: 'insensitive' }
     if (neighborhoodId) classWhere.venue = { neighborhoodId: parseInt(neighborhoodId as string) }
+    if (search) {
+      classWhere.OR = [
+        { title: { contains: search as string, mode: 'insensitive' } },
+        { venue: { name: { contains: search as string, mode: 'insensitive' } } },
+        { venue: { neighborhood: { name: { contains: search as string, mode: 'insensitive' } } } },
+        { venue: { address: { contains: search as string, mode: 'insensitive' } } },
+        { sportCategory: { name: { contains: search as string, mode: 'insensitive' } } },
+      ]
+    }
     if (Object.keys(classWhere).length > 0) where.class = classWhere
 
     const orderBy: any = sort === 'rating'
