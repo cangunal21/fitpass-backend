@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs'
 import crypto from 'crypto'
 import prisma from '../utils/prisma'
 import { generateToken } from '../utils/jwt'
-import { sendWelcomeEmail, sendPasswordResetEmail } from '../utils/email'
+import { sendWelcomeEmail, sendPasswordResetEmail, sendEmailVerificationEmail } from '../utils/email'
 
 // KAYIT OL
 export const register = async (req: Request, res: Response) => {
@@ -52,13 +52,19 @@ export const register = async (req: Request, res: Response) => {
 
     const token = generateToken({ userId: user.id, email: user.email })
 
-    // Hoş geldin maili gönder (hata olsa bile kayıt tamamlanır)
-    sendWelcomeEmail(user.email, user.fullName).catch(err => console.error('Mail gönderilemedi:', err))
+    // Email doğrulama tokeni oluştur ve gönder
+    const verifyToken = crypto.randomBytes(32).toString('hex')
+    const verifyExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000)
+    await prisma.emailVerificationToken.create({
+      data: { userId: user.id, token: verifyToken, expiresAt: verifyExpiresAt }
+    })
+    sendEmailVerificationEmail(user.email, user.fullName, verifyToken).catch(err => console.error('Verify mail gönderilemedi:', err))
 
     return res.status(201).json({
-      message: 'Kayıt başarılı!',
+      message: 'Kayıt başarılı! Email adresinize doğrulama linki gönderildi.',
       token,
       user,
+      emailVerificationSent: true,
     })
   } catch (error) {
     console.error('Register error:', error)
@@ -319,6 +325,48 @@ export const changePassword = async (req: Request & { userId?: number }, res: Re
     return res.json({ message: 'Şifre başarıyla değiştirildi.' })
   } catch (error) {
     console.error('ChangePassword error:', error)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// EMAIL DOĞRULA
+export const verifyEmail = async (req: Request, res: Response) => {
+  try {
+    const { token } = req.body
+
+    const record = await prisma.emailVerificationToken.findFirst({
+      where: { token, used: false, expiresAt: { gt: new Date() } }
+    })
+
+    if (!record) {
+      return res.status(400).json({ error: 'Geçersiz veya süresi dolmuş doğrulama linki.' })
+    }
+
+    await prisma.user.update({ where: { id: record.userId }, data: { isEmailVerified: true } })
+    await prisma.emailVerificationToken.update({ where: { id: record.id }, data: { used: true } })
+
+    return res.json({ message: 'Email başarıyla doğrulandı!' })
+  } catch (error) {
+    console.error('VerifyEmail error:', error)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// EMAIL DOĞRULAMA YENİDEN GÖNDER
+export const resendVerification = async (req: Request & { userId?: number }, res: Response) => {
+  try {
+    const user = await prisma.user.findUnique({ where: { id: req.userId }, select: { email: true, fullName: true, isEmailVerified: true } })
+    if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
+    if (user.isEmailVerified) return res.status(400).json({ error: 'Email zaten doğrulanmış.' })
+
+    const verifyToken = crypto.randomBytes(32).toString('hex')
+    const verifyExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000)
+    await prisma.emailVerificationToken.create({ data: { userId: req.userId!, token: verifyToken, expiresAt: verifyExpiresAt } })
+    sendEmailVerificationEmail(user.email, user.fullName, verifyToken).catch(err => console.error('Verify mail gönderilemedi:', err))
+
+    return res.json({ message: 'Doğrulama emaili tekrar gönderildi.' })
+  } catch (error) {
+    console.error('ResendVerification error:', error)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }

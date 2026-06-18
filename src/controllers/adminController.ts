@@ -103,3 +103,75 @@ export const getAllBookings = async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
+
+// Salon dondur/aktif et
+export const suspendVenue = async (req: Request, res: Response) => {
+  try {
+    const venueId = parseInt(req.params.id as string)
+    const { suspend } = req.body
+
+    const venue = await prisma.venue.update({
+      where: { id: venueId },
+      data: { isSuspended: suspend, isActive: !suspend },
+    })
+    return res.json({ message: suspend ? 'Salon donduruldu.' : 'Salon aktif edildi.', venue })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// Salon sil
+export const deleteVenue = async (req: Request, res: Response) => {
+  try {
+    const venueId = parseInt(req.params.id as string)
+    await prisma.venue.delete({ where: { id: venueId } })
+    return res.json({ message: 'Salon silindi.' })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// Kullanıcı banla/aktif et
+export const banUser = async (req: Request, res: Response) => {
+  try {
+    const userId = parseInt(req.params.id as string)
+    const { ban } = req.body
+
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: { emailReminders: ban ? false : true },
+    })
+    return res.json({ message: ban ? 'Kullanıcı banlandı.' : 'Kullanıcı aktif edildi.', user })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// Tüm kuponlar (admin)
+export const getAllCoupons = async (req: Request, res: Response) => {
+  try {
+    const coupons = await prisma.coupon.findMany({
+      include: { venue: { select: { id: true, name: true } } },
+      orderBy: { createdAt: 'desc' },
+    })
+    return res.json({ coupons })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// Kupon sil (admin)
+export const adminDeleteCoupon = async (req: Request, res: Response) => {
+  try {
+    const couponId = parseInt(req.params.id as string)
+    await prisma.coupon.delete({ where: { id: couponId } })
+    return res.json({ message: 'Kupon silindi.' })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}

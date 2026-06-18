@@ -522,3 +522,24 @@ export const sendGroupInviteEmail = async (
     `),
   })
 }
+
+export const sendEmailVerificationEmail = async (to: string, fullName: string, token: string) => {
+  const verifyUrl = `${SITE_URL}/email-dogrula?token=${token}`
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to,
+    subject: 'Şipşakspor — Email Adresinizi Doğrulayın',
+    html: baseTemplate(`
+      <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0 0 8px;">Email Doğrulama</h2>
+      <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
+        Merhaba ${fullName}! Hesabınızı aktifleştirmek için aşağıdaki butona tıklayın.
+      </p>
+      <div style="text-align: center; margin-bottom: 24px;">
+        <a href="${verifyUrl}" style="display: inline-block; padding: 14px 32px; background: ${BRAND_COLOR}; color: #fff; border-radius: 14px; text-decoration: none; font-size: 15px; font-weight: 700;">Emailimi Doğrula →</a>
+      </div>
+      <div style="background: #FEF2F2; border-radius: 12px; padding: 14px;">
+        <p style="font-size: 13px; color: #DC2626; margin: 0;">⚠️ Bu link 24 saat geçerlidir. Eğer bu talebi sen yapmadıysan bu emaili görmezden gelebilirsin.</p>
+      </div>
+    `),
+  })
+}

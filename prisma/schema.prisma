@@ -111,6 +111,16 @@ model UserBadge {
 // KULLANICI
 // ─────────────────────────────────────────────
 
+model EmailVerificationToken {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  token     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
+
 model User {
   id                    Int                  @id @default(autoincrement())
   username              String               @unique
@@ -118,6 +128,7 @@ model User {
   phone                 String?
   passwordHash          String
   fullName              String
+  isEmailVerified       Boolean              @default(false)
   avatarUrl             String?
   bio                   String?
   neighborhood          Neighborhood?        @relation(fields: [neighborhoodId], references: [id])
@@ -151,9 +162,10 @@ model User {
   rewardRedemptions     RewardRedemption[]
   leaderboards          MonthlyLeaderboard[]
   dropInParticipants    DropInParticipant[]
-  passwordResetTokens   PasswordResetToken[]
-  waitlistEntries       Waitlist[]
-  favoriteVenues        FavoriteVenue[]
+  passwordResetTokens      PasswordResetToken[]
+  emailVerificationTokens  EmailVerificationToken[]
+  waitlistEntries          Waitlist[]
+  favoriteVenues           FavoriteVenue[]
 }
 
 // ─────────────────────────────────────────────
@@ -182,6 +194,7 @@ model Venue {
   isActive       Boolean              @default(true)
   isVerified     Boolean              @default(false)
   isApproved     Boolean              @default(false)
+  isSuspended    Boolean              @default(false)
   avgRating      Float                @default(0)
   totalReviews   Int                  @default(0)
   createdAt      DateTime             @default(now())

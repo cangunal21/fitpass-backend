@@ -166,6 +166,62 @@ export const getVenueMe = async (req: Request, res: Response) => {
   }
 }
 
+// SALON PROFİL GÜNCELLE
+export const updateVenueProfile = async (req: Request, res: Response) => {
+  try {
+    const venueId = (req as any).venueId
+    const { name, phone, address, description, website, neighborhoodId } = req.body
+
+    const data: any = {}
+    if (name !== undefined) data.name = name
+    if (phone !== undefined) data.phone = phone
+    if (address !== undefined) data.address = address
+    if (description !== undefined) data.description = description
+    if (website !== undefined) data.website = website
+    if (neighborhoodId !== undefined) data.neighborhoodId = parseInt(neighborhoodId)
+
+    const venue = await prisma.venue.update({
+      where: { id: venueId },
+      data,
+      select: { id: true, name: true, phone: true, address: true, description: true, website: true }
+    })
+
+    return res.json({ message: 'Salon bilgileri güncellendi.', venue })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// SALON ŞİFRE DEĞİŞTİR
+export const changeVenuePassword = async (req: Request, res: Response) => {
+  try {
+    const venueId = (req as any).venueId
+    const { currentPassword, newPassword } = req.body
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Mevcut ve yeni şifre gerekli.' })
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'Yeni şifre en az 6 karakter olmalı.' })
+    }
+
+    const venue = await prisma.venue.findUnique({ where: { id: venueId } })
+    if (!venue?.passwordHash) return res.status(404).json({ error: 'Salon bulunamadı.' })
+
+    const isValid = await bcrypt.compare(currentPassword, venue.passwordHash)
+    if (!isValid) return res.status(401).json({ error: 'Mevcut şifre hatalı.' })
+
+    const newHash = await bcrypt.hash(newPassword, 12)
+    await prisma.venue.update({ where: { id: venueId }, data: { passwordHash: newHash } })
+
+    return res.json({ message: 'Şifre başarıyla değiştirildi.' })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
 // DERS EKLE
 export const createClass = async (req: Request, res: Response) => {
   try {
