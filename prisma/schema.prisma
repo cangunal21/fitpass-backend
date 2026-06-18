@@ -308,16 +308,19 @@ model DropInSlot {
 }
 
 model DropInParticipant {
-  id        Int        @id @default(autoincrement())
-  slot      DropInSlot @relation(fields: [slotId], references: [id])
-  slotId    Int
-  user      User       @relation(fields: [userId], references: [id])
-  userId    Int
-  team      String?
-  payment   Payment?   @relation(fields: [paymentId], references: [id])
-  paymentId Int?
-  joinedAt  DateTime   @default(now())
-  status    String     @default("confirmed")
+  id           Int        @id @default(autoincrement())
+  slot         DropInSlot @relation(fields: [slotId], references: [id])
+  slotId       Int
+  user         User       @relation(fields: [userId], references: [id])
+  userId       Int
+  team         String?
+  payment      Payment?   @relation(fields: [paymentId], references: [id])
+  paymentId    Int?
+  checkInCode  String?    @unique
+  checkedIn    Boolean    @default(false)
+  checkedInAt  DateTime?
+  joinedAt     DateTime   @default(now())
+  status       String     @default("confirmed")
 }
 
 // ─────────────────────────────────────────────

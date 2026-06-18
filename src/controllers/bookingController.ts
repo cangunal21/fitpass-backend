@@ -198,7 +198,12 @@ export const joinDropIn = async (req: Request, res: Response) => {
     if (existing) return res.status(400).json({ error: 'Zaten katılıyorsunuz.' })
 
     const participant = await prisma.dropInParticipant.create({
-      data: { slotId, userId, status: 'confirmed' }
+      data: {
+        slotId,
+        userId,
+        status: 'confirmed',
+        checkInCode: crypto.randomBytes(4).toString('hex').toUpperCase(),
+      }
     })
 
     await prisma.dropInSlot.update({
@@ -314,6 +319,60 @@ export const cancelBooking = async (req: Request, res: Response) => {
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// Drop-in check-in
+export const checkInDropIn = async (req: Request, res: Response) => {
+  try {
+    const venueId = (req as any).venueId
+    const { code } = req.body
+
+    if (!code?.trim()) {
+      return res.status(400).json({ error: 'Check-in kodu gerekli.' })
+    }
+
+    const participant = await prisma.dropInParticipant.findFirst({
+      where: { checkInCode: code.trim().toUpperCase() },
+      include: {
+        user: { select: { fullName: true, username: true, avatarUrl: true } },
+        slot: { select: { title: true, venueId: true, startsAt: true } }
+      }
+    })
+
+    if (!participant) {
+      return res.status(404).json({ error: 'Geçersiz kod. Katılım bulunamadı.' })
+    }
+
+    if (participant.slot?.venueId !== venueId) {
+      return res.status(403).json({ error: 'Bu katılım salonunuza ait değil.' })
+    }
+
+    if (participant.status !== 'confirmed') {
+      return res.status(400).json({ error: 'Katılım onaylı değil.' })
+    }
+
+    if (participant.checkedIn) {
+      return res.json({
+        alreadyCheckedIn: true,
+        message: 'Bu katılımcı zaten check-in yapmış.',
+        participant: { user: participant.user, slotTitle: participant.slot?.title, checkedInAt: participant.checkedInAt }
+      })
+    }
+
+    await prisma.dropInParticipant.update({
+      where: { id: participant.id },
+      data: { checkedIn: true, checkedInAt: new Date() }
+    })
+
+    return res.json({
+      success: true,
+      message: 'Check-in başarılı!',
+      participant: { user: participant.user, slotTitle: participant.slot?.title, checkedInAt: new Date() }
+    })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
 
