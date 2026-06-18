@@ -1,6 +1,7 @@
 import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
+import rateLimit from 'express-rate-limit'
 import { sendRemindersJob } from './jobs/reminderJob'
 import authRoutes from './routes/auth'
 import bookingRoutes from './routes/bookings'
@@ -21,6 +22,40 @@ const PORT = process.env.PORT || 3000
 
 app.use(cors())
 app.use(express.json())
+
+// Rate limiting
+const generalLimiter = rateLimit({
+  windowMs: 60 * 1000,      // 1 dakika
+  max: 100,                  // 1 dakikada max 100 istek
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Çok fazla istek gönderildi. Lütfen bir dakika bekleyin.' },
+})
+
+const authLimiter = rateLimit({
+  windowMs: 60 * 1000,      // 1 dakika
+  max: 10,                   // 1 dakikada max 10 deneme (login, register, şifre sıfırlama)
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Çok fazla giriş denemesi. Lütfen bir dakika bekleyin.' },
+})
+
+const chatLimiter = rateLimit({
+  windowMs: 60 * 1000,      // 1 dakika
+  max: 20,                   // 1 dakikada max 20 chat isteği
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Çok fazla mesaj gönderildi. Lütfen bir dakika bekleyin.' },
+})
+
+app.use('/api', generalLimiter)
+app.use('/api/auth/login', authLimiter)
+app.use('/api/auth/register', authLimiter)
+app.use('/api/auth/forgot-password', authLimiter)
+app.use('/api/venue/login', authLimiter)
+app.use('/api/venue/register', authLimiter)
+app.use('/api/venue/forgot-password', authLimiter)
+app.use('/api/chat', chatLimiter)
 
 // Routes
 app.use('/api/auth', authRoutes)
