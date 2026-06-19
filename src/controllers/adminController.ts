@@ -175,3 +175,38 @@ export const adminDeleteCoupon = async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
+
+// Tüm kategoriler (admin)
+export const getCategories = async (req: Request, res: Response) => {
+  try {
+    const categories = await prisma.sportCategory.findMany({ orderBy: { name: 'asc' } })
+    return res.json({ categories })
+  } catch (err) {
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// Kategori ekle (admin)
+export const createCategory = async (req: Request, res: Response) => {
+  try {
+    const { name, colorHex, iconUrl } = req.body
+    if (!name) return res.status(400).json({ error: 'Kategori adı zorunludur.' })
+    const existing = await prisma.sportCategory.findFirst({ where: { name: { equals: name, mode: 'insensitive' } } })
+    if (existing) return res.status(400).json({ error: 'Bu kategori zaten mevcut.' })
+    const category = await prisma.sportCategory.create({ data: { name, colorHex, iconUrl } })
+    return res.json({ category })
+  } catch (err) {
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// Kategori sil (admin)
+export const deleteCategory = async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id as string)
+    await prisma.sportCategory.delete({ where: { id } })
+    return res.json({ message: 'Kategori silindi.' })
+  } catch (err) {
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
