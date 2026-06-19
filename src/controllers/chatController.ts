@@ -125,7 +125,8 @@ export const chat = async (req: Request, res: Response) => {
     })
 
     const text = completion.choices[0]?.message?.content || ''
-    return res.json({ reply: text })
+    const disclaimer = '\n\n---\n⚠️ *Bu bilgiler genel bilgi amaçlıdır, tıbbi tavsiye niteliği taşımaz. Sağlık sorunlarınız için lütfen bir uzmana danışın.*'
+    return res.json({ reply: text + disclaimer })
   } catch (err) {
     console.error('Chat error:', err)
     return res.status(500).json({ error: 'Asistan şu an yanıt veremiyor, lütfen tekrar deneyin.' })
