@@ -210,3 +210,19 @@ export const deleteCategory = async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
+
+// Kategori güncelle (admin)
+export const updateCategory = async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id as string)
+    const { name, colorHex } = req.body
+    if (!name) return res.status(400).json({ error: 'Kategori adı zorunludur.' })
+    const category = await prisma.sportCategory.update({
+      where: { id },
+      data: { name, colorHex: colorHex || null },
+    })
+    return res.json({ category })
+  } catch (err) {
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}

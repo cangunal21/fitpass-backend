@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { getStats, getAllVenues, approveVenue, getAllUsers, getAllBookings, suspendVenue, deleteVenue, banUser, getAllCoupons, adminDeleteCoupon, getCategories, createCategory, deleteCategory } from '../controllers/adminController'
+import { getStats, getAllVenues, approveVenue, getAllUsers, getAllBookings, suspendVenue, deleteVenue, banUser, getAllCoupons, adminDeleteCoupon, getCategories, createCategory, deleteCategory, updateCategory } from '../controllers/adminController'
 import { adminAuthMiddleware } from '../middlewares/adminAuth'
 
 const router = Router()
@@ -18,6 +18,7 @@ router.get('/coupons', getAllCoupons)
 router.delete('/coupons/:id', adminDeleteCoupon)
 router.get('/categories', getCategories)
 router.post('/categories', createCategory)
+router.put('/categories/:id', updateCategory)
 router.delete('/categories/:id', deleteCategory)
 
 export default router
