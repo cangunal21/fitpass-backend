@@ -193,3 +193,98 @@ export const getSuggestions = async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
+
+// GET /api/social/feed — takip edilenlerin aktiviteleri
+export const getFeed = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+
+    // Takip edilenlerin ID'leri
+    const follows = await prisma.follow.findMany({
+      where: { followerId: userId },
+      select: { followingId: true }
+    })
+    const followingIds = follows.map(f => f.followingId)
+
+    if (followingIds.length === 0) return res.json({ feed: [] })
+
+    // Takip edilenlerin rezervasyonları (son 7 gün, activity privacy public)
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+
+    const bookings = await prisma.booking.findMany({
+      where: {
+        userId: { in: followingIds },
+        status: 'confirmed',
+        createdAt: { gte: since },
+        user: { activityPrivacy: { not: 'private' } }
+      },
+      include: {
+        user: { select: { id: true, username: true, fullName: true, avatarUrl: true } },
+        session: {
+          include: {
+            class: {
+              include: {
+                venue: { select: { id: true, name: true } },
+                sportCategory: { select: { name: true, colorHex: true } }
+              }
+            }
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 30
+    })
+
+    // Drop-in katılımları
+    const dropIns = await prisma.dropInParticipant.findMany({
+      where: {
+        userId: { in: followingIds },
+        status: 'confirmed',
+        joinedAt: { gte: since },
+        user: { activityPrivacy: { not: 'private' } }
+      },
+      include: {
+        user: { select: { id: true, username: true, fullName: true, avatarUrl: true } },
+        slot: {
+          include: {
+            venue: { select: { id: true, name: true } },
+            sportCategory: { select: { name: true, colorHex: true } }
+          }
+        }
+      },
+      orderBy: { joinedAt: 'desc' },
+      take: 30
+    })
+
+    // Birleştir ve sırala
+    const feed = [
+      ...bookings.map(b => ({
+        id: `b-${b.id}`,
+        type: 'booking' as const,
+        user: b.user,
+        title: b.session?.class?.title || 'Ders',
+        category: b.session?.class?.sportCategory?.name || '',
+        categoryColor: b.session?.class?.sportCategory?.colorHex || '#4F46E5',
+        venueName: b.session?.class?.venue?.name || '',
+        venueId: b.session?.class?.venue?.id || null,
+        date: b.createdAt,
+      })),
+      ...dropIns.map(d => ({
+        id: `d-${d.id}`,
+        type: 'dropin' as const,
+        user: d.user,
+        title: d.slot?.title || 'Drop-in',
+        category: d.slot?.sportCategory?.name || '',
+        categoryColor: d.slot?.sportCategory?.colorHex || '#4F46E5',
+        venueName: d.slot?.venue?.name || '',
+        venueId: d.slot?.venue?.id || null,
+        date: d.joinedAt,
+      }))
+    ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 30)
+
+    return res.json({ feed })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
