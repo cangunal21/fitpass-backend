@@ -4,10 +4,21 @@ import crypto from 'crypto'
 
 const CREDIT_AMOUNT = 150
 
+// Unique referral kodu üret (çakışma olursa tekrar dene)
+async function generateUniqueCode(): Promise<string> {
+  for (let i = 0; i < 5; i++) {
+    const code = crypto.randomBytes(4).toString('hex').toUpperCase()
+    const existing = await prisma.user.findUnique({ where: { referralCode: code } })
+    if (!existing) return code
+  }
+  // Fallback: daha uzun kod
+  return crypto.randomBytes(6).toString('hex').toUpperCase()
+}
+
 // Kullanıcının referral kodunu getir (yoksa oluştur)
 export const getReferralInfo = async (req: Request, res: Response) => {
   try {
-    const userId = (req as any).user.id
+    const userId = (req as any).userId
 
     let user = await prisma.user.findUnique({
       where: { id: userId },
@@ -17,7 +28,7 @@ export const getReferralInfo = async (req: Request, res: Response) => {
 
     // Kod yoksa oluştur
     if (!user.referralCode) {
-      const code = crypto.randomBytes(4).toString('hex').toUpperCase()
+      const code = await generateUniqueCode()
       user = await prisma.user.update({
         where: { id: userId },
         data: { referralCode: code },
