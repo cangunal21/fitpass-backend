@@ -4,11 +4,12 @@ import crypto from 'crypto'
 import prisma from '../utils/prisma'
 import { generateToken } from '../utils/jwt'
 import { sendWelcomeEmail, sendPasswordResetEmail, sendEmailVerificationEmail } from '../utils/email'
+import { applyReferralCode } from './referralController'
 
 // KAYIT OL
 export const register = async (req: Request, res: Response) => {
   try {
-    const { username, email, phone, password, fullName } = req.body
+    const { username, email, phone, password, fullName, referralCode } = req.body
 
     if (!username || !email || !password || !fullName) {
       return res.status(400).json({ error: 'Tüm zorunlu alanları doldurun.' })
@@ -59,6 +60,11 @@ export const register = async (req: Request, res: Response) => {
       data: { userId: user.id, token: verifyToken, expiresAt: verifyExpiresAt }
     })
     sendEmailVerificationEmail(user.email, user.fullName, verifyToken).catch(err => console.error('Verify mail gönderilemedi:', err))
+
+    // Referral kodu varsa uygula
+    if (referralCode) {
+      applyReferralCode(user.id, referralCode.trim().toUpperCase()).catch(() => {})
+    }
 
     return res.status(201).json({
       message: 'Kayıt başarılı! Email adresinize doğrulama linki gönderildi.',

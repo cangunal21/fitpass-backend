@@ -2,12 +2,13 @@ import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import crypto from 'crypto'
 import { sendVenueBookingNotificationEmail, sendCancellationEmail, sendVenueCancellationEmail, sendBookingConfirmationEmail, sendGroupTagNotificationEmail, sendGroupInviteEmail } from '../utils/email'
+import { completeReferral } from './referralController'
 
 // Rezervasyon oluştur
 export const createBooking = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId
-    const { sessionId, notes, groupSize: rawGroupSize, taggedUsernames } = req.body
+    const { sessionId, notes, groupSize: rawGroupSize, taggedUsernames, useCredit } = req.body
     const groupSize = Math.max(1, Math.min(parseInt(rawGroupSize) || 1, 10))
     const rawTags: string[] = Array.isArray(taggedUsernames) ? taggedUsernames.slice(0, groupSize - 1) : []
     // normalize: strip @ prefix, lowercase
@@ -49,6 +50,15 @@ export const createBooking = async (req: Request, res: Response) => {
 
     const basePrice = (session.class?.basePrice || 0) * groupSize
 
+    // Kredi kullanımı
+    let creditUsed = 0
+    if (useCredit) {
+      const userWithCredit = await prisma.user.findUnique({ where: { id: userId }, select: { creditBalance: true } })
+      const available = userWithCredit?.creditBalance || 0
+      creditUsed = Math.min(available, basePrice)
+    }
+    const finalAmount = Math.max(0, basePrice - creditUsed)
+
     const booking = await prisma.booking.create({
       data: {
         userId,
@@ -58,12 +68,13 @@ export const createBooking = async (req: Request, res: Response) => {
         notes: notes || null,
         groupSize,
         baseAmount: basePrice,
-        discountAmount: 0,
+        discountAmount: creditUsed,
         commissionAmount: 0,
         userCommission: 0,
         venueCommission: 0,
-        finalAmount: basePrice,
-        venuePayout: basePrice,
+        finalAmount,
+        venuePayout: finalAmount,
+        creditUsed,
         bookingNumber: `BK-${crypto.randomUUID()}`,
         checkInCode: crypto.randomBytes(4).toString('hex').toUpperCase(),
         taggedFriends: cleanTags.length ? cleanTags : [],
@@ -154,7 +165,20 @@ export const createBooking = async (req: Request, res: Response) => {
       }
     }
 
-    res.status(201).json({ message: 'Rezervasyon başarıyla oluşturuldu!', booking, taggedCount: cleanTags.length })
+    // Kredi kullanıldıysa bakiyeden düş
+    if (creditUsed > 0) {
+      await prisma.user.update({
+        where: { id: userId },
+        data: { creditBalance: { decrement: creditUsed } }
+      })
+    }
+
+    // İlk ödeme tamamlandıysa referral'ı tamamla (davet edene kredi ver)
+    if (finalAmount > 0) {
+      completeReferral(userId).catch(() => {})
+    }
+
+    res.status(201).json({ message: 'Rezervasyon başarıyla oluşturuldu!', booking, taggedCount: cleanTags.length, creditUsed })
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'Sunucu hatası.' })

@@ -13,6 +13,7 @@ import reviewRoutes from './routes/reviews'
 import cronRoutes from './routes/cron'
 import waitlistRoutes from './routes/waitlist'
 import favoriteRoutes from './routes/favorites'
+import referralRoutes from './routes/referral'
 import { chat } from './controllers/chatController'
 
 dotenv.config()
@@ -70,6 +71,7 @@ app.use('/api/reviews', reviewRoutes)
 app.use('/api/cron', cronRoutes)
 app.use('/api/waitlist', waitlistRoutes)
 app.use('/api/favorites', favoriteRoutes)
+app.use('/api/referral', referralRoutes)
 app.post('/api/chat', chat)
 
 // Test route

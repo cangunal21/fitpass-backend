@@ -147,6 +147,10 @@ model User {
   yearlyTierResetDate   DateTime?
   totalLessonsCompleted Int                  @default(0)
   rewardPoints          Int                  @default(0)
+  referralCode          String?              @unique
+  creditBalance         Int                  @default(0)
+  referralCount         Int                  @default(0)
+  banned                Boolean              @default(false)
   createdAt             DateTime             @default(now())
 
   venuesOwned           Venue[]
@@ -166,6 +170,8 @@ model User {
   emailVerificationTokens  EmailVerificationToken[]
   waitlistEntries          Waitlist[]
   favoriteVenues           FavoriteVenue[]
+  referralsSent         Referral[]           @relation("ReferralSender")
+  referralsReceived     Referral[]           @relation("ReferralReceiver")
 }
 
 // ─────────────────────────────────────────────
@@ -353,6 +359,7 @@ model Booking {
   checkedInAt      DateTime?
   coupon           Coupon?        @relation(fields: [couponId], references: [id])
   couponId         Int?
+  creditUsed       Int            @default(0)
   createdAt        DateTime       @default(now())
   confirmedAt      DateTime?
   cancelledAt      DateTime?
@@ -564,4 +571,18 @@ model Coupon {
   isActive      Boolean   @default(true)
   createdAt     DateTime  @default(now())
   bookings      Booking[]
+}
+
+model Referral {
+  id           Int      @id @default(autoincrement())
+  referrer     User     @relation("ReferralSender", fields: [referrerId], references: [id])
+  referrerId   Int
+  referred     User     @relation("ReferralReceiver", fields: [referredId], references: [id])
+  referredId   Int
+  status       String   @default("pending") // pending | completed
+  creditAmount Int      @default(150)
+  createdAt    DateTime @default(now())
+  completedAt  DateTime?
+
+  @@unique([referrerId, referredId])
 }

@@ -1,0 +1,111 @@
+import { Request, Response } from 'express'
+import prisma from '../utils/prisma'
+import crypto from 'crypto'
+
+const CREDIT_AMOUNT = 150
+
+// Kullanıcının referral kodunu getir (yoksa oluştur)
+export const getReferralInfo = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user.id
+
+    let user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, referralCode: true, creditBalance: true, referralCount: true }
+    })
+    if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
+
+    // Kod yoksa oluştur
+    if (!user.referralCode) {
+      const code = crypto.randomBytes(4).toString('hex').toUpperCase()
+      user = await prisma.user.update({
+        where: { id: userId },
+        data: { referralCode: code },
+        select: { id: true, referralCode: true, creditBalance: true, referralCount: true }
+      })
+    }
+
+    const referrals = await prisma.referral.findMany({
+      where: { referrerId: userId },
+      include: { referred: { select: { fullName: true, username: true } } },
+      orderBy: { createdAt: 'desc' }
+    })
+
+    return res.json({
+      referralCode: user!.referralCode,
+      creditBalance: user!.creditBalance,
+      referralCount: user!.referralCount,
+      maxReferrals: 3,
+      creditAmount: CREDIT_AMOUNT,
+      referrals: referrals.map(r => ({
+        id: r.id,
+        fullName: r.referred.fullName,
+        username: r.referred.username,
+        status: r.status,
+        createdAt: r.createdAt,
+      }))
+    })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// Kayıt sırasında referral kodu uygula
+export const applyReferralCode = async (userId: number, code: string) => {
+  try {
+    const referrer = await prisma.user.findUnique({
+      where: { referralCode: code },
+      select: { id: true, referralCount: true }
+    })
+    if (!referrer || referrer.id === userId) return
+    if (referrer.referralCount >= 3) return // max 3 davet
+
+    // Zaten referral varsa atla
+    const existing = await prisma.referral.findUnique({
+      where: { referrerId_referredId: { referrerId: referrer.id, referredId: userId } }
+    })
+    if (existing) return
+
+    // Referral kaydı oluştur + davet edilene anında kredi ver
+    await prisma.$transaction([
+      prisma.referral.create({
+        data: { referrerId: referrer.id, referredId: userId, creditAmount: CREDIT_AMOUNT }
+      }),
+      prisma.user.update({
+        where: { id: referrer.id },
+        data: { referralCount: { increment: 1 } }
+      }),
+      // Davet edilene anında 150 TL kredi (ilk ders için)
+      prisma.user.update({
+        where: { id: userId },
+        data: { creditBalance: { increment: CREDIT_AMOUNT } }
+      }),
+    ])
+  } catch (err) {
+    console.error('Referral apply error:', err)
+  }
+}
+
+// İlk ödeme tamamlanınca davet edene kredi ver
+export const completeReferral = async (userId: number) => {
+  try {
+    const referral = await prisma.referral.findFirst({
+      where: { referredId: userId, status: 'pending' }
+    })
+    if (!referral) return
+
+    await prisma.$transaction([
+      prisma.referral.update({
+        where: { id: referral.id },
+        data: { status: 'completed', completedAt: new Date() }
+      }),
+      prisma.user.update({
+        where: { id: referral.referrerId },
+        data: { creditBalance: { increment: CREDIT_AMOUNT } }
+      }),
+    ])
+  } catch (err) {
+    console.error('Referral complete error:', err)
+  }
+}
