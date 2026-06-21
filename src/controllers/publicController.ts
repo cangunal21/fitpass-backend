@@ -182,7 +182,7 @@ export const getSessionById = async (req: Request, res: Response) => {
 export const getVenues = async (req: Request, res: Response) => {
   try {
     const venues = await prisma.venue.findMany({
-      where: { isVerified: true, isActive: true },
+      where: { isApproved: true, isActive: true },
       include: {
         sportCategories: { include: { sportCategory: true } },
         neighborhood: true,
