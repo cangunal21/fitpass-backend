@@ -374,11 +374,20 @@ export const unlikeActivity = async (req: Request, res: Response) => {
 export const getActivityComments = async (req: Request, res: Response) => {
   try {
     const { feedKey } = req.params
-    const comments = await prisma.activityComment.findMany({
+    const all = await prisma.activityComment.findMany({
       where: { feedKey },
       include: { user: { select: { username: true, fullName: true, avatarUrl: true } } },
       orderBy: { createdAt: 'asc' },
     })
+    const topLevel = all.filter(c => !c.parentId)
+    const repliesByParent = new Map<number, typeof all>()
+    for (const c of all) {
+      if (c.parentId) {
+        if (!repliesByParent.has(c.parentId)) repliesByParent.set(c.parentId, [])
+        repliesByParent.get(c.parentId)!.push(c)
+      }
+    }
+    const comments = topLevel.map(c => ({ ...c, replies: repliesByParent.get(c.id) || [] }))
     return res.json({ comments })
   } catch (err) {
     console.error(err)
@@ -391,28 +400,54 @@ export const addActivityComment = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId
     const { feedKey } = req.params
-    const { content } = req.body
+    const { content, parentId } = req.body
     if (!content || !String(content).trim()) return res.status(400).json({ error: 'Yorum boş olamaz.' })
 
+    let parentComment = null
+    if (parentId) {
+      parentComment = await prisma.activityComment.findUnique({ where: { id: parseInt(parentId, 10) } })
+      if (!parentComment || parentComment.feedKey !== feedKey) {
+        return res.status(400).json({ error: 'Geçersiz yorum.' })
+      }
+    }
+
     const comment = await prisma.activityComment.create({
-      data: { feedKey, userId, content: String(content).trim().slice(0, 500) },
+      data: { feedKey, userId, content: String(content).trim().slice(0, 500), parentId: parentComment?.id || null },
       include: { user: { select: { username: true, fullName: true, avatarUrl: true } } },
     })
 
-    const ownerId = await resolveFeedOwner(String(feedKey))
-    if (ownerId && ownerId !== userId) {
-      const commenter = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } })
+    const commenter = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } })
+
+    if (parentComment && parentComment.userId !== userId) {
+      // Yoruma cevap verildi — yorumu yazana bildirim
       await prisma.notification.create({
         data: {
-          userId: ownerId,
+          userId: parentComment.userId,
           type: 'comment',
-          message: `${commenter?.fullName || 'Bir kullanıcı'} aktivitene yorum yaptı: "${comment.content.slice(0, 80)}"`,
+          message: `${commenter?.fullName || 'Bir kullanıcı'} yorumuna cevap verdi: "${comment.content.slice(0, 80)}"`,
           relatedUserId: userId,
         },
       })
-      const owner = await prisma.user.findUnique({ where: { id: ownerId }, select: { pushToken: true } })
-      if (owner?.pushToken) {
-        sendPushNotification(owner.pushToken, 'Yeni yorum 💬', `${commenter?.fullName || 'Bir kullanıcı'} aktivitene yorum yaptı.`).catch(() => {})
+      const parentUser = await prisma.user.findUnique({ where: { id: parentComment.userId }, select: { pushToken: true } })
+      if (parentUser?.pushToken) {
+        sendPushNotification(parentUser.pushToken, 'Yeni cevap 💬', `${commenter?.fullName || 'Bir kullanıcı'} yorumuna cevap verdi.`).catch(() => {})
+      }
+    } else if (!parentComment) {
+      // Yeni üst seviye yorum — aktivite sahibine bildirim
+      const ownerId = await resolveFeedOwner(String(feedKey))
+      if (ownerId && ownerId !== userId) {
+        await prisma.notification.create({
+          data: {
+            userId: ownerId,
+            type: 'comment',
+            message: `${commenter?.fullName || 'Bir kullanıcı'} aktivitene yorum yaptı: "${comment.content.slice(0, 80)}"`,
+            relatedUserId: userId,
+          },
+        })
+        const owner = await prisma.user.findUnique({ where: { id: ownerId }, select: { pushToken: true } })
+        if (owner?.pushToken) {
+          sendPushNotification(owner.pushToken, 'Yeni yorum 💬', `${commenter?.fullName || 'Bir kullanıcı'} aktivitene yorum yaptı.`).catch(() => {})
+        }
       }
     }
 

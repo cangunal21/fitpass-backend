@@ -489,12 +489,15 @@ model ActivityLike {
 }
 
 model ActivityComment {
-  id        Int      @id @default(autoincrement())
-  feedKey   String   // e.g. "b-123" (booking) or "d-45" (dropin)
-  user      User     @relation(fields: [userId], references: [id])
+  id        Int               @id @default(autoincrement())
+  feedKey   String            // e.g. "b-123" (booking) or "d-45" (dropin)
+  user      User              @relation(fields: [userId], references: [id])
   userId    Int
   content   String
-  createdAt DateTime @default(now())
+  parent    ActivityComment?  @relation("CommentReplies", fields: [parentId], references: [id])
+  parentId  Int?
+  replies   ActivityComment[] @relation("CommentReplies")
+  createdAt DateTime          @default(now())
 
   @@index([feedKey, createdAt])
 }
