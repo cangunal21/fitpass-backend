@@ -1,5 +1,6 @@
 import prisma from '../utils/prisma'
 import { sendReminderEmail } from '../utils/email'
+import { sendPushNotification } from '../utils/push'
 
 export const sendRemindersJob = async () => {
   try {
@@ -14,7 +15,7 @@ export const sendRemindersJob = async () => {
         session: { startsAt: { gte: from, lte: to } }
       },
       include: {
-        user: { select: { email: true, fullName: true, emailReminders: true } },
+        user: { select: { email: true, fullName: true, emailReminders: true, pushToken: true } },
         session: {
           include: {
             class: { include: { venue: { select: { name: true } } } }
@@ -25,29 +26,32 @@ export const sendRemindersJob = async () => {
 
     for (const booking of bookings) {
       try {
-        if (!booking.user?.email) continue
-        if (booking.user.emailReminders === false) continue
         const startsAt = new Date(booking.session!.startsAt)
         const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
         const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+        const venueName = booking.session!.class.venue?.name || ''
+        const classTitle = booking.session!.class.title
 
-        await sendReminderEmail(
-          booking.user.email,
-          booking.user.fullName,
-          booking.session!.class.title,
-          date,
-          time,
-          booking.session!.class.venue?.name || ''
-        )
+        if (booking.user?.email && booking.user.emailReminders !== false) {
+          await sendReminderEmail(booking.user.email, booking.user.fullName, classTitle, date, time, venueName)
+          console.log(`✅ Hatırlatma maili gönderildi: ${booking.user.email}`)
+        }
+
+        if (booking.user?.pushToken) {
+          await sendPushNotification(
+            booking.user.pushToken,
+            'Dersine 2 saat kaldı! ⏰',
+            `${classTitle} dersi bugün ${time}'de ${venueName} adresinde başlıyor.`
+          )
+          console.log(`📱 Push bildirimi gönderildi: ${booking.user.fullName}`)
+        }
 
         await prisma.booking.update({
           where: { id: booking.id },
           data: { reminderSent: true }
         })
-
-        console.log(`✅ Hatırlatma maili gönderildi: ${booking.user.email}`)
       } catch (e) {
-        console.error(`Reminder email error for booking ${booking.id}:`, e)
+        console.error(`Reminder error for booking ${booking.id}:`, e)
       }
     }
 

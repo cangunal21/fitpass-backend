@@ -399,3 +399,18 @@ export const updateNotificationSettings = async (req: Request, res: Response) =>
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
+
+export const registerPushToken = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    const { pushToken } = req.body
+    if (!pushToken || typeof pushToken !== 'string') {
+      return res.status(400).json({ error: 'pushToken gerekli.' })
+    }
+    await prisma.user.update({ where: { id: userId }, data: { pushToken } })
+    return res.json({ message: 'Push token kaydedildi.' })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}

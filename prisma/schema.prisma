@@ -141,6 +141,7 @@ model User {
   activityPrivacy       String               @default("public")
   emailReminders        Boolean              @default(true)
   smsReminders          Boolean              @default(false)
+  pushToken             String?
   tier                  Tier?                @relation(fields: [tierId], references: [id])
   tierId                Int?
   tierSportCounts       Json                 @default("{}")

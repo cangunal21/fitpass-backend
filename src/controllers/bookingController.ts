@@ -8,7 +8,7 @@ import { completeReferral } from './referralController'
 export const createBooking = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId
-    const { sessionId, notes, groupSize: rawGroupSize, taggedUsernames, useCredit } = req.body
+    const { sessionId, notes, groupSize: rawGroupSize, taggedUsernames, useCredit, couponCode } = req.body
     const groupSize = Math.max(1, Math.min(parseInt(rawGroupSize) || 1, 10))
     const rawTags: string[] = Array.isArray(taggedUsernames) ? taggedUsernames.slice(0, groupSize - 1) : []
     // normalize: strip @ prefix, lowercase
@@ -50,14 +50,37 @@ export const createBooking = async (req: Request, res: Response) => {
 
     const basePrice = (session.class?.basePrice || 0) * groupSize
 
+    // Kupon kontrolü
+    let coupon: { id: number; discountType: string; discountValue: number } | null = null
+    let couponDiscount = 0
+    if (couponCode) {
+      const found = await prisma.coupon.findUnique({ where: { code: String(couponCode).toUpperCase() } })
+      if (!found || !found.isActive) {
+        return res.status(400).json({ error: 'Geçersiz kupon kodu.' })
+      }
+      if (found.venueId !== session.class!.venueId) {
+        return res.status(400).json({ error: 'Bu kupon bu salona ait değil.' })
+      }
+      if (found.expiresAt && found.expiresAt < new Date()) {
+        return res.status(400).json({ error: 'Kupon süresi dolmuş.' })
+      }
+      if (found.maxUses && found.usedCount >= found.maxUses) {
+        return res.status(400).json({ error: 'Kupon kullanım limiti dolmuş.' })
+      }
+      coupon = found
+      couponDiscount = found.discountType === 'percent'
+        ? basePrice * (found.discountValue / 100)
+        : Math.min(found.discountValue, basePrice)
+    }
+
     // Kredi kullanımı
     let creditUsed = 0
     if (useCredit) {
       const userWithCredit = await prisma.user.findUnique({ where: { id: userId }, select: { creditBalance: true } })
       const available = userWithCredit?.creditBalance || 0
-      creditUsed = Math.min(available, basePrice)
+      creditUsed = Math.min(available, Math.max(0, basePrice - couponDiscount))
     }
-    const finalAmount = Math.max(0, basePrice - creditUsed)
+    const finalAmount = Math.max(0, basePrice - couponDiscount - creditUsed)
 
     const booking = await prisma.booking.create({
       data: {
@@ -68,13 +91,14 @@ export const createBooking = async (req: Request, res: Response) => {
         notes: notes || null,
         groupSize,
         baseAmount: basePrice,
-        discountAmount: creditUsed,
+        discountAmount: couponDiscount + creditUsed,
         commissionAmount: 0,
         userCommission: 0,
         venueCommission: 0,
         finalAmount,
         venuePayout: finalAmount,
         creditUsed,
+        couponId: coupon?.id || null,
         bookingNumber: `BK-${crypto.randomUUID()}`,
         checkInCode: crypto.randomBytes(4).toString('hex').toUpperCase(),
         taggedFriends: cleanTags.length ? cleanTags : [],
@@ -85,6 +109,10 @@ export const createBooking = async (req: Request, res: Response) => {
         },
       },
     })
+
+    if (coupon) {
+      await prisma.coupon.update({ where: { id: coupon.id }, data: { usedCount: { increment: 1 } } })
+    }
 
     // Salon email bildirimi
     try {
