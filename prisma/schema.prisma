@@ -173,6 +173,7 @@ model User {
   favoriteVenues           FavoriteVenue[]
   referralsSent         Referral[]           @relation("ReferralSender")
   referralsReceived     Referral[]           @relation("ReferralReceiver")
+  chatMessages          ChatMessage[]
 }
 
 // ─────────────────────────────────────────────
@@ -587,4 +588,15 @@ model Referral {
   completedAt  DateTime?
 
   @@unique([referrerId, referredId])
+}
+
+model ChatMessage {
+  id        Int      @id @default(autoincrement())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    Int
+  role      String   // "user" | "assistant"
+  content   String
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }

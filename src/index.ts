@@ -14,7 +14,8 @@ import cronRoutes from './routes/cron'
 import waitlistRoutes from './routes/waitlist'
 import favoriteRoutes from './routes/favorites'
 import referralRoutes from './routes/referral'
-import { chat } from './controllers/chatController'
+import { chat, getChatHistory } from './controllers/chatController'
+import { authMiddleware, optionalAuthMiddleware } from './middlewares/auth'
 
 dotenv.config()
 
@@ -72,7 +73,8 @@ app.use('/api/cron', cronRoutes)
 app.use('/api/waitlist', waitlistRoutes)
 app.use('/api/favorites', favoriteRoutes)
 app.use('/api/referral', referralRoutes)
-app.post('/api/chat', chat)
+app.post('/api/chat', optionalAuthMiddleware, chat)
+app.get('/api/chat/history', authMiddleware, getChatHistory)
 
 // Test route
 app.get('/', (req, res) => {

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express'
 import Groq from 'groq-sdk'
+import prisma from '../utils/prisma'
 
 let client: Groq | null = null
 const getClient = () => {
@@ -120,6 +121,7 @@ const OFF_TOPIC_REPLY = 'Ben sadece Şipşakspor ve spor konularında yardımcı
 
 export const chat = async (req: Request, res: Response) => {
   try {
+    const userId = (req as any).userId as number | undefined
     const ip = req.ip || req.socket.remoteAddress || 'unknown'
     if (!checkRateLimit(ip)) {
       return res.status(429).json({ error: 'Çok fazla mesaj gönderdiniz. Lütfen 1 dakika bekleyin.' })
@@ -130,9 +132,19 @@ export const chat = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Mesaj gerekli.' })
     }
 
-    // Son kullanıcı mesajını konu dışı kontrolünden geçir
     const lastUserMsg = [...messages].reverse().find((m: any) => m.role === 'user')
+
+    if (userId && lastUserMsg) {
+      await prisma.chatMessage.create({
+        data: { userId, role: 'user', content: String(lastUserMsg.content).slice(0, 2000) },
+      }).catch(() => {})
+    }
+
+    // Son kullanıcı mesajını konu dışı kontrolünden geçir
     if (lastUserMsg && isOffTopic(String(lastUserMsg.content))) {
+      if (userId) {
+        await prisma.chatMessage.create({ data: { userId, role: 'assistant', content: OFF_TOPIC_REPLY } }).catch(() => {})
+      }
       return res.json({ reply: OFF_TOPIC_REPLY })
     }
 
@@ -153,9 +165,30 @@ export const chat = async (req: Request, res: Response) => {
 
     const text = completion.choices[0]?.message?.content || ''
     const disclaimer = '\n\n---\n⚠️ *Bu bilgiler genel bilgi amaçlıdır, tıbbi tavsiye niteliği taşımaz. Sağlık sorunlarınız için lütfen bir uzmana danışın.*'
-    return res.json({ reply: text + disclaimer })
+    const fullReply = text + disclaimer
+
+    if (userId) {
+      await prisma.chatMessage.create({ data: { userId, role: 'assistant', content: fullReply } }).catch(() => {})
+    }
+
+    return res.json({ reply: fullReply })
   } catch (err) {
     console.error('Chat error:', err)
     return res.status(500).json({ error: 'Asistan şu an yanıt veremiyor, lütfen tekrar deneyin.' })
+  }
+}
+
+export const getChatHistory = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    const messages = await prisma.chatMessage.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'asc' },
+      take: 50,
+    })
+    return res.json({ messages })
+  } catch (err) {
+    console.error('Chat history error:', err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
