@@ -194,8 +194,12 @@ export const getMyBookings = async (req: Request, res: Response) => {
       where: { userId },
       include: {
         session: {
-          include: { class: true },
+          include: { class: { include: { venue: true } } },
         },
+        dropInSlot: {
+          include: { venue: true },
+        },
+        review: true,
       },
       orderBy: { createdAt: 'desc' },
     })
