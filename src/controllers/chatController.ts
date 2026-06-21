@@ -37,7 +37,8 @@ PLATFORM BİLGİLERİ:
 - İptal politikası: 24 saat öncesine kadar tam iade, 12-24 saat arası yarım iade, 12 saatten az kala iptal edilemez
 - Drop-in: basketbol, padel ve halı saha için anlık katılım sistemi var
 - Liderlik tablosu: en çok ders alan kullanıcılar ve en yüksek puanlı salonlar görüntülenebilir
-- Sosyal: diğer sporcuları takip edebilir, aktivite feed'inden arkadaşların son derslerini görebilirsin
+- Sosyal: diğer sporcuları takip edebilir, aktivite feed'inden arkadaşların son derslerini görebilir, beğenebilir ve yorum yapabilirsin
+- Bildirimler: arkadaşların aktivitelerini beğenip yorum yaptığında veya bir derse grup olarak davet edildiğinde bildirim alırsın (uygulama içi ve mobilde push)
 - Favoriler: beğendiğin salonları favorilere ekleyebilirsin
 - Bekleme listesi: dolu seanslar için bekleme listesine girebilirsin, yer açılınca bildirim alırsın
 - DERS EKLEMEK: Sadece salonlar ders ekleyebilir. Salon sahibiysen sipsakspor.com/salon-giris adresinden giriş yap, salon panelinden ders ekle. Kullanıcılar ders ekleyemez, sadece rezervasyon yapabilir.
