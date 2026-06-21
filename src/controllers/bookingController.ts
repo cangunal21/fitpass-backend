@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import crypto from 'crypto'
 import { sendVenueBookingNotificationEmail, sendCancellationEmail, sendVenueCancellationEmail, sendBookingConfirmationEmail, sendGroupTagNotificationEmail, sendGroupInviteEmail } from '../utils/email'
+import { sendPushNotification } from '../utils/push'
 import { completeReferral } from './referralController'
 
 // Rezervasyon oluştur
@@ -171,12 +172,16 @@ export const createBooking = async (req: Request, res: Response) => {
           ? (await prisma.venue.findUnique({ where: { id: booking.session!.class.venueId }, select: { name: true } }))?.name || ''
           : ''
 
+        const categoryName = booking.session!.class.category || booking.session!.class.title
+
         for (const username of cleanTags) {
           const taggedUser = await prisma.user.findFirst({
             where: { username: { equals: username, mode: 'insensitive' } },
-            select: { email: true, fullName: true, emailReminders: true }
+            select: { id: true, email: true, fullName: true, emailReminders: true, pushToken: true }
           })
-          if (taggedUser?.email && taggedUser.emailReminders !== false) {
+          if (!taggedUser) continue
+
+          if (taggedUser.email && taggedUser.emailReminders !== false) {
             await sendGroupTagNotificationEmail(
               taggedUser.email,
               taggedUser.fullName,
@@ -186,6 +191,23 @@ export const createBooking = async (req: Request, res: Response) => {
               time,
               venueName
             )
+          }
+
+          await prisma.notification.create({
+            data: {
+              userId: taggedUser.id,
+              type: 'group_invite',
+              message: `${booker?.fullName || 'Bir kullanıcı'} sizi ${categoryName} sporuna davet etti.`,
+              relatedUserId: userId,
+            },
+          })
+
+          if (taggedUser.pushToken) {
+            sendPushNotification(
+              taggedUser.pushToken,
+              'Yeni davet! 🎉',
+              `${booker?.fullName || 'Bir kullanıcı'} sizi ${categoryName} sporuna davet etti.`
+            ).catch(() => {})
           }
         }
       } catch (tagErr) {

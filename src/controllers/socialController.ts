@@ -1,5 +1,6 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
+import { sendPushNotification } from '../utils/push'
 
 export const followUser = async (req: Request, res: Response) => {
   try {
@@ -282,7 +283,169 @@ export const getFeed = async (req: Request, res: Response) => {
       }))
     ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 30)
 
-    return res.json({ feed })
+    const feedKeys = feed.map(f => f.id)
+    const [likeCounts, myLikes, commentCounts] = await Promise.all([
+      prisma.activityLike.groupBy({ by: ['feedKey'], where: { feedKey: { in: feedKeys } }, _count: { feedKey: true } }),
+      prisma.activityLike.findMany({ where: { feedKey: { in: feedKeys }, userId }, select: { feedKey: true } }),
+      prisma.activityComment.groupBy({ by: ['feedKey'], where: { feedKey: { in: feedKeys } }, _count: { feedKey: true } }),
+    ])
+    const likeCountMap = new Map(likeCounts.map(l => [l.feedKey, l._count.feedKey]))
+    const commentCountMap = new Map(commentCounts.map(c => [c.feedKey, c._count.feedKey]))
+    const myLikedSet = new Set(myLikes.map(l => l.feedKey))
+
+    const feedWithStats = feed.map(f => ({
+      ...f,
+      likeCount: likeCountMap.get(f.id) || 0,
+      commentCount: commentCountMap.get(f.id) || 0,
+      likedByMe: myLikedSet.has(f.id),
+    }))
+
+    return res.json({ feed: feedWithStats })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+const resolveFeedOwner = async (feedKey: string): Promise<number | null> => {
+  const [prefix, idStr] = feedKey.split('-')
+  const id = parseInt(idStr, 10)
+  if (!id) return null
+  if (prefix === 'b') {
+    const booking = await prisma.booking.findUnique({ where: { id }, select: { userId: true } })
+    return booking?.userId ?? null
+  }
+  if (prefix === 'd') {
+    const participant = await prisma.dropInParticipant.findUnique({ where: { id }, select: { userId: true } })
+    return participant?.userId ?? null
+  }
+  return null
+}
+
+// POST /api/social/feed/:feedKey/like
+export const likeActivity = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    const { feedKey } = req.params
+
+    const existing = await prisma.activityLike.findUnique({ where: { feedKey_userId: { feedKey, userId } } })
+    if (existing) return res.status(400).json({ error: 'Zaten beğendiniz.' })
+
+    await prisma.activityLike.create({ data: { feedKey, userId } })
+
+    const ownerId = await resolveFeedOwner(String(feedKey))
+    if (ownerId && ownerId !== userId) {
+      const liker = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } })
+      await prisma.notification.create({
+        data: {
+          userId: ownerId,
+          type: 'like',
+          message: `${liker?.fullName || 'Bir kullanıcı'} aktiviteni beğendi.`,
+          relatedUserId: userId,
+        },
+      })
+      const owner = await prisma.user.findUnique({ where: { id: ownerId }, select: { pushToken: true } })
+      if (owner?.pushToken) {
+        sendPushNotification(owner.pushToken, 'Yeni beğeni ❤️', `${liker?.fullName || 'Bir kullanıcı'} aktiviteni beğendi.`).catch(() => {})
+      }
+    }
+
+    return res.json({ message: 'Beğenildi.' })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// DELETE /api/social/feed/:feedKey/like
+export const unlikeActivity = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    const { feedKey } = req.params
+    await prisma.activityLike.deleteMany({ where: { feedKey, userId } })
+    return res.json({ message: 'Beğeni kaldırıldı.' })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// GET /api/social/feed/:feedKey/comments
+export const getActivityComments = async (req: Request, res: Response) => {
+  try {
+    const { feedKey } = req.params
+    const comments = await prisma.activityComment.findMany({
+      where: { feedKey },
+      include: { user: { select: { username: true, fullName: true, avatarUrl: true } } },
+      orderBy: { createdAt: 'asc' },
+    })
+    return res.json({ comments })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// POST /api/social/feed/:feedKey/comments
+export const addActivityComment = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    const { feedKey } = req.params
+    const { content } = req.body
+    if (!content || !String(content).trim()) return res.status(400).json({ error: 'Yorum boş olamaz.' })
+
+    const comment = await prisma.activityComment.create({
+      data: { feedKey, userId, content: String(content).trim().slice(0, 500) },
+      include: { user: { select: { username: true, fullName: true, avatarUrl: true } } },
+    })
+
+    const ownerId = await resolveFeedOwner(String(feedKey))
+    if (ownerId && ownerId !== userId) {
+      const commenter = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } })
+      await prisma.notification.create({
+        data: {
+          userId: ownerId,
+          type: 'comment',
+          message: `${commenter?.fullName || 'Bir kullanıcı'} aktivitene yorum yaptı: "${comment.content.slice(0, 80)}"`,
+          relatedUserId: userId,
+        },
+      })
+      const owner = await prisma.user.findUnique({ where: { id: ownerId }, select: { pushToken: true } })
+      if (owner?.pushToken) {
+        sendPushNotification(owner.pushToken, 'Yeni yorum 💬', `${commenter?.fullName || 'Bir kullanıcı'} aktivitene yorum yaptı.`).catch(() => {})
+      }
+    }
+
+    return res.status(201).json({ comment })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// GET /api/social/notifications
+export const getNotifications = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    const notifications = await prisma.notification.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    })
+    const unreadCount = await prisma.notification.count({ where: { userId, isRead: false } })
+    return res.json({ notifications, unreadCount })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// PUT /api/social/notifications/read
+export const markNotificationsRead = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    await prisma.notification.updateMany({ where: { userId, isRead: false }, data: { isRead: true } })
+    return res.json({ message: 'Bildirimler okundu olarak işaretlendi.' })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
