@@ -12,6 +12,7 @@ import {
   getUserActivities,
   submitComplaint,
   searchUsers,
+  getInstructorById,
 } from '../controllers/publicController'
 import { validateCoupon } from '../controllers/couponController'
 
@@ -30,5 +31,6 @@ router.get('/users/:username', getUserActivities)
 router.post('/complaint', submitComplaint)
 router.get('/users-search', searchUsers)
 router.post('/validate-coupon', validateCoupon)
+router.get('/instructors/:id', getInstructorById)
 
 export default router

@@ -232,6 +232,7 @@ model Instructor {
   venue        Venue      @relation(fields: [venueId], references: [id])
   venueId      Int
   fullName     String
+  specialty    String?
   bio          String?
   avatarUrl    String?
   avgRating    Float      @default(0)

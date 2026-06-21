@@ -430,3 +430,51 @@ export const searchUsers = async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
+
+export const getInstructorById = async (req: Request, res: Response) => {
+  try {
+    const instructorId = parseInt(String(req.params.id), 10)
+    const instructor = await prisma.instructor.findUnique({
+      where: { id: instructorId },
+      include: {
+        venue: {
+          select: { id: true, name: true, neighborhood: { select: { name: true } } }
+        },
+        classes: {
+          where: { isActive: true },
+          include: {
+            sportCategory: { select: { name: true, colorHex: true } },
+            sessions: {
+              where: { startTime: { gte: new Date() }, status: 'active' },
+              orderBy: { startTime: 'asc' },
+              take: 1,
+              select: { id: true, startTime: true, availableSpots: true }
+            }
+          }
+        },
+        reviews: {
+          orderBy: { createdAt: 'desc' },
+          take: 20,
+          include: { user: { select: { fullName: true, avatarUrl: true } } }
+        }
+      }
+    })
+
+    if (!instructor) return res.status(404).json({ error: 'Eğitmen bulunamadı.' })
+
+    const avgRating = instructor.reviews.length > 0
+      ? instructor.reviews.reduce((s, r) => s + r.rating, 0) / instructor.reviews.length
+      : 0
+
+    return res.json({
+      instructor: {
+        ...instructor,
+        avgRating: Math.round(avgRating * 10) / 10,
+        totalReviews: instructor.reviews.length
+      }
+    })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}

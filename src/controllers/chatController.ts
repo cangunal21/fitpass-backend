@@ -1,7 +1,11 @@
 import { Request, Response } from 'express'
 import Groq from 'groq-sdk'
 
-const client = new Groq({ apiKey: process.env.GROQ_API_KEY })
+let client: Groq | null = null
+const getClient = () => {
+  if (!client) client = new Groq({ apiKey: process.env.GROQ_API_KEY || 'dummy' })
+  return client
+}
 
 // Basit rate limiting: IP başına dakikada max 5 mesaj
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
@@ -115,7 +119,7 @@ export const chat = async (req: Request, res: Response) => {
       content: String(m.content).slice(0, 500),
     }))
 
-    const completion = await client.chat.completions.create({
+    const completion = await getClient().chat.completions.create({
       model: 'llama-3.1-8b-instant',
       max_tokens: 300,
       messages: [

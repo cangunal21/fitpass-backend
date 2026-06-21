@@ -1,6 +1,18 @@
 import { Resend } from 'resend'
 
-const resend = new Resend(process.env.RESEND_API_KEY)
+let _resend: Resend | null = null
+const resend = {
+  emails: {
+    send: async (opts: any) => {
+      if (!process.env.RESEND_API_KEY) {
+        console.log('[email skip] RESEND_API_KEY yok:', opts.subject)
+        return
+      }
+      if (!_resend) _resend = new Resend(process.env.RESEND_API_KEY)
+      return _resend.emails.send(opts)
+    }
+  }
+}
 
 const FROM_EMAIL = 'Şipşakspor <noreply@sipsakspor.com>'
 const BRAND_COLOR = '#4F46E5'
