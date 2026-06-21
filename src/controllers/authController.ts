@@ -135,6 +135,8 @@ export const getMe = async (req: Request & { userId?: number }, res: Response) =
         rewardPoints: true,
         profilePrivacy: true,
         activityPrivacy: true,
+        emailReminders: true,
+        isEmailVerified: true,
         createdAt: true,
         neighborhood: { select: { name: true } },
         city: { select: { name: true } },
