@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { register, login, getMe, getMyBookingsAuth, changePassword, forgotPassword, resetPassword, updatePrivacy, updateProfile, updateNotificationSettings, verifyEmail, resendVerification, registerPushToken } from '../controllers/authController'
+import { register, login, getMe, changePassword, forgotPassword, resetPassword, updatePrivacy, updateProfile, updateNotificationSettings, verifyEmail, resendVerification, registerPushToken } from '../controllers/authController'
 import { authMiddleware } from '../middlewares/auth'
 
 const router = Router()
@@ -7,7 +7,6 @@ const router = Router()
 router.post('/register', register)
 router.post('/login', login)
 router.get('/me', authMiddleware, getMe)
-router.get('/my-bookings', authMiddleware, getMyBookingsAuth)
 router.put('/change-password', authMiddleware, changePassword)
 router.post('/forgot-password', forgotPassword)
 router.post('/reset-password', resetPassword)
