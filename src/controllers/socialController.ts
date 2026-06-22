@@ -5,7 +5,7 @@ import { sendPushNotification } from '../utils/push'
 export const followUser = async (req: Request, res: Response) => {
   try {
     const followerId = (req as any).userId
-    const { username } = req.params
+    const username = String(req.params.username)
     const target = await prisma.user.findUnique({ where: { username }, select: { id: true } })
     if (!target) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
     if (target.id === followerId) return res.status(400).json({ error: 'Kendinizi takip edemezsiniz.' })
@@ -21,7 +21,7 @@ export const followUser = async (req: Request, res: Response) => {
 export const unfollowUser = async (req: Request, res: Response) => {
   try {
     const followerId = (req as any).userId
-    const { username } = req.params
+    const username = String(req.params.username)
     const target = await prisma.user.findUnique({ where: { username }, select: { id: true } })
     if (!target) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
 
@@ -33,7 +33,7 @@ export const unfollowUser = async (req: Request, res: Response) => {
 export const getFollowStatus = async (req: Request, res: Response) => {
   try {
     const followerId = (req as any).userId
-    const { username } = req.params
+    const username = String(req.params.username)
     const target = await prisma.user.findUnique({ where: { username }, select: { id: true } })
     if (!target) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
 
@@ -46,7 +46,7 @@ export const getFollowStatus = async (req: Request, res: Response) => {
 
 export const getFollowers = async (req: Request, res: Response) => {
   try {
-    const { username } = req.params
+    const username = String(req.params.username)
     const user = await prisma.user.findUnique({ where: { username }, select: { id: true } })
     if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
 
@@ -60,7 +60,7 @@ export const getFollowers = async (req: Request, res: Response) => {
 
 export const getFollowing = async (req: Request, res: Response) => {
   try {
-    const { username } = req.params
+    const username = String(req.params.username)
     const user = await prisma.user.findUnique({ where: { username }, select: { id: true } })
     if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
 
@@ -326,7 +326,7 @@ const resolveFeedOwner = async (feedKey: string): Promise<number | null> => {
 export const likeActivity = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId
-    const { feedKey } = req.params
+    const feedKey = String(req.params.feedKey)
 
     const existing = await prisma.activityLike.findUnique({ where: { feedKey_userId: { feedKey, userId } } })
     if (existing) return res.status(400).json({ error: 'Zaten beğendiniz.' })
@@ -361,7 +361,7 @@ export const likeActivity = async (req: Request, res: Response) => {
 export const unlikeActivity = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId
-    const { feedKey } = req.params
+    const feedKey = String(req.params.feedKey)
     await prisma.activityLike.deleteMany({ where: { feedKey, userId } })
     return res.json({ message: 'Beğeni kaldırıldı.' })
   } catch (err) {
@@ -373,7 +373,7 @@ export const unlikeActivity = async (req: Request, res: Response) => {
 // GET /api/social/feed/:feedKey/comments
 export const getActivityComments = async (req: Request, res: Response) => {
   try {
-    const { feedKey } = req.params
+    const feedKey = String(req.params.feedKey)
     const all = await prisma.activityComment.findMany({
       where: { feedKey },
       include: { user: { select: { username: true, fullName: true, avatarUrl: true } } },
@@ -399,7 +399,7 @@ export const getActivityComments = async (req: Request, res: Response) => {
 export const addActivityComment = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId
-    const { feedKey } = req.params
+    const feedKey = String(req.params.feedKey)
     const { content, parentId } = req.body
     if (!content || !String(content).trim()) return res.status(400).json({ error: 'Yorum boş olamaz.' })
 

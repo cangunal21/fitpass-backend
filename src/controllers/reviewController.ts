@@ -123,7 +123,9 @@ export const getVenueReviews = async (req: Request, res: Response) => {
       take: 50,
     })
 
-    return res.json({ reviews })
+    const safeReviews = reviews.map(r => r.isAnonymous ? { ...r, reviewer: null } : r)
+
+    return res.json({ reviews: safeReviews })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })

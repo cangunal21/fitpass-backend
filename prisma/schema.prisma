@@ -366,6 +366,7 @@ model Booking {
   coupon           Coupon?        @relation(fields: [couponId], references: [id])
   couponId         Int?
   creditUsed       Int            @default(0)
+  notes            String?
   createdAt        DateTime       @default(now())
   confirmedAt      DateTime?
   cancelledAt      DateTime?

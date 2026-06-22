@@ -328,7 +328,7 @@ export const getVenuesList = async (req: Request, res: Response) => {
 // GET /api/public/users/:username
 export const getUserActivities = async (req: Request, res: Response) => {
   try {
-    const { username } = req.params
+    const username = String(req.params.username)
 
     const user = await prisma.user.findUnique({
       where: { username },
@@ -446,17 +446,17 @@ export const getInstructorById = async (req: Request, res: Response) => {
           include: {
             sportCategory: { select: { name: true, colorHex: true } },
             sessions: {
-              where: { startTime: { gte: new Date() }, status: 'active' },
-              orderBy: { startTime: 'asc' },
+              where: { startsAt: { gte: new Date() }, status: 'open' },
+              orderBy: { startsAt: 'asc' },
               take: 1,
-              select: { id: true, startTime: true, availableSpots: true }
+              select: { id: true, startsAt: true, availableSpots: true }
             }
           }
         },
         reviews: {
           orderBy: { createdAt: 'desc' },
           take: 20,
-          include: { user: { select: { fullName: true, avatarUrl: true } } }
+          include: { reviewer: { select: { fullName: true, avatarUrl: true } } }
         }
       }
     })
@@ -467,9 +467,12 @@ export const getInstructorById = async (req: Request, res: Response) => {
       ? instructor.reviews.reduce((s, r) => s + r.rating, 0) / instructor.reviews.length
       : 0
 
+    const safeReviews = instructor.reviews.map(r => r.isAnonymous ? { ...r, reviewer: null } : r)
+
     return res.json({
       instructor: {
         ...instructor,
+        reviews: safeReviews,
         avgRating: Math.round(avgRating * 10) / 10,
         totalReviews: instructor.reviews.length
       }

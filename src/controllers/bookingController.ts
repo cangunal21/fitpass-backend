@@ -5,6 +5,14 @@ import { sendVenueBookingNotificationEmail, sendCancellationEmail, sendVenueCanc
 import { sendPushNotification } from '../utils/push'
 import { completeReferral } from './referralController'
 
+class BookingError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.status = status
+  }
+}
+
 // Rezervasyon oluştur
 export const createBooking = async (req: Request, res: Response) => {
   try {
@@ -19,100 +27,103 @@ export const createBooking = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Ders seansı gerekli.' })
     }
 
-    // Seans var mı?
-    const session = await prisma.class_Session.findUnique({
-      where: { id: sessionId },
-      include: { class: true },
-    })
-
-    if (!session) {
-      return res.status(404).json({ error: 'Ders seansı bulunamadı.' })
-    }
-
-    // Kapasite dolu mu?
-    const bookingCount = await prisma.booking.count({
-      where: { sessionId, status: { in: ['confirmed', 'pending'] } },
-    })
-
-    if (session.availableSpots && bookingCount + groupSize > session.availableSpots) {
-      const remaining = session.availableSpots - bookingCount
-      if (remaining <= 0) return res.status(400).json({ error: 'Bu ders seansı dolu.' })
-      return res.status(400).json({ error: `Sadece ${remaining} kontenjan kaldı.` })
-    }
-
-    // Zaten rezervasyon var mı?
-    const existing = await prisma.booking.findFirst({
-      where: { userId, sessionId, status: { in: ['confirmed', 'pending'] } },
-    })
-
-    if (existing) {
-      return res.status(400).json({ error: 'Bu derse zaten kayıtlısınız.' })
-    }
-
-    const basePrice = (session.class?.basePrice || 0) * groupSize
-
-    // Kupon kontrolü
     let coupon: { id: number; discountType: string; discountValue: number } | null = null
     let couponDiscount = 0
-    if (couponCode) {
-      const found = await prisma.coupon.findUnique({ where: { code: String(couponCode).toUpperCase() } })
-      if (!found || !found.isActive) {
-        return res.status(400).json({ error: 'Geçersiz kupon kodu.' })
-      }
-      if (found.venueId !== session.class!.venueId) {
-        return res.status(400).json({ error: 'Bu kupon bu salona ait değil.' })
-      }
-      if (found.expiresAt && found.expiresAt < new Date()) {
-        return res.status(400).json({ error: 'Kupon süresi dolmuş.' })
-      }
-      if (found.maxUses && found.usedCount >= found.maxUses) {
-        return res.status(400).json({ error: 'Kupon kullanım limiti dolmuş.' })
-      }
-      coupon = found
-      couponDiscount = found.discountType === 'percent'
-        ? basePrice * (found.discountValue / 100)
-        : Math.min(found.discountValue, basePrice)
-    }
-
-    // Kredi kullanımı
     let creditUsed = 0
-    if (useCredit) {
-      const userWithCredit = await prisma.user.findUnique({ where: { id: userId }, select: { creditBalance: true } })
-      const available = userWithCredit?.creditBalance || 0
-      creditUsed = Math.min(available, Math.max(0, basePrice - couponDiscount))
-    }
-    const finalAmount = Math.max(0, basePrice - couponDiscount - creditUsed)
+    let finalAmount = 0
+    let booking: any
 
-    const booking = await prisma.booking.create({
-      data: {
-        userId,
-        sessionId,
-        bookingType: 'class',
-        status: 'confirmed',
-        notes: notes || null,
-        groupSize,
-        baseAmount: basePrice,
-        discountAmount: couponDiscount + creditUsed,
-        commissionAmount: 0,
-        userCommission: 0,
-        venueCommission: 0,
-        finalAmount,
-        venuePayout: finalAmount,
-        creditUsed,
-        couponId: coupon?.id || null,
-        bookingNumber: `BK-${crypto.randomUUID()}`,
-        checkInCode: crypto.randomBytes(4).toString('hex').toUpperCase(),
-        taggedFriends: cleanTags.length ? cleanTags : [],
-      },
-      include: {
-        session: {
+    try {
+      // Tüm kapasite/kupon/kredi kontrolü ve yazma işlemi tek transaction içinde,
+      // seans satırı kilitlenerek aynı anda gelen isteklerin sıraya girmesi sağlanır
+      // (iki kişi son boş yere aynı anda tıklarsa kapasite aşılmasın diye).
+      booking = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT id FROM "Class_Session" WHERE id = ${sessionId} FOR UPDATE`
+
+        const session = await tx.class_Session.findUnique({
+          where: { id: sessionId },
           include: { class: true },
-        },
-      },
-    })
+        })
 
-    if (coupon) {
-      await prisma.coupon.update({ where: { id: coupon.id }, data: { usedCount: { increment: 1 } } })
+        if (!session) throw new BookingError('Ders seansı bulunamadı.', 404)
+
+        const bookingCount = await tx.booking.count({
+          where: { sessionId, status: { in: ['confirmed', 'pending'] } },
+        })
+
+        if (session.availableSpots && bookingCount + groupSize > session.availableSpots) {
+          const remaining = session.availableSpots - bookingCount
+          throw new BookingError(remaining <= 0 ? 'Bu ders seansı dolu.' : `Sadece ${remaining} kontenjan kaldı.`, 400)
+        }
+
+        const existing = await tx.booking.findFirst({
+          where: { userId, sessionId, status: { in: ['confirmed', 'pending'] } },
+        })
+
+        if (existing) throw new BookingError('Bu derse zaten kayıtlısınız.', 400)
+
+        const basePrice = (session.class?.basePrice || 0) * groupSize
+
+        if (couponCode) {
+          await tx.$executeRaw`SELECT id FROM "Coupon" WHERE code = ${String(couponCode).toUpperCase()} FOR UPDATE`
+          const found = await tx.coupon.findUnique({ where: { code: String(couponCode).toUpperCase() } })
+          if (!found || !found.isActive) throw new BookingError('Geçersiz kupon kodu.', 400)
+          if (found.venueId !== session.class!.venueId) throw new BookingError('Bu kupon bu salona ait değil.', 400)
+          if (found.expiresAt && found.expiresAt < new Date()) throw new BookingError('Kupon süresi dolmuş.', 400)
+          if (found.maxUses && found.usedCount >= found.maxUses) throw new BookingError('Kupon kullanım limiti dolmuş.', 400)
+          coupon = found
+          couponDiscount = found.discountType === 'percent'
+            ? basePrice * (found.discountValue / 100)
+            : Math.min(found.discountValue, basePrice)
+        }
+
+        if (useCredit) {
+          const userWithCredit = await tx.user.findUnique({ where: { id: userId }, select: { creditBalance: true } })
+          const available = userWithCredit?.creditBalance || 0
+          creditUsed = Math.min(available, Math.max(0, basePrice - couponDiscount))
+        }
+        finalAmount = Math.max(0, basePrice - couponDiscount - creditUsed)
+
+        const created = await tx.booking.create({
+          data: {
+            userId,
+            sessionId,
+            bookingType: 'class',
+            status: 'confirmed',
+            notes: notes || null,
+            groupSize,
+            baseAmount: basePrice,
+            discountAmount: couponDiscount + creditUsed,
+            commissionAmount: 0,
+            userCommission: 0,
+            venueCommission: 0,
+            finalAmount,
+            venuePayout: finalAmount,
+            creditUsed,
+            couponId: coupon?.id || null,
+            bookingNumber: `BK-${crypto.randomUUID()}`,
+            checkInCode: crypto.randomBytes(4).toString('hex').toUpperCase(),
+            taggedFriends: cleanTags.length ? cleanTags : [],
+          },
+          include: {
+            session: {
+              include: { class: true },
+            },
+          },
+        })
+
+        if (coupon) {
+          await tx.coupon.update({ where: { id: coupon.id }, data: { usedCount: { increment: 1 } } })
+        }
+        if (creditUsed > 0) {
+          await tx.user.update({ where: { id: userId }, data: { creditBalance: { decrement: creditUsed } } })
+        }
+
+        return created
+      })
+    } catch (e: any) {
+      if (e instanceof BookingError) return res.status(e.status).json({ error: e.message })
+      throw e
     }
 
     // Salon email bildirimi
@@ -128,9 +139,13 @@ export const createBooking = async (req: Request, res: Response) => {
       })
 
       if (venue?.email) {
-        const startsAt = new Date(session.startsAt)
+        const startsAt = new Date(booking.session!.startsAt)
         const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
         const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+
+        const remainingAfterBooking = await prisma.booking.count({
+          where: { sessionId, status: { in: ['confirmed', 'pending'] } },
+        })
 
         await sendVenueBookingNotificationEmail(
           venue.email,
@@ -139,8 +154,8 @@ export const createBooking = async (req: Request, res: Response) => {
           booking.session!.class.title,
           date,
           time,
-          session.availableSpots ?? 0,
-          (session.availableSpots ?? 0) - bookingCount - 1
+          booking.session!.availableSpots ?? 0,
+          (booking.session!.availableSpots ?? 0) - remainingAfterBooking
         )
       }
     } catch (emailErr) {
@@ -152,7 +167,7 @@ export const createBooking = async (req: Request, res: Response) => {
     try {
       const userForEmail = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, fullName: true } })
       if (userForEmail?.email) {
-        const startsAt = new Date(session.startsAt)
+        const startsAt = new Date(booking.session!.startsAt)
         const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
         const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
         await sendBookingConfirmationEmail(userForEmail.email, userForEmail.fullName, booking.session!.class.title, date, time, booking.finalAmount)
@@ -165,7 +180,7 @@ export const createBooking = async (req: Request, res: Response) => {
     if (cleanTags.length > 0) {
       try {
         const booker = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } })
-        const startsAt = new Date(session.startsAt)
+        const startsAt = new Date(booking.session!.startsAt)
         const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
         const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
         const venueName = booking.session!.class.venueId
@@ -213,14 +228,6 @@ export const createBooking = async (req: Request, res: Response) => {
       } catch (tagErr) {
         console.error('Tag notification error:', tagErr)
       }
-    }
-
-    // Kredi kullanıldıysa bakiyeden düş
-    if (creditUsed > 0) {
-      await prisma.user.update({
-        where: { id: userId },
-        data: { creditBalance: { decrement: creditUsed } }
-      })
     }
 
     // İlk ödeme tamamlandıysa referral'ı tamamla (davet edene kredi ver)
@@ -282,27 +289,39 @@ export const joinDropIn = async (req: Request, res: Response) => {
     const userId = (req as any).userId
     const slotId = parseInt(req.params.slotId as string)
 
-    const slot = await prisma.dropInSlot.findUnique({ where: { id: slotId } })
-    if (!slot) return res.status(404).json({ error: 'Slot bulunamadı.' })
-    if (slot.status !== 'open') return res.status(400).json({ error: 'Bu slot artık açık değil.' })
-    if (slot.currentPlayers >= slot.totalPlayers) return res.status(400).json({ error: 'Slot dolu.' })
+    let participant: any
+    try {
+      participant = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT id FROM "DropInSlot" WHERE id = ${slotId} FOR UPDATE`
 
-    const existing = await prisma.dropInParticipant.findFirst({ where: { slotId, userId } })
-    if (existing) return res.status(400).json({ error: 'Zaten katılıyorsunuz.' })
+        const slot = await tx.dropInSlot.findUnique({ where: { id: slotId } })
+        if (!slot) throw new BookingError('Slot bulunamadı.', 404)
+        if (slot.status !== 'open') throw new BookingError('Bu slot artık açık değil.', 400)
+        if (slot.currentPlayers >= slot.totalPlayers) throw new BookingError('Slot dolu.', 400)
 
-    const participant = await prisma.dropInParticipant.create({
-      data: {
-        slotId,
-        userId,
-        status: 'confirmed',
-        checkInCode: crypto.randomBytes(4).toString('hex').toUpperCase(),
-      }
-    })
+        const existing = await tx.dropInParticipant.findFirst({ where: { slotId, userId } })
+        if (existing) throw new BookingError('Zaten katılıyorsunuz.', 400)
 
-    await prisma.dropInSlot.update({
-      where: { id: slotId },
-      data: { currentPlayers: { increment: 1 } }
-    })
+        const created = await tx.dropInParticipant.create({
+          data: {
+            slotId,
+            userId,
+            status: 'confirmed',
+            checkInCode: crypto.randomBytes(4).toString('hex').toUpperCase(),
+          }
+        })
+
+        await tx.dropInSlot.update({
+          where: { id: slotId },
+          data: { currentPlayers: { increment: 1 } }
+        })
+
+        return created
+      })
+    } catch (e: any) {
+      if (e instanceof BookingError) return res.status(e.status).json({ error: e.message })
+      throw e
+    }
 
     return res.status(201).json({ message: "Drop-in'e katıldınız!", participant })
   } catch (err) {

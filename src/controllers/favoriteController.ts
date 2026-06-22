@@ -77,7 +77,7 @@ export const getMyFavorites = async (req: Request, res: Response) => {
 
 export const getUserFavorites = async (req: Request, res: Response) => {
   try {
-    const { username } = req.params
+    const username = String(req.params.username)
 
     const user = await prisma.user.findUnique({ where: { username } })
     if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
