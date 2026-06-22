@@ -16,7 +16,8 @@ export const addFavorite = async (req: Request, res: Response) => {
 
     const fav = await prisma.favoriteVenue.create({ data: { userId, venueId } })
     return res.status(201).json({ message: 'Favorilere eklendi!', favorite: fav })
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.code === 'P2002') return res.status(400).json({ error: 'Zaten favorilerde.' })
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }

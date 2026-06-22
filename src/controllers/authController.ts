@@ -72,7 +72,10 @@ export const register = async (req: Request, res: Response) => {
       user,
       emailVerificationSent: true,
     })
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.code === 'P2002') {
+      return res.status(400).json({ error: 'Bu e-posta veya kullanıcı adı zaten kullanılıyor.' })
+    }
     console.error('Register error:', error)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }

@@ -82,7 +82,10 @@ export const venueRegister = async (req: Request, res: Response) => {
     const token = generateToken({ venueId: venue.id, email: venue.email, role: 'venue' })
 
     return res.status(201).json({ message: 'Salon kaydı oluşturuldu! Onay bekleniyor.', token, venue })
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.code === 'P2002') {
+      return res.status(400).json({ error: 'Bu email adresi zaten kullanılıyor.' })
+    }
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }

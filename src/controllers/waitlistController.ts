@@ -31,7 +31,8 @@ export const joinWaitlist = async (req: Request, res: Response) => {
     })
 
     return res.status(201).json({ message: 'Bekleme listesine eklendiz!', entry })
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.code === 'P2002') return res.status(400).json({ error: 'Zaten bekleme listesindesiniz.' })
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }

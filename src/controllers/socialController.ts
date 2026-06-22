@@ -15,7 +15,10 @@ export const followUser = async (req: Request, res: Response) => {
 
     await prisma.follow.create({ data: { followerId, followingId: target.id, status: 'accepted' } })
     return res.json({ message: 'Takip edildi.' })
-  } catch (err) { return res.status(500).json({ error: 'Sunucu hatası.' }) }
+  } catch (err: any) {
+    if (err?.code === 'P2002') return res.status(400).json({ error: 'Zaten takip ediyorsunuz.' })
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
 }
 
 export const unfollowUser = async (req: Request, res: Response) => {
@@ -351,7 +354,8 @@ export const likeActivity = async (req: Request, res: Response) => {
     }
 
     return res.json({ message: 'Beğenildi.' })
-  } catch (err) {
+  } catch (err: any) {
+    if (err?.code === 'P2002') return res.status(400).json({ error: 'Zaten beğendiniz.' })
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
