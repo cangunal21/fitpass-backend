@@ -9,14 +9,17 @@ export const venueAuthMiddleware = (req: Request, res: Response, next: NextFunct
   }
 
   const token = authHeader.split(' ')[1]
-  const decoded = verifyToken(token) as any
 
-  if (!decoded || decoded.role !== 'venue') {
-    return res.status(401).json({ error: 'Geçersiz token.' })
+  try {
+    const decoded = verifyToken(token) as any
+    if (!decoded || decoded.role !== 'venue') {
+      return res.status(401).json({ error: 'Geçersiz token.' })
+    }
+    ;(req as any).venueId = decoded.venueId
+    next()
+  } catch {
+    return res.status(401).json({ error: 'Geçersiz veya süresi dolmuş token.' })
   }
-
-  ;(req as any).venueId = decoded.venueId
-  next()
 }
 
 // Sadece onaylanmış salonlar ders/seans/dropin ekleyebilir

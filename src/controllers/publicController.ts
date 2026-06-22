@@ -191,7 +191,7 @@ export const getVenues = async (req: Request, res: Response) => {
       orderBy: { createdAt: 'desc' },
     })
 
-    return res.json({ venues })
+    return res.json({ venues: venues.map(({ passwordHash, ...v }) => v) })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
@@ -230,7 +230,8 @@ export const getVenueById = async (req: Request, res: Response) => {
 
     if (!venue) return res.status(404).json({ error: 'Salon bulunamadı.' })
 
-    return res.json({ venue })
+    const { passwordHash, ...safeVenue } = venue
+    return res.json({ venue: safeVenue })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })

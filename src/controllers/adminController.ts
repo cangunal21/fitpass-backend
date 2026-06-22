@@ -59,7 +59,8 @@ export const approveVenue = async (req: Request, res: Response) => {
       }
     }
 
-    return res.json({ message: approve ? 'Salon onaylandı.' : 'Salon reddedildi.', venue })
+    const { passwordHash, ...safeVenue } = venue
+    return res.json({ message: approve ? 'Salon onaylandı.' : 'Salon reddedildi.', venue: safeVenue })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
@@ -114,7 +115,8 @@ export const suspendVenue = async (req: Request, res: Response) => {
       where: { id: venueId },
       data: { isSuspended: suspend, isActive: !suspend },
     })
-    return res.json({ message: suspend ? 'Salon donduruldu.' : 'Salon aktif edildi.', venue })
+    const { passwordHash, ...safeVenue } = venue
+    return res.json({ message: suspend ? 'Salon donduruldu.' : 'Salon aktif edildi.', venue: safeVenue })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
@@ -143,7 +145,8 @@ export const banUser = async (req: Request, res: Response) => {
       where: { id: userId },
       data: { emailReminders: ban ? false : true },
     })
-    return res.json({ message: ban ? 'Kullanıcı banlandı.' : 'Kullanıcı aktif edildi.', user })
+    const { passwordHash, ...safeUser } = user
+    return res.json({ message: ban ? 'Kullanıcı banlandı.' : 'Kullanıcı aktif edildi.', user: safeUser })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })

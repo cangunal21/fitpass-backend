@@ -254,7 +254,22 @@ export const getMyBookings = async (req: Request, res: Response) => {
       orderBy: { createdAt: 'desc' },
     })
 
-    res.json({ bookings })
+    const safeBookings = bookings.map(b => ({
+      ...b,
+      session: b.session ? {
+        ...b.session,
+        class: b.session.class ? {
+          ...b.session.class,
+          venue: b.session.class.venue ? (({ passwordHash, ...v }) => v)(b.session.class.venue) : null,
+        } : null,
+      } : null,
+      dropInSlot: b.dropInSlot ? {
+        ...b.dropInSlot,
+        venue: b.dropInSlot.venue ? (({ passwordHash, ...v }) => v)(b.dropInSlot.venue) : null,
+      } : null,
+    }))
+
+    res.json({ bookings: safeBookings })
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'Sunucu hatası.' })
