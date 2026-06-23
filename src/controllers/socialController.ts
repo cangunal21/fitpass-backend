@@ -239,6 +239,19 @@ export const getFeed = async (req: Request, res: Response) => {
       take: 30
     })
 
+    // Etiketlenen arkadaşların gerçek isim/kullanıcı adı bilgisini topluca çöz
+    const allTaggedUsernames = Array.from(new Set(
+      bookings.flatMap(b => (Array.isArray(b.taggedFriends) ? (b.taggedFriends as string[]) : []))
+        .map(u => String(u).replace(/^@/, '').toLowerCase())
+    ))
+    const taggedUsers = allTaggedUsernames.length > 0
+      ? await prisma.user.findMany({
+          where: { username: { in: allTaggedUsernames, mode: 'insensitive' } },
+          select: { username: true, fullName: true },
+        })
+      : []
+    const taggedMap = new Map(taggedUsers.map(u => [u.username.toLowerCase(), u]))
+
     // Drop-in katılımları
     const dropIns = await prisma.dropInParticipant.findMany({
       where: {
@@ -262,17 +275,26 @@ export const getFeed = async (req: Request, res: Response) => {
 
     // Birleştir ve sırala
     const feed = [
-      ...bookings.map(b => ({
-        id: `b-${b.id}`,
-        type: 'booking' as const,
-        user: b.user,
-        title: b.session?.class?.title || 'Ders',
-        category: b.session?.class?.sportCategory?.name || '',
-        categoryColor: b.session?.class?.sportCategory?.colorHex || '#4F46E5',
-        venueName: b.session?.class?.venue?.name || '',
-        venueId: b.session?.class?.venue?.id || null,
-        date: b.createdAt,
-      })),
+      ...bookings.map(b => {
+        const tags = (Array.isArray(b.taggedFriends) ? (b.taggedFriends as string[]) : [])
+          .map(u => {
+            const key = String(u).replace(/^@/, '').toLowerCase()
+            const found = taggedMap.get(key)
+            return found ? { username: found.username, fullName: found.fullName } : { username: key, fullName: key }
+          })
+        return {
+          id: `b-${b.id}`,
+          type: 'booking' as const,
+          user: b.user,
+          title: b.session?.class?.title || 'Ders',
+          category: b.session?.class?.sportCategory?.name || '',
+          categoryColor: b.session?.class?.sportCategory?.colorHex || '#4F46E5',
+          venueName: b.session?.class?.venue?.name || '',
+          venueId: b.session?.class?.venue?.id || null,
+          taggedFriends: tags,
+          date: b.createdAt,
+        }
+      }),
       ...dropIns.map(d => ({
         id: `d-${d.id}`,
         type: 'dropin' as const,
@@ -282,6 +304,7 @@ export const getFeed = async (req: Request, res: Response) => {
         categoryColor: d.slot?.sportCategory?.colorHex || '#4F46E5',
         venueName: d.slot?.venue?.name || '',
         venueId: d.slot?.venue?.id || null,
+        taggedFriends: [] as { username: string; fullName: string }[],
         date: d.joinedAt,
       }))
     ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 30)
