@@ -2,6 +2,7 @@ import { Router } from 'express'
 import {
   getSessions,
   getSessionById,
+  getForYouSessions,
   getVenues,
   getVenueById,
   getCategories,
@@ -15,10 +16,12 @@ import {
   getInstructorById,
 } from '../controllers/publicController'
 import { validateCoupon } from '../controllers/couponController'
+import { optionalAuthMiddleware } from '../middlewares/auth'
 
 const router = Router()
 
 router.get('/sessions', getSessions)
+router.get('/for-you', optionalAuthMiddleware, getForYouSessions)
 router.get('/sessions/:id', getSessionById)
 router.get('/venues', getVenues)
 router.get('/venues-list', getVenuesList)

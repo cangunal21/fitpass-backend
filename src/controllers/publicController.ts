@@ -27,7 +27,8 @@ export const getSessions = async (req: Request, res: Response) => {
 
     // Build class filter
     const classWhere: any = {}
-    if (category) classWhere.sportCategory = { name: { equals: category as string, mode: 'insensitive' } }
+    // Kategori, Class.category metin alanıyla filtrelenir (sportCategoryId null olabilir)
+    if (category) classWhere.category = { equals: category as string, mode: 'insensitive' }
     if (venueId) classWhere.venueId = parseInt(venueId as string)
     if (neighborhoodId) classWhere.venue = { neighborhoodId: parseInt(neighborhoodId as string) }
     if (search) {
@@ -70,8 +71,8 @@ export const getSessions = async (req: Request, res: Response) => {
       venueAddress: s.class.venue.address,
       instructorId: s.class.instructorId ?? null,
       instructorName: s.class.instructor?.fullName ?? null,
-      category: s.class.sportCategory.name,
-      categoryColor: s.class.sportCategory.colorHex ?? null,
+      category: s.class.sportCategory?.name ?? s.class.category ?? '',
+      categoryColor: s.class.sportCategory?.colorHex ?? null,
       startsAt: s.startsAt.toISOString(),
       durationMinutes: s.class.durationMinutes,
       basePrice: s.class.basePrice,
@@ -125,6 +126,75 @@ export const getSessions = async (req: Request, res: Response) => {
   }
 }
 
+// GET /api/public/for-you — kullanıcının tercihlerine göre kişiselleştirilmiş seanslar
+export const getForYouSessions = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    if (!userId) return res.json({ sessions: [] })
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { preferredSports: true, preferredNeighborhoods: true },
+    })
+    const sports = (Array.isArray(user?.preferredSports) ? user!.preferredSports : []) as string[]
+    const nbIds = (Array.isArray(user?.preferredNeighborhoods) ? user!.preferredNeighborhoods : []) as number[]
+    if (sports.length === 0 && nbIds.length === 0) return res.json({ sessions: [] })
+
+    const orClauses: any[] = []
+    if (sports.length > 0) orClauses.push({ category: { in: sports } })
+    if (nbIds.length > 0) orClauses.push({ venue: { neighborhoodId: { in: nbIds } } })
+
+    const sessions = await prisma.class_Session.findMany({
+      where: {
+        status: 'open',
+        startsAt: { gte: new Date() },
+        class: { isActive: true, OR: orClauses },
+      },
+      include: {
+        class: { include: { sportCategory: true, venue: { include: { neighborhood: { select: { id: true, name: true } } } }, instructor: true } },
+      },
+      orderBy: { startsAt: 'asc' },
+      take: 40,
+    })
+
+    // İlgi skoruna göre sırala: hem spor hem mahalle eşleşeni öne al
+    const scored = sessions.map(s => {
+      const cat = s.class.sportCategory?.name ?? s.class.category ?? ''
+      const sportMatch = sports.includes(cat)
+      const nbMatch = s.class.venue.neighborhoodId != null && nbIds.includes(s.class.venue.neighborhoodId)
+      return {
+        score: (sportMatch ? 1 : 0) + (nbMatch ? 1 : 0),
+        session: {
+          id: s.id,
+          title: s.class.title,
+          venueId: s.class.venueId,
+          venueName: s.class.venue.name,
+          venueAddress: s.class.venue.address,
+          instructorId: s.class.instructorId ?? null,
+          instructorName: s.class.instructor?.fullName ?? null,
+          category: cat,
+          categoryColor: s.class.sportCategory?.colorHex ?? null,
+          startsAt: s.startsAt.toISOString(),
+          durationMinutes: s.class.durationMinutes,
+          basePrice: s.class.basePrice,
+          availableSpots: s.availableSpots,
+          capacity: s.class.capacity,
+          neighborhood: s.class.venue.neighborhood?.name ?? null,
+          neighborhoodId: s.class.venue.neighborhoodId ?? null,
+          rating: s.class.venue.avgRating,
+          totalReviews: s.class.venue.totalReviews,
+        },
+      }
+    })
+    scored.sort((a, b) => b.score - a.score || new Date(a.session.startsAt).getTime() - new Date(b.session.startsAt).getTime())
+
+    return res.json({ sessions: scored.slice(0, 12).map(x => x.session) })
+  } catch (err) {
+    console.error('getForYouSessions error:', err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
 // GET /api/public/sessions/:id
 export const getSessionById = async (req: Request, res: Response) => {
   try {
@@ -159,8 +229,8 @@ export const getSessionById = async (req: Request, res: Response) => {
         instructorName: s.class.instructor?.fullName ?? null,
         instructorBio: s.class.instructor?.bio ?? null,
         instructorAvatarUrl: s.class.instructor?.avatarUrl ?? null,
-        category: s.class.sportCategory.name,
-        categoryColor: s.class.sportCategory.colorHex ?? null,
+        category: s.class.sportCategory?.name ?? s.class.category ?? '',
+        categoryColor: s.class.sportCategory?.colorHex ?? null,
         startsAt: s.startsAt.toISOString(),
         endsAt: s.endsAt.toISOString(),
         durationMinutes: s.class.durationMinutes,

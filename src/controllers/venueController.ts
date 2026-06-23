@@ -241,11 +241,18 @@ export const createClass = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Tüm zorunlu alanları doldurun.' })
     }
 
+    // Kategori adından sportCategoryId'yi bul (ilişki tutarlılığı için)
+    const sportCat = await prisma.sportCategory.findFirst({
+      where: { name: { equals: category, mode: 'insensitive' } },
+      select: { id: true },
+    })
+
     const newClass = await prisma.class.create({
       data: {
         title,
         description: description || null,
         category,
+        sportCategoryId: sportCat?.id ?? null,
         basePrice: parseFloat(basePrice),
         duration: parseInt(duration),
         durationMinutes: parseInt(duration),
@@ -275,10 +282,21 @@ export const updateClass = async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Bu dersi düzenleme yetkiniz yok.' })
     }
 
+    // Kategori değiştiyse sportCategoryId'yi de güncelle
+    let sportCategoryId: number | undefined = undefined
+    if (category && category !== existing.category) {
+      const sportCat = await prisma.sportCategory.findFirst({
+        where: { name: { equals: category, mode: 'insensitive' } },
+        select: { id: true },
+      })
+      sportCategoryId = sportCat?.id ?? undefined
+    }
+
     const updated = await prisma.class.update({
       where: { id: classId },
       data: {
         title, description, category,
+        ...(sportCategoryId !== undefined ? { sportCategoryId } : {}),
         basePrice: basePrice ? parseFloat(basePrice) : undefined,
         duration: duration ? parseInt(duration) : undefined,
         durationMinutes: duration ? parseInt(duration) : undefined,
