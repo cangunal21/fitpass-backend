@@ -47,12 +47,16 @@ export const createBooking = async (req: Request, res: Response) => {
 
         if (!session) throw new BookingError('Ders seansı bulunamadı.', 404)
 
-        const bookingCount = await tx.booking.count({
+        // Kapasite = onaylı/bekleyen rezervasyonların groupSize TOPLAMI
+        // (satır sayısı değil — bir rezervasyon birden çok kişilik olabilir, grup rezervasyonunda overbooking olmasın diye)
+        const occupancy = await tx.booking.aggregate({
           where: { sessionId, status: { in: ['confirmed', 'pending'] } },
+          _sum: { groupSize: true },
         })
+        const occupied = occupancy._sum.groupSize || 0
 
-        if (session.availableSpots && bookingCount + groupSize > session.availableSpots) {
-          const remaining = session.availableSpots - bookingCount
+        if (session.availableSpots != null && occupied + groupSize > session.availableSpots) {
+          const remaining = session.availableSpots - occupied
           throw new BookingError(remaining <= 0 ? 'Bu ders seansı dolu.' : `Sadece ${remaining} kontenjan kaldı.`, 400)
         }
 
@@ -160,9 +164,11 @@ export const createBooking = async (req: Request, res: Response) => {
         const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
         const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
 
-        const remainingAfterBooking = await prisma.booking.count({
+        const occ = await prisma.booking.aggregate({
           where: { sessionId, status: { in: ['confirmed', 'pending'] } },
+          _sum: { groupSize: true },
         })
+        const occupiedSpots = occ._sum.groupSize || 0
 
         await sendVenueBookingNotificationEmail(
           venue.email,
@@ -172,7 +178,7 @@ export const createBooking = async (req: Request, res: Response) => {
           date,
           time,
           booking.session!.availableSpots ?? 0,
-          (booking.session!.availableSpots ?? 0) - remainingAfterBooking
+          (booking.session!.availableSpots ?? 0) - occupiedSpots
         )
       }
     } catch (emailErr) {

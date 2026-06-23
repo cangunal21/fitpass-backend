@@ -103,6 +103,10 @@ export const login = async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'E-posta veya şifre hatalı.' })
     }
 
+    if (user.banned) {
+      return res.status(403).json({ error: 'Hesabınız askıya alınmıştır. Destek ile iletişime geçin.' })
+    }
+
     const token = generateToken({ userId: user.id, email: user.email })
 
     return res.json({
@@ -201,6 +205,10 @@ export const forgotPassword = async (req: Request, res: Response) => {
 export const resetPassword = async (req: Request, res: Response) => {
   try {
     const { token, password } = req.body
+
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: 'Şifre en az 6 karakter olmalı.' })
+    }
 
     const resetToken = await prisma.passwordResetToken.findFirst({
       where: {
