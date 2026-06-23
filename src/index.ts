@@ -1,6 +1,10 @@
+import dotenv from 'dotenv'
+dotenv.config()
+import { initSentry, Sentry } from './utils/sentry'
+initSentry()
+
 import express from 'express'
 import cors from 'cors'
-import dotenv from 'dotenv'
 import rateLimit from 'express-rate-limit'
 import { sendRemindersJob } from './jobs/reminderJob'
 import { sendStreakNudges } from './jobs/streakJob'
@@ -17,8 +21,6 @@ import favoriteRoutes from './routes/favorites'
 import referralRoutes from './routes/referral'
 import { chat, getChatHistory } from './controllers/chatController'
 import { authMiddleware, optionalAuthMiddleware } from './middlewares/auth'
-
-dotenv.config()
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -98,6 +100,11 @@ app.get('/api/chat/history', authMiddleware, getChatHistory)
 app.get('/', (req, res) => {
   res.json({ message: 'Fitpass API çalışıyor 🚀', version: '1.0.0' })
 })
+
+// Propagate olan (yakalanmamış) hataları Sentry'ye ilet
+if (process.env.SENTRY_DSN) {
+  Sentry.setupExpressErrorHandler(app)
+}
 
 app.listen(PORT, () => {
   console.log(`✅ Fitpass sunucusu http://localhost:${PORT} adresinde çalışıyor`)
