@@ -2,6 +2,42 @@ import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import { sendPushNotification } from '../utils/push'
 
+// Türkiye saatine (UTC+3, DST yok) göre gün anahtarı (YYYY-MM-DD)
+export const istanbulDayKey = (d: Date): string =>
+  new Date(d.getTime() + 3 * 3600 * 1000).toISOString().slice(0, 10)
+
+const dayDiff = (a: string, b: string): number =>
+  Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000)
+
+// Bir tarih dizisinden en uzun üst üste gün serisini hesapla
+export const longestDailyStreak = (dates: Date[]): number => {
+  if (dates.length === 0) return 0
+  const dayKeys = Array.from(new Set(dates.map(istanbulDayKey))).sort()
+  let longest = 1, current = 1
+  for (let i = 1; i < dayKeys.length; i++) {
+    if (dayDiff(dayKeys[i - 1], dayKeys[i]) === 1) current++
+    else current = 1
+    if (current > longest) longest = current
+  }
+  return longest
+}
+
+// Bugüne/düne kadar süren GÜNCEL üst üste gün serisi
+export const currentDailyStreak = (dates: Date[]): number => {
+  if (dates.length === 0) return 0
+  const dayKeys = Array.from(new Set(dates.map(istanbulDayKey))).sort()
+  const today = istanbulDayKey(new Date())
+  const last = dayKeys[dayKeys.length - 1]
+  // Son aktivite bugün veya dün değilse seri kopmuştur
+  if (dayDiff(last, today) > 1) return 0
+  let streak = 1
+  for (let i = dayKeys.length - 1; i > 0; i--) {
+    if (dayDiff(dayKeys[i - 1], dayKeys[i]) === 1) streak++
+    else break
+  }
+  return streak
+}
+
 export const followUser = async (req: Request, res: Response) => {
   try {
     const followerId = (req as any).userId
@@ -113,6 +149,76 @@ export const getUserLeaderboard = async (req: Request, res: Response) => {
       .map(u => ({ ...u, lessonCount: u.bookings.length, bookings: undefined }))
       .filter(u => u.lessonCount > 0)
       .sort((a, b) => b.lessonCount - a.lessonCount)
+      .slice(0, 50)
+
+    return res.json({ leaderboard: ranked })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// En uzun streak liderliği — üst üste en fazla gün giden sporcular
+// Filtre: branch (spor kategorisi) + neighborhoodId (ilçe; yoksa şehir geneli)
+export const getStreakLeaderboard = async (req: Request, res: Response) => {
+  try {
+    const { branch, neighborhoodId } = req.query
+    const now = new Date()
+
+    const users = await prisma.user.findMany({
+      where: {
+        activityPrivacy: { not: 'private' },
+        ...(neighborhoodId ? { neighborhoodId: parseInt(neighborhoodId as string) } : {}),
+      },
+      select: {
+        id: true,
+        username: true,
+        fullName: true,
+        avatarUrl: true,
+        neighborhood: { select: { name: true } },
+        tier: { select: { name: true, colorHex: true, iconUrl: true } },
+        bookings: {
+          where: {
+            status: 'confirmed',
+            session: {
+              startsAt: { lt: now },
+              ...(branch ? { class: { category: branch as string } } : {}),
+            },
+          },
+          select: { session: { select: { startsAt: true } } },
+        },
+        dropInParticipants: {
+          where: {
+            status: 'confirmed',
+            slot: {
+              startsAt: { lt: now },
+              ...(branch ? { sportCategory: { name: branch as string } } : {}),
+            },
+          },
+          select: { slot: { select: { startsAt: true } } },
+        },
+      },
+    })
+
+    const ranked = users
+      .map(u => {
+        const dates: Date[] = [
+          ...u.bookings.map(b => b.session?.startsAt).filter(Boolean) as Date[],
+          ...u.dropInParticipants.map(d => d.slot?.startsAt).filter(Boolean) as Date[],
+        ]
+        const streak = longestDailyStreak(dates)
+        return {
+          id: u.id,
+          username: u.username,
+          fullName: u.fullName,
+          avatarUrl: u.avatarUrl,
+          neighborhood: u.neighborhood,
+          tier: u.tier,
+          streak,
+        }
+      })
+      .filter(u => u.streak >= 2) // en az 2 gün üst üste
+      .sort((a, b) => b.streak - a.streak)
       .slice(0, 50)
 
     return res.json({ leaderboard: ranked })

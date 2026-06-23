@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import {
   followUser, unfollowUser, getFollowStatus, getFollowers, getFollowing,
-  getUserLeaderboard, getVenueLeaderboard, getSuggestions, getFeed,
+  getUserLeaderboard, getVenueLeaderboard, getStreakLeaderboard, getSuggestions, getFeed,
   likeActivity, unlikeActivity, getActivityComments, addActivityComment,
   getNotifications, markNotificationsRead,
 } from '../controllers/socialController'
@@ -16,6 +16,7 @@ router.get('/followers/:username', getFollowers)
 router.get('/following/:username', getFollowing)
 router.get('/leaderboard/users', getUserLeaderboard)
 router.get('/leaderboard/venues', getVenueLeaderboard)
+router.get('/leaderboard/streaks', getStreakLeaderboard)
 router.get('/suggestions', authMiddleware, getSuggestions)
 router.get('/feed', authMiddleware, getFeed)
 router.post('/feed/:feedKey/like', authMiddleware, likeActivity)
