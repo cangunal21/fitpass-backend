@@ -24,7 +24,24 @@ const PORT = process.env.PORT || 3001
 
 app.set('trust proxy', 1) // Railway reverse proxy arkasında gerçek IP'yi al
 
-app.use(cors())
+// CORS: sadece bilinen web origin'lerine izin ver. Mobil native istekler Origin
+// header'ı göndermediği için (origin=undefined) onlar da kabul edilir.
+const allowedOrigins = [
+  'https://sipsakspor.com',
+  'https://www.sipsakspor.com',
+  'http://localhost:3000',
+  'http://localhost:3001',
+  ...(process.env.EXTRA_CORS_ORIGINS?.split(',').map(o => o.trim()).filter(Boolean) || []),
+]
+app.use(cors({
+  origin: (origin, callback) => {
+    // origin yoksa (mobil app, curl, server-to-server) veya listede varsa izin ver
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true)
+    // Vercel preview deploy'larına da izin ver (*.vercel.app)
+    if (/^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(origin)) return callback(null, true)
+    return callback(new Error('CORS: bu origin\'e izin verilmiyor'))
+  },
+}))
 app.use(express.json())
 
 // Rate limiting

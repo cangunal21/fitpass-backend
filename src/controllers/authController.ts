@@ -4,7 +4,7 @@ import crypto from 'crypto'
 import prisma from '../utils/prisma'
 import { generateToken } from '../utils/jwt'
 import { sendWelcomeEmail, sendPasswordResetEmail, sendEmailVerificationEmail } from '../utils/email'
-import { applyReferralCode } from './referralController'
+import { applyReferralCode, grantReferredBonus } from './referralController'
 import { syncUserTier } from '../utils/tier'
 
 // KAYIT OL
@@ -335,6 +335,9 @@ export const verifyEmail = async (req: Request, res: Response) => {
 
     await prisma.user.update({ where: { id: record.userId }, data: { isEmailVerified: true } })
     await prisma.emailVerificationToken.update({ where: { id: record.id }, data: { used: true } })
+
+    // Davet edilen kullanıcıysa, kayıt bonusunu (150 TL kredi) artık ver (suistimal koruması)
+    await grantReferredBonus(record.userId)
 
     return res.json({ message: 'Email başarıyla doğrulandı!' })
   } catch (error) {

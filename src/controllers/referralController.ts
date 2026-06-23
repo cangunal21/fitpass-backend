@@ -78,7 +78,10 @@ export const applyReferralCode = async (userId: number, code: string) => {
     })
     if (existing) return
 
-    // Referral kaydı oluştur + davet edilene anında kredi ver
+    // Referral kaydı oluştur + referrer sayacını artır.
+    // NOT: Davet edilene kredi BURADA (kayıt anında) verilmez — suistimali önlemek için
+    // (sahte/atılır email'lerle kredi farm'lanmasın). Kredi, email doğrulandığında verilir
+    // (bkz. grantReferredBonus, authController.verifyEmail'den çağrılır).
     await prisma.$transaction([
       prisma.referral.create({
         data: { referrerId: referrer.id, referredId: userId, creditAmount: CREDIT_AMOUNT }
@@ -87,14 +90,33 @@ export const applyReferralCode = async (userId: number, code: string) => {
         where: { id: referrer.id },
         data: { referralCount: { increment: 1 } }
       }),
-      // Davet edilene anında 150 TL kredi (ilk ders için)
-      prisma.user.update({
-        where: { id: userId },
-        data: { creditBalance: { increment: CREDIT_AMOUNT } }
-      }),
     ])
   } catch (err) {
     console.error('Referral apply error:', err)
+  }
+}
+
+// Davet edilen kullanıcı email'ini doğrulayınca kayıt bonusunu (150 TL kredi) ver.
+// Tek seferlik: referredBonusGranted flag'i ile korunur. Atılır email'lerle suistimali engeller.
+export const grantReferredBonus = async (userId: number) => {
+  try {
+    const referral = await prisma.referral.findFirst({
+      where: { referredId: userId, referredBonusGranted: false },
+    })
+    if (!referral) return
+
+    await prisma.$transaction([
+      prisma.referral.update({
+        where: { id: referral.id },
+        data: { referredBonusGranted: true },
+      }),
+      prisma.user.update({
+        where: { id: userId },
+        data: { creditBalance: { increment: CREDIT_AMOUNT } },
+      }),
+    ])
+  } catch (err) {
+    console.error('Referred bonus grant error:', err)
   }
 }
 

@@ -274,6 +274,8 @@ model Class {
   createdAt       DateTime      @default(now())
 
   sessions Class_Session[]
+
+  @@index([venueId])
 }
 
 model Class_Session {
@@ -289,6 +291,9 @@ model Class_Session {
 
   bookings Booking[]
   waitlist Waitlist[]
+
+  @@index([classId])
+  @@index([startsAt])
 }
 
 // ─────────────────────────────────────────────
@@ -333,6 +338,9 @@ model DropInParticipant {
   checkedInAt  DateTime?
   joinedAt     DateTime   @default(now())
   status       String     @default("confirmed")
+
+  @@index([slotId])
+  @@index([userId])
 }
 
 // ─────────────────────────────────────────────
@@ -376,6 +384,11 @@ model Booking {
   commissionHistory CommissionHistory?
   review            Review?
   activityLog       ActivityLog?
+
+  @@index([userId])
+  @@index([sessionId])
+  @@index([dropInSlotId])
+  @@index([status])
 }
 
 model CommissionHistory {
@@ -442,6 +455,9 @@ model Review {
   venueReply      String?
   venueRepliedAt  DateTime?
   createdAt       DateTime    @default(now())
+
+  @@index([venueId])
+  @@index([instructorId])
 }
 
 // ─────────────────────────────────────────────
@@ -626,6 +642,7 @@ model Referral {
   referredId   Int
   status       String   @default("pending") // pending | completed
   creditAmount Int      @default(150)
+  referredBonusGranted Boolean @default(false) // davet edilene kayıt bonusu (email doğrulama sonrası) verildi mi
   createdAt    DateTime @default(now())
   completedAt  DateTime?
 
