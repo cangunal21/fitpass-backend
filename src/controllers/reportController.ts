@@ -1,5 +1,6 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
+import { sendReportNotificationEmail } from '../utils/email'
 
 // Kullanıcı başka bir kullanıcıyı (profil/avatar vb.) şikayet eder
 export const reportUser = async (req: Request, res: Response) => {
@@ -26,13 +27,29 @@ export const reportUser = async (req: Request, res: Response) => {
     })
     if (existing) return res.json({ message: 'Şikayetiniz zaten alındı, inceleniyor.' })
 
+    const cleanReason = reason ? String(reason).slice(0, 500) : null
     await prisma.report.create({
       data: {
         reporterUserId,
         reportedUserId: targetId,
-        reason: reason ? String(reason).slice(0, 500) : null,
+        reason: cleanReason,
       },
     })
+
+    // Admin'e bildirim e-postası gönder (rezervasyonu/işlemi bloklama)
+    try {
+      const [reporter, reported] = await Promise.all([
+        prisma.user.findUnique({ where: { id: reporterUserId }, select: { fullName: true, username: true } }),
+        prisma.user.findUnique({ where: { id: targetId }, select: { fullName: true, username: true } }),
+      ])
+      await sendReportNotificationEmail(
+        reporter?.fullName || 'Kullanıcı', reporter?.username || '',
+        reported?.fullName || 'Kullanıcı', reported?.username || '',
+        cleanReason,
+      )
+    } catch (mailErr) {
+      console.error('Report mail error:', mailErr)
+    }
 
     return res.status(201).json({ message: 'Şikayetiniz alındı. En kısa sürede incelenecek.' })
   } catch (err) {

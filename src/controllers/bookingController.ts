@@ -1,7 +1,7 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import crypto from 'crypto'
-import { sendVenueBookingNotificationEmail, sendCancellationEmail, sendVenueCancellationEmail, sendBookingConfirmationEmail, sendGroupTagNotificationEmail, sendGroupInviteEmail } from '../utils/email'
+import { sendVenueBookingNotificationEmail, sendCancellationEmail, sendVenueCancellationEmail, sendBookingConfirmationEmail, sendGroupTagNotificationEmail, sendGroupInviteEmail, sendCashbackEmail, sendTransferEmail } from '../utils/email'
 import { sendPushNotification } from '../utils/push'
 import { completeReferral } from './referralController'
 
@@ -201,6 +201,18 @@ export const createBooking = async (req: Request, res: Response) => {
       }
     } catch (emailErr) {
       console.error('User confirmation email error:', emailErr)
+    }
+
+    // Cashback kazanıldıysa bilgilendirme e-postası
+    if (booking.cashbackEarned > 0) {
+      try {
+        const u = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, fullName: true, creditBalance: true } })
+        if (u?.email) {
+          await sendCashbackEmail(u.email, u.fullName, booking.cashbackEarned, booking.session!.class.title, u.creditBalance)
+        }
+      } catch (cbErr) {
+        console.error('Cashback email error:', cbErr)
+      }
     }
 
     // Etiketlenen kullanıcılara bildirim gönder
@@ -639,6 +651,20 @@ export const transferBooking = async (req: Request, res: Response) => {
     } catch (e: any) {
       if (e instanceof BookingError) return res.status(e.status).json({ error: e.message })
       throw e
+    }
+
+    // Bilgilendirme e-postası (yeni ders + varsa kredi iadesi)
+    try {
+      const u = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, fullName: true } })
+      const sess = result.updated.session
+      if (u?.email && sess) {
+        const startsAt = new Date(sess.startsAt)
+        const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
+        const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+        await sendTransferEmail(u.email, u.fullName, sess.class.title, date, time, result.priceRefund)
+      }
+    } catch (mailErr) {
+      console.error('Transfer email error:', mailErr)
     }
 
     return res.json({

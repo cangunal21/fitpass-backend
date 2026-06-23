@@ -411,6 +411,111 @@ export const sendComplaintEmail = async (
   })
 }
 
+// Kullanıcı şikayeti → admin'e bildirim
+export const sendReportNotificationEmail = async (
+  reporterName: string,
+  reporterUsername: string,
+  reportedName: string,
+  reportedUsername: string,
+  reason: string | null,
+) => {
+  const adminEmail = process.env.ADMIN_EMAIL || 'admin@sipsakspor.com'
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to: adminEmail,
+    subject: `[Şikayet] @${reportedUsername} kullanıcısı şikayet edildi`,
+    html: baseTemplate(`
+      <h2 style="font-size:20px;font-weight:800;color:#1a1a1a;margin:0 0 20px;">Yeni Kullanıcı Şikayeti</h2>
+      <div style="background:#FEF2F2;border-radius:12px;padding:20px 24px;margin-bottom:16px;border:1px solid #FECACA;">
+        <p style="margin:0 0 8px;font-size:13px;color:#888;">Şikayet edilen kullanıcı</p>
+        <p style="margin:0;font-size:15px;font-weight:700;color:#1a1a1a;">${reportedName} · @${reportedUsername}</p>
+      </div>
+      <div style="background:#F8F8F8;border-radius:12px;padding:20px 24px;margin-bottom:16px;">
+        <p style="margin:0 0 8px;font-size:13px;color:#888;">Şikayet eden</p>
+        <p style="margin:0;font-size:15px;font-weight:700;color:#1a1a1a;">${reporterName} · @${reporterUsername}</p>
+      </div>
+      <div style="background:#F8F8F8;border-radius:12px;padding:20px 24px;">
+        <p style="margin:0 0 8px;font-size:13px;color:#888;">Sebep</p>
+        <p style="margin:0;font-size:15px;color:#333;line-height:1.7;white-space:pre-wrap;">${reason || 'Belirtilmedi'}</p>
+      </div>
+      <div style="text-align:center;margin-top:24px;">
+        <a href="${SITE_URL}/admin" style="display:inline-block;padding:12px 28px;background:${BRAND_COLOR};color:#fff;border-radius:12px;text-decoration:none;font-size:14px;font-weight:700;">Admin Panelinde İncele →</a>
+      </div>
+    `)
+  })
+}
+
+// Cashback kazanıldı → kullanıcıya bilgilendirme
+export const sendCashbackEmail = async (
+  to: string,
+  fullName: string,
+  amount: number,
+  classTitle: string,
+  newBalance: number,
+) => {
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to,
+    subject: `₺${amount} cashback kazandın! 🎁`,
+    html: baseTemplate(`
+      <div style="text-align:center;margin-bottom:24px;">
+        <div style="width:64px;height:64px;background:#F0FDF4;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;margin-bottom:16px;">
+          <span style="font-size:32px;">🎁</span>
+        </div>
+        <h2 style="font-size:22px;font-weight:800;color:#111;margin:0;">₺${amount} Cashback Kazandın!</h2>
+      </div>
+      <p style="font-size:15px;color:#555;line-height:1.7;margin:0 0 20px;">
+        Merhaba ${fullName}, <strong>${classTitle}</strong> rezervasyonundan <strong>₺${amount} cashback</strong> kredisi kazandın. Bu kredi bir sonraki rezervasyonlarında otomatik indirim olarak kullanılabilir.
+      </p>
+      <div style="background:#F0FDF4;border-radius:16px;padding:20px;margin-bottom:24px;border:1px solid #BBF7D0;text-align:center;">
+        <p style="font-size:13px;color:#15803D;margin:0 0 4px;">Güncel kredi bakiyen</p>
+        <p style="font-size:28px;font-weight:800;color:#15803D;margin:0;">₺${newBalance}</p>
+      </div>
+      <div style="text-align:center;">
+        <a href="${SITE_URL}/profil" style="display:inline-block;padding:12px 28px;background:${BRAND_COLOR};color:#fff;border-radius:12px;text-decoration:none;font-size:14px;font-weight:700;">Kredimi Gör →</a>
+      </div>
+    `),
+  })
+}
+
+// Ders transferi yapıldı → kullanıcıya bilgilendirme
+export const sendTransferEmail = async (
+  to: string,
+  fullName: string,
+  newClassTitle: string,
+  date: string,
+  time: string,
+  priceRefund: number,
+) => {
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to,
+    subject: `Dersin değiştirildi: ${newClassTitle}`,
+    html: baseTemplate(`
+      <div style="text-align:center;margin-bottom:24px;">
+        <div style="width:64px;height:64px;background:#EEF2FF;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;margin-bottom:16px;">
+          <span style="font-size:32px;">🔄</span>
+        </div>
+        <h2 style="font-size:22px;font-weight:800;color:#111;margin:0;">Rezervasyonun Taşındı</h2>
+      </div>
+      <p style="font-size:15px;color:#555;line-height:1.7;margin:0 0 20px;">
+        Merhaba ${fullName}, rezervasyonun başarıyla yeni derse taşındı.
+      </p>
+      <div style="background:#FAFAFA;border-radius:16px;padding:20px;margin-bottom:20px;border:1px solid #F0F0F0;">
+        <p style="font-size:17px;font-weight:700;color:#111;margin:0 0 12px;">${newClassTitle}</p>
+        <p style="font-size:14px;color:#555;margin:0;">${date} · ${time}</p>
+      </div>
+      ${priceRefund > 0 ? `
+      <div style="background:#F0FDF4;border-radius:12px;padding:16px;margin-bottom:24px;border:1px solid #BBF7D0;text-align:center;">
+        <p style="font-size:14px;color:#15803D;margin:0;font-weight:600;">💰 Fiyat farkı olan <strong>₺${priceRefund}</strong> kredi olarak hesabına iade edildi.</p>
+      </div>` : ''}
+      <div style="text-align:center;">
+        <a href="${SITE_URL}/profil" style="display:inline-block;padding:12px 28px;background:${BRAND_COLOR};color:#fff;border-radius:12px;text-decoration:none;font-size:14px;font-weight:700;">Rezervasyonlarımı Gör →</a>
+      </div>
+    `),
+  })
+}
+
 export const sendVenueApprovedEmail = async (
   to: string,
   venueName: string
