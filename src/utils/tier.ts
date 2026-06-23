@@ -13,6 +13,24 @@ export async function computeCompletedLessons(userId: number): Promise<number> {
   return classCount + dropInCount
 }
 
+// Puanları yılda bir sıfırla (lazy): ait olduğu yıl geçmişse 0'la.
+// Puan kazandırma sistemi eklenince otomatik her 1 Ocak'ta sıfırlanır.
+export async function resetYearlyPointsIfNeeded(userId: number) {
+  const currentYear = new Date().getFullYear()
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { rewardPointsYear: true },
+  })
+  if (!user) return
+  if (user.rewardPointsYear == null) {
+    // İlk kez: yıl damgasını koy, puana dokunma
+    await prisma.user.update({ where: { id: userId }, data: { rewardPointsYear: currentYear } })
+  } else if (user.rewardPointsYear < currentYear) {
+    // Yeni yıl: puanları sıfırla
+    await prisma.user.update({ where: { id: userId }, data: { rewardPoints: 0, rewardPointsYear: currentYear } })
+  }
+}
+
 export async function syncUserTier(userId: number) {
   const [count, tiers] = await Promise.all([
     computeCompletedLessons(userId),

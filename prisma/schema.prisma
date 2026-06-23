@@ -148,6 +148,7 @@ model User {
   yearlyTierResetDate   DateTime?
   totalLessonsCompleted Int                  @default(0)
   rewardPoints          Int                  @default(0)
+  rewardPointsYear      Int?                 // puanların ait olduğu yıl (yıllık reset için)
   referralCode          String?              @unique
   creditBalance         Int                  @default(0)
   referralCount         Int                  @default(0)

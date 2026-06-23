@@ -5,7 +5,7 @@ import prisma from '../utils/prisma'
 import { generateToken } from '../utils/jwt'
 import { sendWelcomeEmail, sendPasswordResetEmail, sendEmailVerificationEmail } from '../utils/email'
 import { applyReferralCode, grantReferredBonus } from './referralController'
-import { syncUserTier } from '../utils/tier'
+import { syncUserTier, resetYearlyPointsIfNeeded } from '../utils/tier'
 
 // KAYIT OL
 export const register = async (req: Request, res: Response) => {
@@ -132,6 +132,7 @@ export const getMe = async (req: Request & { userId?: number }, res: Response) =
     if (req.userId) {
       try {
         await syncUserTier(req.userId)
+        await resetYearlyPointsIfNeeded(req.userId)
       } catch (e) {
         console.error('Tier sync error:', e)
       }

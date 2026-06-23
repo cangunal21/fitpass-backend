@@ -80,6 +80,9 @@ export const getUserLeaderboard = async (req: Request, res: Response) => {
   try {
     const { branch, neighborhoodId } = req.query
 
+    // Liderlik her yıl sıfırlanır: sadece bu takvim yılındaki dersler sayılır
+    const startOfYear = new Date(new Date().getFullYear(), 0, 1)
+
     // activityPrivacy gizli olanları hariç tut
     const users = await prisma.user.findMany({
       where: {
@@ -96,11 +99,10 @@ export const getUserLeaderboard = async (req: Request, res: Response) => {
         bookings: {
           where: {
             status: 'confirmed',
-            ...(branch ? {
-              session: {
-                class: { category: branch as string }
-              }
-            } : {})
+            session: {
+              startsAt: { gte: startOfYear },
+              ...(branch ? { class: { category: branch as string } } : {}),
+            },
           },
           select: { id: true }
         }
