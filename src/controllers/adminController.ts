@@ -143,10 +143,68 @@ export const banUser = async (req: Request, res: Response) => {
 
     const user = await prisma.user.update({
       where: { id: userId },
-      data: { emailReminders: ban ? false : true },
+      data: { banned: !!ban },
     })
     const { passwordHash, ...safeUser } = user
     return res.json({ message: ban ? 'Kullanıcı banlandı.' : 'Kullanıcı aktif edildi.', user: safeUser })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// Onay bekleyen salon resimleri (admin)
+export const getPendingVenueImages = async (req: Request, res: Response) => {
+  try {
+    const venues = await prisma.venue.findMany({
+      where: { imagesPendingReview: true },
+      select: {
+        id: true, name: true,
+        images: true, coverImageUrl: true,
+        pendingImages: true, pendingCoverImageUrl: true,
+      },
+      orderBy: { id: 'asc' },
+    })
+    return res.json({ venues })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// Salon resimlerini onayla/reddet (admin)
+export const reviewVenueImages = async (req: Request, res: Response) => {
+  try {
+    const venueId = parseInt(req.params.id as string)
+    const { approve } = req.body
+
+    const venue = await prisma.venue.findUnique({
+      where: { id: venueId },
+      select: { pendingImages: true, pendingCoverImageUrl: true },
+    })
+    if (!venue) return res.status(404).json({ error: 'Salon bulunamadı.' })
+
+    if (approve) {
+      // Bekleyen seti canlıya al
+      await prisma.venue.update({
+        where: { id: venueId },
+        data: {
+          images: venue.pendingImages as any,
+          coverImageUrl: venue.pendingCoverImageUrl,
+          pendingImages: [],
+          pendingCoverImageUrl: null,
+          imagesPendingReview: false,
+        },
+      })
+      return res.json({ message: 'Salon resimleri onaylandı ve yayınlandı.' })
+    } else {
+      // Reddet: bekleyeni temizle, canlı resimler korunur
+      await prisma.venue.update({
+        where: { id: venueId },
+        data: { pendingImages: [], pendingCoverImageUrl: null, imagesPendingReview: false },
+      })
+      return res.json({ message: 'Salon resimleri reddedildi.' })
+    }
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })

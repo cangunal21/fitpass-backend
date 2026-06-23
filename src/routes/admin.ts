@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { getStats, getAllVenues, approveVenue, getAllUsers, getAllBookings, suspendVenue, deleteVenue, banUser, getAllCoupons, adminDeleteCoupon, getCategories, createCategory, deleteCategory, updateCategory } from '../controllers/adminController'
+import { getStats, getAllVenues, approveVenue, getAllUsers, getAllBookings, suspendVenue, deleteVenue, banUser, getAllCoupons, adminDeleteCoupon, getCategories, createCategory, deleteCategory, updateCategory, getPendingVenueImages, reviewVenueImages } from '../controllers/adminController'
 import { adminAuthMiddleware } from '../middlewares/adminAuth'
 
 const router = Router()
@@ -9,6 +9,8 @@ router.use(adminAuthMiddleware)
 router.get('/stats', getStats)
 router.get('/venues', getAllVenues)
 router.put('/venues/:id/approve', approveVenue)
+router.get('/venue-images/pending', getPendingVenueImages)
+router.put('/venue-images/:id/review', reviewVenueImages)
 router.get('/users', getAllUsers)
 router.get('/bookings', getAllBookings)
 router.put('/venues/:id/suspend', suspendVenue)

@@ -202,6 +202,9 @@ model Venue {
   website        String?
   coverImageUrl  String?
   images         Json                 @default("[]")
+  pendingCoverImageUrl String?              // admin onayı bekleyen kapak
+  pendingImages        Json                 @default("[]") // admin onayı bekleyen galeri
+  imagesPendingReview  Boolean              @default(false) // onay bekleyen resim var mı
   isActive       Boolean              @default(true)
   isVerified     Boolean              @default(false)
   isApproved     Boolean              @default(false)

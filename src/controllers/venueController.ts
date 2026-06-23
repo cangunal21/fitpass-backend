@@ -142,6 +142,8 @@ export const getVenueMe = async (req: Request, res: Response) => {
       select: {
         id: true, name: true, email: true, phone: true, address: true,
         description: true, isApproved: true, avgRating: true, totalReviews: true, createdAt: true,
+        coverImageUrl: true, images: true,
+        pendingCoverImageUrl: true, pendingImages: true, imagesPendingReview: true,
         sportCategories: {
           select: { sportCategory: { select: { name: true } } }
         },
@@ -590,7 +592,7 @@ export const updateSession = async (req: Request, res: Response) => {
   }
 }
 
-// SALON RESİMLERİ GÜNCELLE
+// SALON RESİMLERİ GÜNCELLE — admin onayına gönderir (canlı resimler onaya kadar değişmez)
 export const updateVenueImages = async (req: Request, res: Response) => {
   try {
     const venueId = (req as any).venueId
@@ -598,12 +600,14 @@ export const updateVenueImages = async (req: Request, res: Response) => {
     const updated = await prisma.venue.update({
       where: { id: venueId },
       data: {
-        images: images || [],
-        coverImageUrl: coverImageUrl || null,
+        // Canlı (images/coverImageUrl) alanlara DOKUNULMAZ; yeni set onaya gider
+        pendingImages: images || [],
+        pendingCoverImageUrl: coverImageUrl || null,
+        imagesPendingReview: true,
       },
-      select: { id: true, images: true, coverImageUrl: true }
+      select: { id: true, images: true, coverImageUrl: true, pendingImages: true, pendingCoverImageUrl: true, imagesPendingReview: true }
     })
-    return res.json({ message: 'Resimler güncellendi.', venue: updated })
+    return res.json({ message: 'Resimleriniz admin onayına gönderildi. Onaylandıktan sonra sitede görünecek.', venue: updated })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
