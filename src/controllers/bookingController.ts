@@ -203,15 +203,18 @@ export const createBooking = async (req: Request, res: Response) => {
       console.error('User confirmation email error:', emailErr)
     }
 
-    // Cashback kazanıldıysa bilgilendirme e-postası
+    // Cashback kazanıldıysa bilgilendirme (e-posta + push)
     if (booking.cashbackEarned > 0) {
       try {
-        const u = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, fullName: true, creditBalance: true } })
+        const u = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, fullName: true, creditBalance: true, pushToken: true } })
         if (u?.email) {
           await sendCashbackEmail(u.email, u.fullName, booking.cashbackEarned, booking.session!.class.title, u.creditBalance)
         }
+        if (u?.pushToken) {
+          sendPushNotification(u.pushToken, 'Cashback kazandın! 🎁', `${booking.session!.class.title} rezervasyonundan ₺${booking.cashbackEarned} kredi kazandın.`).catch(() => {})
+        }
       } catch (cbErr) {
-        console.error('Cashback email error:', cbErr)
+        console.error('Cashback notify error:', cbErr)
       }
     }
 
@@ -441,7 +444,7 @@ export const cancelBooking = async (req: Request, res: Response) => {
       const fullBooking = await prisma.booking.findUnique({
         where: { id: bookingId },
         include: {
-          user: { select: { fullName: true, email: true } },
+          user: { select: { fullName: true, email: true, pushToken: true } },
           session: { include: { class: { include: { venue: { select: { email: true, name: true } } } } } },
         },
       })
@@ -453,9 +456,12 @@ export const cancelBooking = async (req: Request, res: Response) => {
         const classTitle = fullBooking.session!.class.title
         const venue = fullBooking.session!.class.venue
 
-        // Kullanıcıya iptal bildirimi
+        // Kullanıcıya iptal bildirimi (e-posta + push)
         if (fullBooking.user?.email) {
           await sendCancellationEmail(fullBooking.user.email, fullBooking.user.fullName, classTitle, date, time)
+        }
+        if (fullBooking.user?.pushToken) {
+          sendPushNotification(fullBooking.user.pushToken, 'Rezervasyon iptal edildi', `${classTitle} · ${date} ${time} iptal edildi. ${refundType === 'full' ? 'Tam' : 'Yarım'} iade uygulandı.`).catch(() => {})
         }
 
         // Salona iptal bildirimi
@@ -653,18 +659,22 @@ export const transferBooking = async (req: Request, res: Response) => {
       throw e
     }
 
-    // Bilgilendirme e-postası (yeni ders + varsa kredi iadesi)
+    // Bilgilendirme (e-posta + push) (yeni ders + varsa kredi iadesi)
     try {
-      const u = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, fullName: true } })
+      const u = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, fullName: true, pushToken: true } })
       const sess = result.updated.session
-      if (u?.email && sess) {
+      if (sess) {
         const startsAt = new Date(sess.startsAt)
         const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
         const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
-        await sendTransferEmail(u.email, u.fullName, sess.class.title, date, time, result.priceRefund)
+        if (u?.email) await sendTransferEmail(u.email, u.fullName, sess.class.title, date, time, result.priceRefund)
+        if (u?.pushToken) {
+          const refundTxt = result.priceRefund > 0 ? ` ₺${result.priceRefund} kredi iade edildi.` : ''
+          sendPushNotification(u.pushToken, 'Dersin değiştirildi 🔄', `${sess.class.title} · ${date} ${time}.${refundTxt}`).catch(() => {})
+        }
       }
     } catch (mailErr) {
-      console.error('Transfer email error:', mailErr)
+      console.error('Transfer notify error:', mailErr)
     }
 
     return res.json({

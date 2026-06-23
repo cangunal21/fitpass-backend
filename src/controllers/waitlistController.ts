@@ -1,6 +1,7 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import { sendWaitlistNotificationEmail } from '../utils/email'
+import { sendPushNotification } from '../utils/push'
 
 // Bekleme listesine katıl
 export const joinWaitlist = async (req: Request, res: Response) => {
@@ -77,7 +78,7 @@ export const notifyFirstWaitlistUser = async (sessionId: number) => {
       where: { sessionId, status: 'waiting' },
       orderBy: { createdAt: 'asc' },
       include: {
-        user: { select: { email: true, fullName: true } },
+        user: { select: { email: true, fullName: true, pushToken: true } },
         session: { include: { class: true } }
       }
     })
@@ -89,11 +90,14 @@ export const notifyFirstWaitlistUser = async (sessionId: number) => {
       data: { status: 'notified', notifiedAt: new Date() }
     })
 
+    const startsAt = new Date(first.session.startsAt)
+    const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
+    const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
     if (first.user?.email) {
-      const startsAt = new Date(first.session.startsAt)
-      const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
-      const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
       await sendWaitlistNotificationEmail(first.user.email, first.user.fullName, first.session.class.title, date, time)
+    }
+    if (first.user?.pushToken) {
+      sendPushNotification(first.user.pushToken, 'Yer açıldı! 🎉', `${first.session.class.title} (${date} ${time}) dersinde yer açıldı, hemen kaydol!`).catch(() => {})
     }
   } catch (e) {
     console.error('Waitlist notification error:', e)

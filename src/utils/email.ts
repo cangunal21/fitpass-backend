@@ -559,6 +559,35 @@ export const sendStreakNudgeEmail = async (
   })
 }
 
+// Yeni rozet kazanıldı → kullanıcıya bilgilendirme
+export const sendBadgeEmail = async (
+  to: string,
+  fullName: string,
+  badgeNames: string[],
+) => {
+  const single = badgeNames.length === 1
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to,
+    subject: single ? `Yeni rozet: ${badgeNames[0]} 🏅` : `${badgeNames.length} yeni rozet kazandın! 🏅`,
+    html: baseTemplate(`
+      <div style="text-align:center;margin-bottom:24px;">
+        <div style="font-size:64px;line-height:1;margin-bottom:8px;">🏅</div>
+        <h2 style="font-size:22px;font-weight:800;color:#111;margin:0;">${single ? 'Yeni Rozet Kazandın!' : `${badgeNames.length} Yeni Rozet!`}</h2>
+      </div>
+      <p style="font-size:15px;color:#555;line-height:1.7;margin:0 0 20px;text-align:center;">
+        Merhaba ${fullName}, tebrikler! Şu rozetleri kazandın:
+      </p>
+      <div style="background:#EEF2FF;border:1px solid #C7D2FE;border-radius:16px;padding:18px 20px;margin-bottom:24px;">
+        ${badgeNames.map(n => `<p style="margin:6px 0;font-size:15px;font-weight:700;color:#4F46E5;">🏅 ${n}</p>`).join('')}
+      </div>
+      <div style="text-align:center;">
+        <a href="${SITE_URL}/profil" style="display:inline-block;padding:14px 30px;background:${BRAND_COLOR};color:#fff;border-radius:12px;text-decoration:none;font-size:15px;font-weight:700;">Rozetlerimi Gör →</a>
+      </div>
+    `),
+  })
+}
+
 export const sendVenueApprovedEmail = async (
   to: string,
   venueName: string

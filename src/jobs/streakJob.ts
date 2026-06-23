@@ -1,5 +1,6 @@
 import prisma from '../utils/prisma'
 import { sendStreakNudgeEmail } from '../utils/email'
+import { sendPushNotification } from '../utils/push'
 import {
   istanbulDayKey, istanbulMondayKey, istanbulHour,
   currentDailyStreak, currentWeeklyStreak,
@@ -38,7 +39,7 @@ export const sendStreakNudges = async () => {
       try {
         const user = await prisma.user.findUnique({
           where: { id: userId },
-          select: { email: true, fullName: true, emailReminders: true, lastStreakNudgeAt: true },
+          select: { email: true, fullName: true, emailReminders: true, lastStreakNudgeAt: true, pushToken: true },
         })
         if (!user?.email || user.emailReminders === false) continue
         if (user.lastStreakNudgeAt && user.lastStreakNudgeAt > guardWindow) continue
@@ -75,9 +76,11 @@ export const sendStreakNudges = async () => {
         // Günlük seri önceliği (daha acil): 2+ gün ve bugün henüz gitmemiş
         if (dailyStreak >= 2 && !wentToday) {
           await sendStreakNudgeEmail(user.email, user.fullName, 'daily', dailyStreak)
+          if (user.pushToken) sendPushNotification(user.pushToken, `🔥 ${dailyStreak} günlük serini bozma!`, `Bugün de bir derse katıl, serini ${dailyStreak + 1} güne çıkar!`).catch(() => {})
           sent = true
         } else if (weeklyStreak >= 2 && !wentThisWeek) {
           await sendStreakNudgeEmail(user.email, user.fullName, 'weekly', weeklyStreak)
+          if (user.pushToken) sendPushNotification(user.pushToken, `🔥 ${weeklyStreak} haftalık serini sürdür!`, `Bu hafta da bir derse katıl, serini ${weeklyStreak + 1} haftaya taşı!`).catch(() => {})
           sent = true
         }
 

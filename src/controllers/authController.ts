@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs'
 import crypto from 'crypto'
 import prisma from '../utils/prisma'
 import { generateToken } from '../utils/jwt'
-import { sendWelcomeEmail, sendPasswordResetEmail, sendEmailVerificationEmail } from '../utils/email'
+import { sendWelcomeEmail, sendPasswordResetEmail, sendEmailVerificationEmail, sendBadgeEmail } from '../utils/email'
 import { applyReferralCode, grantReferredBonus } from './referralController'
 import { syncUserTier, resetYearlyPointsIfNeeded } from '../utils/tier'
 import { syncUserBadges } from '../utils/badges'
@@ -136,14 +136,15 @@ export const getMe = async (req: Request & { userId?: number }, res: Response) =
         await syncUserTier(req.userId)
         await resetYearlyPointsIfNeeded(req.userId)
         const newBadges = await syncUserBadges(req.userId)
-        // Yeni rozet kazanıldıysa bildir (push + uygulama içi)
+        // Yeni rozet kazanıldıysa bildir (push + e-posta + uygulama içi)
         if (newBadges.length > 0) {
-          const u = await prisma.user.findUnique({ where: { id: req.userId }, select: { pushToken: true } })
+          const u = await prisma.user.findUnique({ where: { id: req.userId }, select: { pushToken: true, email: true, fullName: true } })
           const msg = newBadges.length === 1
             ? `"${newBadges[0]}" rozetini kazandın! 🎉`
             : `${newBadges.length} yeni rozet kazandın! 🎉`
           await prisma.notification.create({ data: { userId: req.userId, type: 'badge', message: msg } }).catch(() => {})
           if (u?.pushToken) sendPushNotification(u.pushToken, 'Yeni rozet! 🏅', msg).catch(() => {})
+          if (u?.email) sendBadgeEmail(u.email, u.fullName, newBadges).catch(() => {})
         }
       } catch (e) {
         console.error('Tier/badge sync error:', e)
