@@ -35,6 +35,8 @@ PLATFORM BİLGİLERİ:
 - Salonlar sisteme kayıt olur, admin onayladıktan sonra aktif olur
 - Rezervasyon yapabilmek için kayıt olmak gerekir
 - İptal politikası: 24 saat öncesine kadar tam iade, 12-24 saat arası yarım iade, 12 saatten az kala iptal edilemez
+- Ders değiştirme (transfer): rezervasyonunu aynı salonda başka bir derse, telefon açmadan uygulamadan taşıyabilirsin. Koşul: hedef dersin en az %50'si boş olmalı ve aynı/daha uygun fiyatlı olmalı. Daha ucuz bir derse geçersen aradaki fark kredine iade edilir. "Rezervasyonlarım" ekranında "Dersi Değiştir" butonuyla yapılır.
+- Şikayet: uygunsuz bir profil resmi veya kullanıcı görürsen profilindeki "Şikayet et" butonuyla bildirebilirsin; ekibimiz inceler.
 - Drop-in: basketbol, padel ve halı saha için anlık katılım sistemi var
 - Liderlik tablosu: en çok ders alan kullanıcılar ve en yüksek puanlı salonlar görüntülenebilir
 - Sosyal: diğer sporcuları takip edebilir, aktivite feed'inden arkadaşların son derslerini görebilir, beğenebilir ve yorum yapabilirsin
