@@ -77,12 +77,25 @@ export const createBooking = async (req: Request, res: Response) => {
             : Math.min(found.discountValue, basePrice)
         }
 
+        const userWithTier = await tx.user.findUnique({
+          where: { id: userId },
+          select: { creditBalance: true, tier: { select: { discountPercent: true } } },
+        })
+
         if (useCredit) {
-          const userWithCredit = await tx.user.findUnique({ where: { id: userId }, select: { creditBalance: true } })
-          const available = userWithCredit?.creditBalance || 0
+          const available = userWithTier?.creditBalance || 0
           creditUsed = Math.min(available, Math.max(0, basePrice - couponDiscount))
         }
         finalAmount = Math.max(0, basePrice - couponDiscount - creditUsed)
+
+        // Salon her zaman tam hak edişini alır: kullanıcının krediyle ödediği kısmı
+        // ŞİPŞAKSPOR sübvanse eder, bu fark salonun payoutundan asla düşülmez.
+        // Sadece salonun kendi kuponu (varsa) salonun payoutunu etkiler.
+        const venuePayout = Math.max(0, basePrice - couponDiscount)
+
+        // Ödenen tutar (finalAmount) üzerinden, kullanıcının tier'ına göre cashback
+        const cashbackPercent = userWithTier?.tier?.discountPercent || 0
+        const cashbackEarned = finalAmount > 0 ? Math.round(finalAmount * (cashbackPercent / 100)) : 0
 
         const created = await tx.booking.create({
           data: {
@@ -98,8 +111,9 @@ export const createBooking = async (req: Request, res: Response) => {
             userCommission: 0,
             venueCommission: 0,
             finalAmount,
-            venuePayout: finalAmount,
+            venuePayout,
             creditUsed,
+            cashbackEarned,
             couponId: coupon?.id || null,
             bookingNumber: `BK-${crypto.randomUUID()}`,
             checkInCode: crypto.randomBytes(4).toString('hex').toUpperCase(),
@@ -115,8 +129,11 @@ export const createBooking = async (req: Request, res: Response) => {
         if (coupon) {
           await tx.coupon.update({ where: { id: coupon.id }, data: { usedCount: { increment: 1 } } })
         }
-        if (creditUsed > 0) {
-          await tx.user.update({ where: { id: userId }, data: { creditBalance: { decrement: creditUsed } } })
+        if (creditUsed > 0 || cashbackEarned > 0) {
+          await tx.user.update({
+            where: { id: userId },
+            data: { creditBalance: { increment: cashbackEarned - creditUsed } },
+          })
         }
 
         return created
@@ -375,12 +392,26 @@ export const cancelBooking = async (req: Request, res: Response) => {
     const refundType = hoursUntil >= 24 ? 'full' : 'half'
     const refundAmount = refundType === 'full' ? booking.finalAmount : (booking.finalAmount || 0) / 2
 
-    const updated = await prisma.booking.update({
-      where: { id: bookingId },
-      data: {
-        status: 'cancelled',
-        notes: `${booking.notes ? booking.notes + ' | ' : ''}İptal: ${refundType === 'full' ? 'Tam iade' : 'Yarım iade'} (₺${refundAmount})`
-      },
+    const updated = await prisma.$transaction(async (tx) => {
+      const result = await tx.booking.update({
+        where: { id: bookingId },
+        data: {
+          status: 'cancelled',
+          notes: `${booking.notes ? booking.notes + ' | ' : ''}İptal: ${refundType === 'full' ? 'Tam iade' : 'Yarım iade'} (₺${refundAmount})`
+        },
+      })
+
+      // Kullandığı krediyi geri ver, kazandığı cashback'i geri al
+      // (rezervasyon gerçekleşmediği için cashback'i hak etmedi)
+      const creditDelta = booking.creditUsed - booking.cashbackEarned
+      if (creditDelta !== 0) {
+        await tx.user.update({
+          where: { id: userId },
+          data: { creditBalance: { increment: creditDelta } },
+        })
+      }
+
+      return result
     })
 
     // İptal email bildirimleri

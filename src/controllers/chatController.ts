@@ -49,10 +49,11 @@ PLATFORM BİLGİLERİ:
 - Mobil uygulamada (iOS/Android) ders öncesi 2 saat kala push bildirimi ve email hatırlatması gönderilir
 
 TİER SİSTEMİ:
-- 4 seviye var: Aday → Sporcu → Atlet → Şampiyon
-- Daha fazla ders aldıkça tier'ın yükselir
-- Yüksek tier'larda indirim kazanırsın (Sporcu: %5, Atlet: %10, Şampiyon: %15)
-- Tier'ını profil sayfandan takip edebilirsin
+- 5 seviye var: Aday (0 ders) → Sporcu (10 ders) → Profesyonel (35 ders) → Elit (70 ders) → Olimpik (120 ders)
+- Tamamladığın onaylı ders/etkinlik sayısına göre otomatik yükselirsin
+- Sporcu, Profesyonel, Elit ve Olimpik seviyelerinde her rezervasyonda ödediğin tutarın bir kısmı otomatik olarak cashback (kredi) olarak hesabına yüklenir: Sporcu %1, Profesyonel %2, Elit %3, Olimpik %4
+- Bu kredi bir sonraki rezervasyonlarında otomatik indirim olarak kullanılabilir
+- Tier'ını ve kredini profil sayfandan takip edebilirsin
 
 REFERANS SİSTEMİ:
 - Profil sayfandan "Davet Et" sekmesinden kendi referans linkini oluşturabilirsin
