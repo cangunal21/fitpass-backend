@@ -1,42 +1,7 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import { sendPushNotification } from '../utils/push'
-
-// Türkiye saatine (UTC+3, DST yok) göre gün anahtarı (YYYY-MM-DD)
-export const istanbulDayKey = (d: Date): string =>
-  new Date(d.getTime() + 3 * 3600 * 1000).toISOString().slice(0, 10)
-
-const dayDiff = (a: string, b: string): number =>
-  Math.round((Date.parse(b + 'T00:00:00Z') - Date.parse(a + 'T00:00:00Z')) / 86400000)
-
-// Bir tarih dizisinden en uzun üst üste gün serisini hesapla
-export const longestDailyStreak = (dates: Date[]): number => {
-  if (dates.length === 0) return 0
-  const dayKeys = Array.from(new Set(dates.map(istanbulDayKey))).sort()
-  let longest = 1, current = 1
-  for (let i = 1; i < dayKeys.length; i++) {
-    if (dayDiff(dayKeys[i - 1], dayKeys[i]) === 1) current++
-    else current = 1
-    if (current > longest) longest = current
-  }
-  return longest
-}
-
-// Bugüne/düne kadar süren GÜNCEL üst üste gün serisi
-export const currentDailyStreak = (dates: Date[]): number => {
-  if (dates.length === 0) return 0
-  const dayKeys = Array.from(new Set(dates.map(istanbulDayKey))).sort()
-  const today = istanbulDayKey(new Date())
-  const last = dayKeys[dayKeys.length - 1]
-  // Son aktivite bugün veya dün değilse seri kopmuştur
-  if (dayDiff(last, today) > 1) return 0
-  let streak = 1
-  for (let i = dayKeys.length - 1; i > 0; i--) {
-    if (dayDiff(dayKeys[i - 1], dayKeys[i]) === 1) streak++
-    else break
-  }
-  return streak
-}
+import { longestDailyStreak } from '../utils/streak'
 
 export const followUser = async (req: Request, res: Response) => {
   try {

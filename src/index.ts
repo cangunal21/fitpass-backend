@@ -3,6 +3,7 @@ import cors from 'cors'
 import dotenv from 'dotenv'
 import rateLimit from 'express-rate-limit'
 import { sendRemindersJob } from './jobs/reminderJob'
+import { sendStreakNudges } from './jobs/streakJob'
 import authRoutes from './routes/auth'
 import bookingRoutes from './routes/bookings'
 import venueRoutes from './routes/venue'
@@ -103,6 +104,9 @@ app.listen(PORT, () => {
   // Her 30 dakikada hatırlatma maili gönder
   sendRemindersJob()
   setInterval(sendRemindersJob, 30 * 60 * 1000)
+  // Streak teşvik e-postaları: saatte bir kontrol (job kendi içinde akşam penceresi + 20s guard uygular)
+  sendStreakNudges()
+  setInterval(sendStreakNudges, 60 * 60 * 1000)
 })
 
 export default app

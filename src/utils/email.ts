@@ -517,6 +517,48 @@ export const sendTransferEmail = async (
   })
 }
 
+// Streak (seri) teşvik e-postası — günlük veya haftalık seriyi sürdürmeye çağırır
+export const sendStreakNudgeEmail = async (
+  to: string,
+  fullName: string,
+  type: 'daily' | 'weekly',
+  streakCount: number,
+) => {
+  const next = streakCount + 1
+  const isDaily = type === 'daily'
+  const unit = isDaily ? 'gün' : 'hafta'
+  const subject = isDaily
+    ? `🔥 ${streakCount} günlük serini bozma!`
+    : `🔥 ${streakCount} haftalık serini sürdür!`
+  const headline = isDaily
+    ? `${streakCount} gündür üst üste spordasın!`
+    : `${streakCount} haftadır her hafta spordasın!`
+  const body = isDaily
+    ? `Bugün de bir derse katılırsan serini <strong>${next} güne</strong> çıkarırsın. Bırakma, momentum sende! 💪`
+    : `Bu hafta da bir derse katılırsan serini <strong>${next} haftaya</strong> taşırsın. Serini bozma! 💪`
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to,
+    subject,
+    html: baseTemplate(`
+      <div style="text-align:center;margin-bottom:24px;">
+        <div style="font-size:64px;line-height:1;margin-bottom:8px;">🔥</div>
+        <h2 style="font-size:22px;font-weight:800;color:#111;margin:0;">${headline}</h2>
+      </div>
+      <div style="background:#FFF7ED;border:1px solid #FED7AA;border-radius:16px;padding:20px;margin-bottom:20px;text-align:center;">
+        <p style="font-size:13px;color:#9A3412;margin:0 0 4px;">Güncel serin</p>
+        <p style="font-size:32px;font-weight:800;color:#F97316;margin:0;">${streakCount} ${unit}</p>
+      </div>
+      <p style="font-size:15px;color:#555;line-height:1.7;margin:0 0 24px;text-align:center;">
+        Merhaba ${fullName}, ${body}
+      </p>
+      <div style="text-align:center;">
+        <a href="${SITE_URL}" style="display:inline-block;padding:14px 30px;background:${BRAND_COLOR};color:#fff;border-radius:12px;text-decoration:none;font-size:15px;font-weight:700;">Hemen Ders Bul →</a>
+      </div>
+    `),
+  })
+}
+
 export const sendVenueApprovedEmail = async (
   to: string,
   venueName: string
