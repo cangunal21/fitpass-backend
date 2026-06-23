@@ -13,6 +13,10 @@ class BookingError extends Error {
   }
 }
 
+// Parayı kuruş hassasiyetinde yuvarla — ikili kayan-nokta sapmasını (0.1+0.2 vb.) önler.
+// (Ödeme entegrasyonu eklenince tüm para alanları Int-kuruş'a taşınmalı.)
+const money = (x: number) => Math.round(x * 100) / 100
+
 // Rezervasyon oluştur
 export const createBooking = async (req: Request, res: Response) => {
   try {
@@ -77,7 +81,7 @@ export const createBooking = async (req: Request, res: Response) => {
           if (found.maxUses && found.usedCount >= found.maxUses) throw new BookingError('Kupon kullanım limiti dolmuş.', 400)
           coupon = found
           couponDiscount = found.discountType === 'percent'
-            ? basePrice * (found.discountValue / 100)
+            ? money(basePrice * (found.discountValue / 100))
             : Math.min(found.discountValue, basePrice)
         }
 
@@ -88,14 +92,14 @@ export const createBooking = async (req: Request, res: Response) => {
 
         if (useCredit) {
           const available = userWithTier?.creditBalance || 0
-          creditUsed = Math.min(available, Math.max(0, basePrice - couponDiscount))
+          creditUsed = Math.min(available, Math.max(0, money(basePrice - couponDiscount)))
         }
-        finalAmount = Math.max(0, basePrice - couponDiscount - creditUsed)
+        finalAmount = money(Math.max(0, basePrice - couponDiscount - creditUsed))
 
         // Salon her zaman tam hak edişini alır: kullanıcının krediyle ödediği kısmı
         // ŞİPŞAKSPOR sübvanse eder, bu fark salonun payoutundan asla düşülmez.
         // Sadece salonun kendi kuponu (varsa) salonun payoutunu etkiler.
-        const venuePayout = Math.max(0, basePrice - couponDiscount)
+        const venuePayout = money(Math.max(0, basePrice - couponDiscount))
 
         // Ödenen tutar (finalAmount) üzerinden, kullanıcının tier'ına göre cashback
         const cashbackPercent = userWithTier?.tier?.discountPercent || 0
@@ -396,7 +400,7 @@ export const cancelBooking = async (req: Request, res: Response) => {
       ? (new Date(sessionStartsAt2).getTime() - new Date().getTime()) / (1000 * 60 * 60)
       : 999
     const refundType = hoursUntil >= 24 ? 'full' : 'half'
-    const refundAmount = refundType === 'full' ? booking.finalAmount : (booking.finalAmount || 0) / 2
+    const refundAmount = refundType === 'full' ? booking.finalAmount : money((booking.finalAmount || 0) / 2)
 
     const updated = await prisma.$transaction(async (tx) => {
       const result = await tx.booking.update({
@@ -607,10 +611,10 @@ export const transferBooking = async (req: Request, res: Response) => {
         }
 
         // Finansal yeniden hesap (salon kuponu korunur; kredi kullanımı korunur)
-        const couponDiscount = Math.max(0, oldBase - booking.venuePayout)
-        const newVenuePayout = Math.max(0, newBase - couponDiscount)
-        const newFinalAmount = Math.max(0, newBase - couponDiscount - booking.creditUsed)
-        const priceRefund = Math.max(0, oldBase - newBase) // krediye iade edilecek fiyat farkı
+        const couponDiscount = money(Math.max(0, oldBase - booking.venuePayout))
+        const newVenuePayout = money(Math.max(0, newBase - couponDiscount))
+        const newFinalAmount = money(Math.max(0, newBase - couponDiscount - booking.creditUsed))
+        const priceRefund = money(Math.max(0, oldBase - newBase)) // krediye iade edilecek fiyat farkı
 
         const updated = await tx.booking.update({
           where: { id: bookingId },
