@@ -66,6 +66,7 @@ export const getSessions = async (req: Request, res: Response) => {
     let formattedSessions = sessions.map((s) => ({
       id: s.id,
       title: s.class.title,
+      titleEn: s.class.titleEn ?? null,
       venueId: s.class.venueId,
       venueName: s.class.venue.name,
       venueAddress: s.class.venue.address,
@@ -167,6 +168,7 @@ export const getForYouSessions = async (req: Request, res: Response) => {
         session: {
           id: s.id,
           title: s.class.title,
+          titleEn: s.class.titleEn ?? null,
           venueId: s.class.venueId,
           venueName: s.class.venue.name,
           venueAddress: s.class.venue.address,
@@ -221,6 +223,7 @@ export const getSessionById = async (req: Request, res: Response) => {
       session: {
         id: s.id,
         title: s.class.title,
+        titleEn: s.class.titleEn ?? null,
         description: s.class.description,
         venueId: s.class.venueId,
         venueName: s.class.venue.name,

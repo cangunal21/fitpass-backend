@@ -1,6 +1,7 @@
 import { Request, Response } from 'express'
 import bcrypt from 'bcryptjs'
 import prisma from '../utils/prisma'
+import { translateClassTitle } from '../utils/translate'
 import { generateToken } from '../utils/jwt'
 import { sendVenueRegistrationAdminEmail, sendVenuePasswordResetEmail } from '../utils/email'
 import crypto from 'crypto'
@@ -247,9 +248,12 @@ export const createClass = async (req: Request, res: Response) => {
       select: { id: true },
     })
 
+    const titleEn = await translateClassTitle(title)
+
     const newClass = await prisma.class.create({
       data: {
         title,
+        titleEn,
         description: description || null,
         category,
         sportCategoryId: sportCat?.id ?? null,
@@ -292,10 +296,14 @@ export const updateClass = async (req: Request, res: Response) => {
       sportCategoryId = sportCat?.id ?? undefined
     }
 
+    // Başlık değiştiyse İngilizce karşılığını yeniden üret
+    const titleEn = (title && title !== existing.title) ? await translateClassTitle(title) : undefined
+
     const updated = await prisma.class.update({
       where: { id: classId },
       data: {
         title, description, category,
+        ...(titleEn !== undefined ? { titleEn } : {}),
         ...(sportCategoryId !== undefined ? { sportCategoryId } : {}),
         basePrice: basePrice ? parseFloat(basePrice) : undefined,
         duration: duration ? parseInt(duration) : undefined,

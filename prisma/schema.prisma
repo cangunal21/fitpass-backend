@@ -291,6 +291,7 @@ model Class {
   sportCategory   SportCategory? @relation(fields: [sportCategoryId], references: [id])
   sportCategoryId Int?
   title           String
+  titleEn         String?
   description     String?
   category        String?
   duration        Int?
