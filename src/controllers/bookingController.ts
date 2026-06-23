@@ -471,6 +471,185 @@ export const cancelBooking = async (req: Request, res: Response) => {
   }
 }
 
+// Bir rezervasyon için uygun transfer hedeflerini getir
+// Kural: aynı salon, gelecekte, açık, fiyatı aynı veya daha ucuz, kapasitenin %50+'si boş ve grup sığıyor
+export const getTransferOptions = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    const bookingId = parseInt(req.params.id as string)
+
+    const booking = await prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: { session: { include: { class: true } } },
+    })
+    if (!booking || booking.userId !== userId) return res.status(404).json({ error: 'Rezervasyon bulunamadı.' })
+    if (booking.bookingType !== 'class' || !booking.session) return res.status(400).json({ error: 'Bu rezervasyon transfer edilemez.' })
+    if (booking.status !== 'confirmed') return res.status(400).json({ error: 'Sadece aktif rezervasyonlar transfer edilebilir.' })
+
+    const venueId = booking.session.class.venueId
+    const oldBasePrice = booking.session.class.basePrice
+    const groupSize = booking.groupSize
+
+    // Aynı salonun gelecekteki açık seansları (aynı/daha ucuz fiyat)
+    const sessions = await prisma.class_Session.findMany({
+      where: {
+        status: 'open',
+        startsAt: { gt: new Date() },
+        id: { not: booking.sessionId! },
+        class: { venueId, isActive: true, basePrice: { lte: oldBasePrice } },
+      },
+      include: { class: { select: { title: true, basePrice: true, capacity: true } } },
+      orderBy: { startsAt: 'asc' },
+    })
+
+    // Her seans için doluluk hesapla (groupSize toplamı) ve %50 + grup sığma filtresini uygula
+    const options = []
+    for (const s of sessions) {
+      const occ = await prisma.booking.aggregate({
+        where: { sessionId: s.id, status: { in: ['confirmed', 'pending'] } },
+        _sum: { groupSize: true },
+      })
+      const occupied = occ._sum.groupSize || 0
+      const capacity = s.availableSpots || 0
+      const available = capacity - occupied
+      const alreadyIn = await prisma.booking.findFirst({
+        where: { sessionId: s.id, userId, status: { in: ['confirmed', 'pending'] } },
+      })
+      if (alreadyIn) continue
+      if (capacity > 0 && available >= Math.ceil(capacity * 0.5) && available >= groupSize) {
+        options.push({
+          sessionId: s.id,
+          title: s.class.title,
+          basePrice: s.class.basePrice,
+          startsAt: s.startsAt,
+          endsAt: s.endsAt,
+          available,
+          capacity,
+          priceRefund: Math.max(0, (oldBasePrice - s.class.basePrice) * groupSize),
+        })
+      }
+    }
+
+    return res.json({ options })
+  } catch (err) {
+    console.error('getTransferOptions error:', err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// Rezervasyonu başka bir seansa transfer et (aynı salon, aynı/ucuz, %50+ boş)
+export const transferBooking = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    const bookingId = parseInt(req.params.id as string)
+    const { targetSessionId } = req.body
+    if (!targetSessionId) return res.status(400).json({ error: 'Hedef seans gerekli.' })
+
+    let result: any
+    try {
+      result = await prisma.$transaction(async (tx) => {
+        const booking = await tx.booking.findUnique({
+          where: { id: bookingId },
+          include: { session: { include: { class: true } } },
+        })
+        if (!booking || booking.userId !== userId) throw new BookingError('Rezervasyon bulunamadı.', 404)
+        if (booking.bookingType !== 'class' || !booking.session) throw new BookingError('Bu rezervasyon transfer edilemez.', 400)
+        if (booking.status !== 'confirmed') throw new BookingError('Sadece aktif rezervasyonlar transfer edilebilir.', 400)
+        if (booking.checkedIn) throw new BookingError('Check-in yapılmış rezervasyon transfer edilemez.', 400)
+        if (booking.sessionId === targetSessionId) throw new BookingError('Zaten bu seanstasınız.', 400)
+        if (new Date(booking.session.startsAt) <= new Date()) throw new BookingError('Başlamış ders transfer edilemez.', 400)
+
+        // İki seansı da kilitle (deadlock önlemek için id sırasına göre)
+        const ids = [booking.sessionId!, targetSessionId].sort((a, b) => a - b)
+        await tx.$executeRaw`SELECT id FROM "Class_Session" WHERE id IN (${ids[0]}, ${ids[1]}) ORDER BY id FOR UPDATE`
+
+        const target = await tx.class_Session.findUnique({
+          where: { id: targetSessionId },
+          include: { class: true },
+        })
+        if (!target) throw new BookingError('Hedef seans bulunamadı.', 404)
+        if (target.status !== 'open') throw new BookingError('Hedef seans açık değil.', 400)
+        if (new Date(target.startsAt) <= new Date()) throw new BookingError('Geçmiş bir seansa transfer yapılamaz.', 400)
+
+        // Aynı salon kontrolü
+        if (target.class.venueId !== booking.session.class.venueId) {
+          throw new BookingError('Sadece aynı salon içinde transfer yapılabilir.', 400)
+        }
+
+        const groupSize = booking.groupSize
+        const oldBase = booking.baseAmount
+        const newBase = target.class.basePrice * groupSize
+
+        // Aynı veya daha ucuz olmalı
+        if (newBase > oldBase) {
+          throw new BookingError('Sadece aynı veya daha uygun fiyatlı derslere transfer yapabilirsiniz.', 400)
+        }
+
+        // Zaten hedefte kayıtlı mı?
+        const alreadyIn = await tx.booking.findFirst({
+          where: { sessionId: targetSessionId, userId, status: { in: ['confirmed', 'pending'] } },
+        })
+        if (alreadyIn) throw new BookingError('Bu seansta zaten rezervasyonunuz var.', 400)
+
+        // Hedef kapasite: %50+ boş ve grup sığmalı
+        const occ = await tx.booking.aggregate({
+          where: { sessionId: targetSessionId, status: { in: ['confirmed', 'pending'] } },
+          _sum: { groupSize: true },
+        })
+        const occupied = occ._sum.groupSize || 0
+        const capacity = target.availableSpots || 0
+        const available = capacity - occupied
+        if (capacity <= 0 || available < Math.ceil(capacity * 0.5)) {
+          throw new BookingError('Hedef dersin en az yarısı dolu, transfer yapılamıyor.', 400)
+        }
+        if (available < groupSize) {
+          throw new BookingError('Hedef derste yeterli yer yok.', 400)
+        }
+
+        // Finansal yeniden hesap (salon kuponu korunur; kredi kullanımı korunur)
+        const couponDiscount = Math.max(0, oldBase - booking.venuePayout)
+        const newVenuePayout = Math.max(0, newBase - couponDiscount)
+        const newFinalAmount = Math.max(0, newBase - couponDiscount - booking.creditUsed)
+        const priceRefund = Math.max(0, oldBase - newBase) // krediye iade edilecek fiyat farkı
+
+        const updated = await tx.booking.update({
+          where: { id: bookingId },
+          data: {
+            sessionId: targetSessionId,
+            baseAmount: newBase,
+            venuePayout: newVenuePayout,
+            finalAmount: newFinalAmount,
+            discountAmount: couponDiscount + booking.creditUsed,
+            notes: `${booking.notes ? booking.notes + ' | ' : ''}Transfer edildi${priceRefund > 0 ? ` (₺${priceRefund} kredi iade)` : ''}`,
+          },
+          include: { session: { include: { class: true } } },
+        })
+
+        // Fiyat farkını krediye iade et
+        if (priceRefund > 0) {
+          await tx.user.update({ where: { id: userId }, data: { creditBalance: { increment: priceRefund } } })
+        }
+
+        return { updated, priceRefund }
+      })
+    } catch (e: any) {
+      if (e instanceof BookingError) return res.status(e.status).json({ error: e.message })
+      throw e
+    }
+
+    return res.json({
+      message: result.priceRefund > 0
+        ? `Rezervasyon transfer edildi. ₺${result.priceRefund} fiyat farkı kredinize iade edildi.`
+        : 'Rezervasyon başarıyla transfer edildi.',
+      booking: result.updated,
+      priceRefund: result.priceRefund,
+    })
+  } catch (err) {
+    console.error('transferBooking error:', err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
 // Drop-in check-in
 export const checkInDropIn = async (req: Request, res: Response) => {
   try {
