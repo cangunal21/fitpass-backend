@@ -12,7 +12,9 @@ import { sendPushNotification } from '../utils/push'
 // KAYIT OL
 export const register = async (req: Request, res: Response) => {
   try {
-    const { username, email, phone, password, fullName, referralCode } = req.body
+    const { username, email, phone, password, fullName, referralCode, preferredSports, preferredNeighborhoods } = req.body
+    const cleanSports = Array.isArray(preferredSports) ? preferredSports.filter((s: any) => typeof s === 'string').slice(0, 20) : []
+    const cleanNeighborhoods = Array.isArray(preferredNeighborhoods) ? preferredNeighborhoods.map((n: any) => parseInt(n)).filter((n: any) => !isNaN(n)).slice(0, 20) : []
 
     if (!username || !email || !password || !fullName) {
       return res.status(400).json({ error: 'Tüm zorunlu alanları doldurun.' })
@@ -44,6 +46,11 @@ export const register = async (req: Request, res: Response) => {
         passwordHash,
         fullName,
         tierSportCounts: {},
+        preferredSports: cleanSports,
+        preferredNeighborhoods: cleanNeighborhoods,
+        // İlk tercih mahallesi varsa kullanıcının mahallesi olarak da ata
+        neighborhoodId: cleanNeighborhoods[0] || undefined,
+        cityId: cleanNeighborhoods[0] ? 1 : undefined,
       },
       select: {
         id: true,
@@ -170,6 +177,9 @@ export const getMe = async (req: Request & { userId?: number }, res: Response) =
         isEmailVerified: true,
         createdAt: true,
         neighborhood: { select: { name: true } },
+        neighborhoodId: true,
+        preferredSports: true,
+        preferredNeighborhoods: true,
         city: { select: { name: true } },
         tier: { select: { name: true, discountPercent: true, colorHex: true, iconUrl: true } },
         badges: {

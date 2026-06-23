@@ -151,6 +151,8 @@ model User {
   rewardPoints          Int                  @default(0)
   rewardPointsYear      Int?                 // puanların ait olduğu yıl (yıllık reset için)
   lastStreakNudgeAt     DateTime?            // son streak teşvik e-postası (spam önleme)
+  preferredSports       Json                 @default("[]") // kayıtta seçilen spor tercihleri (isim dizisi)
+  preferredNeighborhoods Json                @default("[]") // kayıtta seçilen mahalle tercihleri (id dizisi)
   referralCode          String?              @unique
   creditBalance         Int                  @default(0)
   referralCount         Int                  @default(0)
