@@ -145,6 +145,7 @@ export const getMe = async (req: Request & { userId?: number }, res: Response) =
         phone: true,
         totalLessonsCompleted: true,
         rewardPoints: true,
+        creditBalance: true,
         profilePrivacy: true,
         activityPrivacy: true,
         emailReminders: true,
