@@ -346,6 +346,22 @@ export const getFeed = async (req: Request, res: Response) => {
       take: 30
     })
 
+    // Kazanılan rozetler
+    const userBadges = await prisma.userBadge.findMany({
+      where: {
+        userId: { in: followingIds },
+        earnedAt: { gte: since },
+        user: { activityPrivacy: { not: 'private' } },
+      },
+      include: {
+        user: { select: { id: true, username: true, fullName: true, avatarUrl: true } },
+        badge: { select: { key: true, name: true, iconUrl: true } },
+        sportCategory: { select: { name: true } },
+      },
+      orderBy: { earnedAt: 'desc' },
+      take: 30,
+    })
+
     // Birleştir ve sırala
     const feed = [
       ...bookings.map(b => {
@@ -379,6 +395,15 @@ export const getFeed = async (req: Request, res: Response) => {
         venueId: d.slot?.venue?.id || null,
         taggedFriends: [] as { username: string; fullName: string }[],
         date: d.joinedAt,
+      })),
+      ...userBadges.map(ub => ({
+        id: `bg-${ub.id}`,
+        type: 'badge' as const,
+        user: ub.user,
+        badgeName: ub.badge?.key === 'sport_master_40' && ub.sportCategory?.name ? `${ub.sportCategory.name} ustası` : (ub.badge?.name || 'Rozet'),
+        badgeIcon: ub.badge?.iconUrl || 'Award',
+        sportName: ub.sportCategory?.name || null,
+        date: ub.earnedAt,
       }))
     ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 30)
 
