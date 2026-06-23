@@ -85,6 +85,7 @@ model UserTierHistory {
 
 model Badge {
   id            Int           @id @default(autoincrement())
+  key           String?       @unique
   name          String
   description   String
   iconUrl       String?

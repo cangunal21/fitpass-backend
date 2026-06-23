@@ -348,7 +348,15 @@ export const getUserActivities = async (req: Request, res: Response) => {
         neighborhood: { select: { name: true } },
         tier: { select: { name: true, discountPercent: true, colorHex: true, iconUrl: true } },
         totalLessonsCompleted: true,
-        badges: { include: { badge: true } },
+        badges: {
+          select: {
+            id: true,
+            earnedAt: true,
+            badge: { select: { key: true, name: true, description: true, iconUrl: true } },
+            sportCategory: { select: { name: true } },
+          },
+          orderBy: { earnedAt: 'desc' },
+        },
       }
     })
 

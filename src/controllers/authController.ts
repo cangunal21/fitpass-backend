@@ -6,6 +6,8 @@ import { generateToken } from '../utils/jwt'
 import { sendWelcomeEmail, sendPasswordResetEmail, sendEmailVerificationEmail } from '../utils/email'
 import { applyReferralCode, grantReferredBonus } from './referralController'
 import { syncUserTier, resetYearlyPointsIfNeeded } from '../utils/tier'
+import { syncUserBadges } from '../utils/badges'
+import { sendPushNotification } from '../utils/push'
 
 // KAYIT OL
 export const register = async (req: Request, res: Response) => {
@@ -133,8 +135,18 @@ export const getMe = async (req: Request & { userId?: number }, res: Response) =
       try {
         await syncUserTier(req.userId)
         await resetYearlyPointsIfNeeded(req.userId)
+        const newBadges = await syncUserBadges(req.userId)
+        // Yeni rozet kazanıldıysa bildir (push + uygulama içi)
+        if (newBadges.length > 0) {
+          const u = await prisma.user.findUnique({ where: { id: req.userId }, select: { pushToken: true } })
+          const msg = newBadges.length === 1
+            ? `"${newBadges[0]}" rozetini kazandın! 🎉`
+            : `${newBadges.length} yeni rozet kazandın! 🎉`
+          await prisma.notification.create({ data: { userId: req.userId, type: 'badge', message: msg } }).catch(() => {})
+          if (u?.pushToken) sendPushNotification(u.pushToken, 'Yeni rozet! 🏅', msg).catch(() => {})
+        }
       } catch (e) {
-        console.error('Tier sync error:', e)
+        console.error('Tier/badge sync error:', e)
       }
     }
 
@@ -159,6 +171,15 @@ export const getMe = async (req: Request & { userId?: number }, res: Response) =
         neighborhood: { select: { name: true } },
         city: { select: { name: true } },
         tier: { select: { name: true, discountPercent: true, colorHex: true, iconUrl: true } },
+        badges: {
+          select: {
+            id: true,
+            earnedAt: true,
+            badge: { select: { key: true, name: true, description: true, iconUrl: true } },
+            sportCategory: { select: { name: true } },
+          },
+          orderBy: { earnedAt: 'desc' },
+        },
       }
     })
 
