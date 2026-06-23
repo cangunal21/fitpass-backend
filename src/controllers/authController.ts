@@ -5,6 +5,7 @@ import prisma from '../utils/prisma'
 import { generateToken } from '../utils/jwt'
 import { sendWelcomeEmail, sendPasswordResetEmail, sendEmailVerificationEmail } from '../utils/email'
 import { applyReferralCode } from './referralController'
+import { syncUserTier } from '../utils/tier'
 
 // KAYIT OL
 export const register = async (req: Request, res: Response) => {
@@ -124,6 +125,14 @@ export const login = async (req: Request, res: Response) => {
 // BENİ GETİR
 export const getMe = async (req: Request & { userId?: number }, res: Response) => {
   try {
+    if (req.userId) {
+      try {
+        await syncUserTier(req.userId)
+      } catch (e) {
+        console.error('Tier sync error:', e)
+      }
+    }
+
     const user = await prisma.user.findUnique({
       where: { id: req.userId },
       select: {

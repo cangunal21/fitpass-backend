@@ -1,6 +1,7 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import { sendComplaintEmail } from '../utils/email'
+import { syncUserTier } from '../utils/tier'
 
 // GET /api/public/sessions
 export const getSessions = async (req: Request, res: Response) => {
@@ -329,6 +330,15 @@ export const getVenuesList = async (req: Request, res: Response) => {
 export const getUserActivities = async (req: Request, res: Response) => {
   try {
     const username = String(req.params.username)
+
+    const userForTier = await prisma.user.findUnique({ where: { username }, select: { id: true } })
+    if (userForTier) {
+      try {
+        await syncUserTier(userForTier.id)
+      } catch (e) {
+        console.error('Tier sync error:', e)
+      }
+    }
 
     const user = await prisma.user.findUnique({
       where: { username },
