@@ -401,6 +401,7 @@ export const getFeed = async (req: Request, res: Response) => {
         type: 'badge' as const,
         user: ub.user,
         badgeName: ub.badge?.key === 'sport_master_40' && ub.sportCategory?.name ? `${ub.sportCategory.name} ustası` : (ub.badge?.name || 'Rozet'),
+        badgeKey: ub.badge?.key || null,
         badgeIcon: ub.badge?.iconUrl || 'Award',
         sportName: ub.sportCategory?.name || null,
         date: ub.earnedAt,
