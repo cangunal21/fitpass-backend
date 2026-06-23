@@ -419,7 +419,8 @@ export const sendReportNotificationEmail = async (
   reportedUsername: string,
   reason: string | null,
 ) => {
-  const adminEmail = process.env.ADMIN_EMAIL || 'admin@sipsakspor.com'
+  // Şikayetler her zaman sabit admin adresine gider
+  const adminEmail = 'admin@sipsakspor.com'
   await resend.emails.send({
     from: FROM_EMAIL,
     to: adminEmail,
