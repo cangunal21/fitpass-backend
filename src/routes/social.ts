@@ -5,6 +5,7 @@ import {
   likeActivity, unlikeActivity, getActivityComments, addActivityComment,
   getNotifications, markNotificationsRead,
 } from '../controllers/socialController'
+import { reportUser } from '../controllers/reportController'
 import { authMiddleware } from '../middlewares/auth'
 
 const router = Router()
@@ -23,4 +24,5 @@ router.get('/feed/:feedKey/comments', getActivityComments)
 router.post('/feed/:feedKey/comments', authMiddleware, addActivityComment)
 router.get('/notifications', authMiddleware, getNotifications)
 router.put('/notifications/read', authMiddleware, markNotificationsRead)
+router.post('/report', authMiddleware, reportUser)
 export default router

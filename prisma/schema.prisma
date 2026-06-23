@@ -177,6 +177,27 @@ model User {
   notifications         Notification[]       @relation("NotificationRecipient")
   activityLikes         ActivityLike[]
   activityComments      ActivityComment[]
+  reportsMade           Report[]             @relation("ReportsMade")
+  reportsAgainst        Report[]             @relation("ReportsAgainst")
+}
+
+// ─────────────────────────────────────────────
+// ŞİKAYET (uygunsuz profil/içerik bildirimi)
+// ─────────────────────────────────────────────
+
+model Report {
+  id             Int       @id @default(autoincrement())
+  reporter       User      @relation("ReportsMade", fields: [reporterUserId], references: [id])
+  reporterUserId Int
+  reportedUser   User      @relation("ReportsAgainst", fields: [reportedUserId], references: [id])
+  reportedUserId Int
+  reason         String?
+  status         String    @default("open") // open | resolved | dismissed
+  createdAt      DateTime  @default(now())
+  resolvedAt     DateTime?
+
+  @@index([status])
+  @@index([reportedUserId])
 }
 
 // ─────────────────────────────────────────────
