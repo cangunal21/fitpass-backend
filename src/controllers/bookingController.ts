@@ -87,7 +87,7 @@ export const createBooking = async (req: Request, res: Response) => {
 
         const userWithTier = await tx.user.findUnique({
           where: { id: userId },
-          select: { creditBalance: true, tier: { select: { discountPercent: true } } },
+          select: { creditBalance: true, tier: { select: { cashbackPercent: true } } },
         })
 
         if (useCredit) {
@@ -102,7 +102,7 @@ export const createBooking = async (req: Request, res: Response) => {
         const venuePayout = money(Math.max(0, basePrice - couponDiscount))
 
         // Ödenen tutar (finalAmount) üzerinden, kullanıcının tier'ına göre cashback
-        const cashbackPercent = userWithTier?.tier?.discountPercent || 0
+        const cashbackPercent = userWithTier?.tier?.cashbackPercent || 0
         const cashbackEarned = finalAmount > 0 ? Math.round(finalAmount * (cashbackPercent / 100)) : 0
 
         const created = await tx.booking.create({

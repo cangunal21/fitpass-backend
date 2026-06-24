@@ -419,7 +419,7 @@ export const getUserActivities = async (req: Request, res: Response) => {
         id: true, username: true, fullName: true, avatarUrl: true,
         activityPrivacy: true,
         neighborhood: { select: { name: true } },
-        tier: { select: { name: true, discountPercent: true, colorHex: true, iconUrl: true } },
+        tier: { select: { name: true, cashbackPercent: true, colorHex: true, iconUrl: true } },
         totalLessonsCompleted: true,
         badges: {
           select: {

@@ -181,7 +181,7 @@ export const getMe = async (req: Request & { userId?: number }, res: Response) =
         preferredSports: true,
         preferredNeighborhoods: true,
         city: { select: { name: true } },
-        tier: { select: { name: true, discountPercent: true, colorHex: true, iconUrl: true } },
+        tier: { select: { name: true, cashbackPercent: true, colorHex: true, iconUrl: true } },
         badges: {
           select: {
             id: true,

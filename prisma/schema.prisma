@@ -59,7 +59,7 @@ model Tier {
   id              Int               @id @default(autoincrement())
   name            String
   minLessons      Int
-  discountPercent Int               @default(0)
+  cashbackPercent Int               @default(0)
   iconUrl         String?
   colorHex        String?
   users           User[]
