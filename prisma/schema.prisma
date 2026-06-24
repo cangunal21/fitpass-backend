@@ -239,6 +239,24 @@ model Venue {
   totalReviews   Int                  @default(0)
   createdAt      DateTime             @default(now())
 
+  // İyzico Pazaryeri alt-üye (sub-merchant) alanları
+  subMerchantType        String?    // PERSONAL | PRIVATE_COMPANY | LIMITED_OR_JOINT_STOCK_COMPANY
+  legalCompanyTitle      String?    // ünvan (şirket)
+  iban                   String?
+  taxOffice              String?
+  taxNumber              String?
+  identityNumber         String?    // TCKN
+  contactName            String?    // şahıs ad
+  contactSurname         String?    // şahıs soyad
+  payoutGsm              String?    // +90...
+  iyzicoSubMerchantKey   String?    // iyzico'dan dönen anahtar — ödeme anında şart
+  subMerchantStatus      String     @default("none")   // none|submitted|approved|rejected
+  kycDocs                Json       @default("{}")      // {vergiLevhasi,imzaSirkuleri,faaliyetBelgesi,ticaretSicilGazetesi,kimlik}
+  ibanMatchConsent       Boolean    @default(false)
+  subMerchantSubmittedAt DateTime?
+  subMerchantApprovedAt  DateTime?
+  subMerchantRejection   String?
+
   sportCategories VenueSportCategory[]
   instructors     Instructor[]
   classes         Class[]

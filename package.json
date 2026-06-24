@@ -9,7 +9,8 @@
     "start": "npx prisma db push && node dist/index.js",
     "seed": "ts-node prisma/seed.ts",
     "db:push:force": "npx prisma db push --accept-data-loss",
-    "smoke": "ts-node scripts/smoke.ts"
+    "smoke": "ts-node scripts/smoke.ts",
+    "iyzico:test": "ts-node scripts/iyzico-sandbox-test.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
@@ -34,6 +35,7 @@
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2",
     "groq-sdk": "^1.2.1",
+    "iyzipay": "^2.0.69",
     "jsonwebtoken": "^9.0.3",
     "nodemailer": "^8.0.10",
     "prisma": "^7.8.0",
