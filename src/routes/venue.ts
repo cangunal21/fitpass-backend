@@ -9,7 +9,8 @@ import {
   updateVenueImages
 } from '../controllers/venueController'
 import { createInstructor, getVenueInstructors, updateInstructor } from '../controllers/instructorController'
-import { venueAuthMiddleware, venueApprovedMiddleware } from '../middlewares/venueAuth'
+import { submitSubMerchant, refreshSubMerchantStatus } from '../controllers/submerchantController'
+import { venueAuthMiddleware, venueApprovedMiddleware, venueVerifiedMiddleware } from '../middlewares/venueAuth'
 import { createCoupon, getVenueCoupons, deleteCoupon } from '../controllers/couponController'
 import { getVenueStats, getVenueRevenue } from '../controllers/statsController'
 
@@ -21,15 +22,18 @@ router.post('/forgot-password', venueForgotPassword)
 router.post('/reset-password', venueResetPassword)
 router.get('/me', venueAuthMiddleware, getVenueMe)
 router.get('/bookings', venueAuthMiddleware, getVenueBookings)
-router.post('/classes', venueAuthMiddleware, venueApprovedMiddleware, createClass)
+router.post('/classes', venueAuthMiddleware, venueApprovedMiddleware, venueVerifiedMiddleware, createClass)
 router.put('/classes/:id', venueAuthMiddleware, venueApprovedMiddleware, updateClass)
-router.post('/classes/:classId/sessions', venueAuthMiddleware, venueApprovedMiddleware, createSession)
-router.post('/classes/:classId/sessions/recurring', venueAuthMiddleware, venueApprovedMiddleware, createRecurringSessions)
+router.post('/classes/:classId/sessions', venueAuthMiddleware, venueApprovedMiddleware, venueVerifiedMiddleware, createSession)
+router.post('/classes/:classId/sessions/recurring', venueAuthMiddleware, venueApprovedMiddleware, venueVerifiedMiddleware, createRecurringSessions)
+// Alt-üye (ödeme/işyeri bilgileri) onboarding — admin onayı sonrası panelden
+router.post('/submerchant', venueAuthMiddleware, venueApprovedMiddleware, submitSubMerchant)
+router.post('/submerchant/refresh', venueAuthMiddleware, refreshSubMerchantStatus)
 router.get('/instructors', venueAuthMiddleware, getVenueInstructors)
 router.post('/instructors', venueAuthMiddleware, venueApprovedMiddleware, createInstructor)
 router.put('/instructors/:id', venueAuthMiddleware, venueApprovedMiddleware, updateInstructor)
 router.get('/dropin', venueAuthMiddleware, getVenueDropInSlots)
-router.post('/dropin', venueAuthMiddleware, venueApprovedMiddleware, createDropInSlot)
+router.post('/dropin', venueAuthMiddleware, venueApprovedMiddleware, venueVerifiedMiddleware, createDropInSlot)
 router.delete('/classes/:id', venueAuthMiddleware, deleteClass)
 router.put('/classes/:classId/sessions/:sessionId', venueAuthMiddleware, updateSession)
 router.delete('/classes/:classId/sessions/:sessionId', venueAuthMiddleware, deleteSession)

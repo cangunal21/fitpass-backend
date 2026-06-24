@@ -35,3 +35,19 @@ export const venueApprovedMiddleware = async (req: Request, res: Response, next:
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
+
+// İyzico alt-üye onayı ("verified") gerektiren işlemler (ders/seans/dropin ekleme, ödeme).
+// Kapı yalnızca ödeme CANLI iken (PAYMENTS_LIVE=true) devreye girer; pre-launch'ta açık (test/demo serbest).
+export const venueVerifiedMiddleware = async (req: Request, res: Response, next: NextFunction) => {
+  if (process.env.PAYMENTS_LIVE !== 'true') return next()
+  try {
+    const venueId = (req as any).venueId
+    const venue = await prisma.venue.findUnique({ where: { id: venueId }, select: { subMerchantStatus: true } })
+    if (venue?.subMerchantStatus !== 'approved') {
+      return res.status(403).json({ error: 'Ödeme/işyeri bilgileriniz onaylanmadan ders ekleyip ödeme alamazsınız. Panelden ödeme bilgilerinizi tamamlayın.' })
+    }
+    next()
+  } catch {
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}

@@ -145,6 +145,11 @@ export const getVenueMe = async (req: Request, res: Response) => {
         description: true, isApproved: true, avgRating: true, totalReviews: true, createdAt: true,
         coverImageUrl: true, images: true,
         pendingCoverImageUrl: true, pendingImages: true, imagesPendingReview: true,
+        // İyzico alt-üye (sub-merchant) durumu
+        subMerchantType: true, subMerchantStatus: true, iban: true, taxOffice: true,
+        taxNumber: true, identityNumber: true, contactName: true, contactSurname: true,
+        legalCompanyTitle: true, payoutGsm: true, ibanMatchConsent: true, kycDocs: true,
+        subMerchantRejection: true,
         sportCategories: {
           select: { sportCategory: { select: { name: true } } }
         },
