@@ -7,18 +7,19 @@
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const Iyzipay = require('iyzipay')
 
-const BASE_URL = process.env.IYZICO_BASE_URL || 'https://sandbox-api.iyzipay.com'
-const API_KEY = process.env.IYZICO_API_KEY || ''
-const SECRET_KEY = process.env.IYZICO_SECRET_KEY || ''
+// env tembel okunur (dotenv yüklenme sırası sorun olmasın diye)
+const baseUrl = () => process.env.IYZICO_BASE_URL || 'https://sandbox-api.iyzipay.com'
+const apiKey = () => process.env.IYZICO_API_KEY || ''
+const secretKey = () => process.env.IYZICO_SECRET_KEY || ''
 
-export const isPaymentConfigured = () => !!(API_KEY && SECRET_KEY)
-export const isSandbox = () => BASE_URL.includes('sandbox')
+export const isPaymentConfigured = () => !!(apiKey() && secretKey())
+export const isSandbox = () => baseUrl().includes('sandbox')
 
 function client(): any {
   if (!isPaymentConfigured()) {
     throw new Error('İyzico anahtarları tanımlı değil (IYZICO_API_KEY / IYZICO_SECRET_KEY).')
   }
-  return new Iyzipay({ apiKey: API_KEY, secretKey: SECRET_KEY, uri: BASE_URL })
+  return new Iyzipay({ apiKey: apiKey(), secretKey: secretKey(), uri: baseUrl() })
 }
 
 // SDK callback API'sini promise'e çevir

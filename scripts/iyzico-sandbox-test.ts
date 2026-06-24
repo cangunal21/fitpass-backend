@@ -9,6 +9,7 @@
  *  2) O alt-üyeye giden bir ödeme formu (checkout) başlatır → paymentPageUrl alır
  *  Her ikisi de 'success' dönerse sandbox bağlantısı ÇALIŞIYOR demektir.
  */
+import 'dotenv/config'
 import { isPaymentConfigured, isSandbox, createSubMerchant, initCheckout } from '../src/utils/payment'
 
 async function main() {
