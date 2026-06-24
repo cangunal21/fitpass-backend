@@ -457,20 +457,20 @@ export const sendCashbackEmail = async (
   await resend.emails.send({
     from: FROM_EMAIL,
     to,
-    subject: `₺${amount} cashback kazandın! 🎁`,
+    subject: `${amount} puan kazandın! 🎉`,
     html: baseTemplate(`
       <div style="text-align:center;margin-bottom:24px;">
         <div style="width:64px;height:64px;background:#F0FDF4;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;margin-bottom:16px;">
           <span style="font-size:32px;">🎁</span>
         </div>
-        <h2 style="font-size:22px;font-weight:800;color:#111;margin:0;">₺${amount} Cashback Kazandın!</h2>
+        <h2 style="font-size:22px;font-weight:800;color:#111;margin:0;">${amount} Puan Kazandın!</h2>
       </div>
       <p style="font-size:15px;color:#555;line-height:1.7;margin:0 0 20px;">
-        Merhaba ${fullName}, <strong>${classTitle}</strong> rezervasyonundan <strong>₺${amount} cashback</strong> kredisi kazandın. Bu kredi bir sonraki rezervasyonlarında otomatik indirim olarak kullanılabilir.
+        Merhaba ${fullName}, <strong>${classTitle}</strong> rezervasyonundan <strong>${amount} puan</strong> kazandın. Puanlarını biriktirip ödüllerde kullanabilirsin.
       </p>
       <div style="background:#F0FDF4;border-radius:16px;padding:20px;margin-bottom:24px;border:1px solid #BBF7D0;text-align:center;">
-        <p style="font-size:13px;color:#15803D;margin:0 0 4px;">Güncel kredi bakiyen</p>
-        <p style="font-size:28px;font-weight:800;color:#15803D;margin:0;">₺${newBalance}</p>
+        <p style="font-size:13px;color:#15803D;margin:0 0 4px;">Güncel puanın</p>
+        <p style="font-size:28px;font-weight:800;color:#15803D;margin:0;">${newBalance}</p>
       </div>
       <div style="text-align:center;">
         <a href="${SITE_URL}/profil" style="display:inline-block;padding:12px 28px;background:${BRAND_COLOR};color:#fff;border-radius:12px;text-decoration:none;font-size:14px;font-weight:700;">Kredimi Gör →</a>
@@ -508,7 +508,7 @@ export const sendTransferEmail = async (
       </div>
       ${priceRefund > 0 ? `
       <div style="background:#F0FDF4;border-radius:12px;padding:16px;margin-bottom:24px;border:1px solid #BBF7D0;text-align:center;">
-        <p style="font-size:14px;color:#15803D;margin:0;font-weight:600;">💰 Fiyat farkı olan <strong>₺${priceRefund}</strong> kredi olarak hesabına iade edildi.</p>
+        <p style="font-size:14px;color:#15803D;margin:0;font-weight:600;">💰 Fiyat farkı olan <strong>₺${priceRefund}</strong> tutarı iade edilecektir.</p>
       </div>` : ''}
       <div style="text-align:center;">
         <a href="${SITE_URL}/profil" style="display:inline-block;padding:12px 28px;background:${BRAND_COLOR};color:#fff;border-radius:12px;text-decoration:none;font-size:14px;font-weight:700;">Rezervasyonlarımı Gör →</a>

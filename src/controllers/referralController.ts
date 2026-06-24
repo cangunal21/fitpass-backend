@@ -2,7 +2,7 @@ import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import crypto from 'crypto'
 
-const CREDIT_AMOUNT = 150
+const REFERRAL_POINTS = 150
 
 // Unique referral kodu üret (çakışma olursa tekrar dene)
 async function generateUniqueCode(): Promise<string> {
@@ -22,7 +22,7 @@ export const getReferralInfo = async (req: Request, res: Response) => {
 
     let user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, referralCode: true, creditBalance: true, referralCount: true }
+      select: { id: true, referralCode: true, rewardPoints: true, referralCount: true }
     })
     if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
 
@@ -32,7 +32,7 @@ export const getReferralInfo = async (req: Request, res: Response) => {
       user = await prisma.user.update({
         where: { id: userId },
         data: { referralCode: code },
-        select: { id: true, referralCode: true, creditBalance: true, referralCount: true }
+        select: { id: true, referralCode: true, rewardPoints: true, referralCount: true }
       })
     }
 
@@ -44,10 +44,10 @@ export const getReferralInfo = async (req: Request, res: Response) => {
 
     return res.json({
       referralCode: user!.referralCode,
-      creditBalance: user!.creditBalance,
+      rewardPoints: user!.rewardPoints,
       referralCount: user!.referralCount,
       maxReferrals: 3,
-      creditAmount: CREDIT_AMOUNT,
+      creditAmount: REFERRAL_POINTS,
       referrals: referrals.map(r => ({
         id: r.id,
         fullName: r.referred.fullName,
@@ -84,7 +84,7 @@ export const applyReferralCode = async (userId: number, code: string) => {
     // (bkz. grantReferredBonus, authController.verifyEmail'den çağrılır).
     await prisma.$transaction([
       prisma.referral.create({
-        data: { referrerId: referrer.id, referredId: userId, creditAmount: CREDIT_AMOUNT }
+        data: { referrerId: referrer.id, referredId: userId, creditAmount: REFERRAL_POINTS }
       }),
       prisma.user.update({
         where: { id: referrer.id },
@@ -112,8 +112,9 @@ export const grantReferredBonus = async (userId: number) => {
       }),
       prisma.user.update({
         where: { id: userId },
-        data: { creditBalance: { increment: CREDIT_AMOUNT } },
+        data: { rewardPoints: { increment: REFERRAL_POINTS } },
       }),
+      prisma.rewardPoint.create({ data: { userId, points: REFERRAL_POINTS, source: 'referral_signup' } }),
     ])
   } catch (err) {
     console.error('Referred bonus grant error:', err)
@@ -135,8 +136,9 @@ export const completeReferral = async (userId: number) => {
       }),
       prisma.user.update({
         where: { id: referral.referrerId },
-        data: { creditBalance: { increment: CREDIT_AMOUNT } }
+        data: { rewardPoints: { increment: REFERRAL_POINTS } }
       }),
+      prisma.rewardPoint.create({ data: { userId: referral.referrerId, points: REFERRAL_POINTS, source: 'referral_completed' } }),
     ])
   } catch (err) {
     console.error('Referral complete error:', err)

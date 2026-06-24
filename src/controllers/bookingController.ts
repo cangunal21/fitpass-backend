@@ -4,6 +4,7 @@ import crypto from 'crypto'
 import { sendVenueBookingNotificationEmail, sendCancellationEmail, sendVenueCancellationEmail, sendBookingConfirmationEmail, sendGroupTagNotificationEmail, sendGroupInviteEmail, sendCashbackEmail, sendTransferEmail } from '../utils/email'
 import { sendPushNotification } from '../utils/push'
 import { completeReferral } from './referralController'
+import { resetYearlyPointsIfNeeded } from '../utils/tier'
 
 class BookingError extends Error {
   status: number
@@ -21,7 +22,7 @@ const money = (x: number) => Math.round(x * 100) / 100
 export const createBooking = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId
-    const { sessionId, notes, groupSize: rawGroupSize, taggedUsernames, useCredit, couponCode } = req.body
+    const { sessionId, notes, groupSize: rawGroupSize, taggedUsernames, couponCode } = req.body
     const groupSize = Math.max(1, Math.min(parseInt(rawGroupSize) || 1, 10))
     const rawTags: string[] = Array.isArray(taggedUsernames) ? taggedUsernames.slice(0, groupSize - 1) : []
     // normalize: strip @ prefix, lowercase
@@ -33,9 +34,11 @@ export const createBooking = async (req: Request, res: Response) => {
 
     let coupon: { id: number; discountType: string; discountValue: number } | null = null
     let couponDiscount = 0
-    let creditUsed = 0
     let finalAmount = 0
     let booking: any
+
+    // Puanlar yıllık sıfırlanır; kazandırmadan önce yıl damgasını güncelle
+    await resetYearlyPointsIfNeeded(userId)
 
     try {
       // Tüm kapasite/kupon/kredi kontrolü ve yazma işlemi tek transaction içinde,
@@ -87,23 +90,17 @@ export const createBooking = async (req: Request, res: Response) => {
 
         const userWithTier = await tx.user.findUnique({
           where: { id: userId },
-          select: { creditBalance: true, tier: { select: { cashbackPercent: true } } },
+          select: { tier: { select: { pointRate: true } } },
         })
 
-        if (useCredit) {
-          const available = userWithTier?.creditBalance || 0
-          creditUsed = Math.min(available, Math.max(0, money(basePrice - couponDiscount)))
-        }
-        finalAmount = money(Math.max(0, basePrice - couponDiscount - creditUsed))
+        finalAmount = money(Math.max(0, basePrice - couponDiscount))
 
-        // Salon her zaman tam hak edişini alır: kullanıcının krediyle ödediği kısmı
-        // ŞİPŞAKSPOR sübvanse eder, bu fark salonun payoutundan asla düşülmez.
-        // Sadece salonun kendi kuponu (varsa) salonun payoutunu etkiler.
+        // Salon her zaman tam hak edişini alır; sadece salonun kendi kuponu payoutu etkiler.
         const venuePayout = money(Math.max(0, basePrice - couponDiscount))
 
-        // Ödenen tutar (finalAmount) üzerinden, kullanıcının tier'ına göre cashback
-        const cashbackPercent = userWithTier?.tier?.cashbackPercent || 0
-        const cashbackEarned = finalAmount > 0 ? Math.round(finalAmount * (cashbackPercent / 100)) : 0
+        // Ödenen tutar üzerinden, kullanıcının tier'ına göre PUAN kazandırılır (ödüllerde kullanılır, indirim değil)
+        const pointRate = userWithTier?.tier?.pointRate || 0
+        const pointsEarned = finalAmount > 0 ? Math.round(finalAmount * (pointRate / 100)) : 0
 
         const created = await tx.booking.create({
           data: {
@@ -114,14 +111,13 @@ export const createBooking = async (req: Request, res: Response) => {
             notes: notes || null,
             groupSize,
             baseAmount: basePrice,
-            discountAmount: couponDiscount + creditUsed,
+            discountAmount: couponDiscount,
             commissionAmount: 0,
             userCommission: 0,
             venueCommission: 0,
             finalAmount,
             venuePayout,
-            creditUsed,
-            cashbackEarned,
+            pointsEarned,
             couponId: coupon?.id || null,
             bookingNumber: `BK-${crypto.randomUUID()}`,
             checkInCode: crypto.randomBytes(4).toString('hex').toUpperCase(),
@@ -137,10 +133,13 @@ export const createBooking = async (req: Request, res: Response) => {
         if (coupon) {
           await tx.coupon.update({ where: { id: coupon.id }, data: { usedCount: { increment: 1 } } })
         }
-        if (creditUsed > 0 || cashbackEarned > 0) {
+        if (pointsEarned > 0) {
           await tx.user.update({
             where: { id: userId },
-            data: { creditBalance: { increment: cashbackEarned - creditUsed } },
+            data: { rewardPoints: { increment: pointsEarned } },
+          })
+          await tx.rewardPoint.create({
+            data: { userId, points: pointsEarned, source: 'booking', bookingId: created.id },
           })
         }
 
@@ -203,15 +202,15 @@ export const createBooking = async (req: Request, res: Response) => {
       console.error('User confirmation email error:', emailErr)
     }
 
-    // Cashback kazanıldıysa bilgilendirme (e-posta + push)
-    if (booking.cashbackEarned > 0) {
+    // Puan kazanıldıysa bilgilendirme (e-posta + push)
+    if (booking.pointsEarned > 0) {
       try {
-        const u = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, fullName: true, creditBalance: true, pushToken: true } })
+        const u = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, fullName: true, rewardPoints: true, pushToken: true } })
         if (u?.email) {
-          await sendCashbackEmail(u.email, u.fullName, booking.cashbackEarned, booking.session!.class.title, u.creditBalance)
+          await sendCashbackEmail(u.email, u.fullName, booking.pointsEarned, booking.session!.class.title, u.rewardPoints)
         }
         if (u?.pushToken) {
-          sendPushNotification(u.pushToken, 'Cashback kazandın! 🎁', `${booking.session!.class.title} rezervasyonundan ₺${booking.cashbackEarned} kredi kazandın.`).catch(() => {})
+          sendPushNotification(u.pushToken, 'Puan kazandın! 🎉', `${booking.session!.class.title} rezervasyonundan ${booking.pointsEarned} puan kazandın.`).catch(() => {})
         }
       } catch (cbErr) {
         console.error('Cashback notify error:', cbErr)
@@ -277,7 +276,7 @@ export const createBooking = async (req: Request, res: Response) => {
       completeReferral(userId).catch(() => {})
     }
 
-    res.status(201).json({ message: 'Rezervasyon başarıyla oluşturuldu!', booking, taggedCount: cleanTags.length, creditUsed })
+    res.status(201).json({ message: 'Rezervasyon başarıyla oluşturuldu!', booking, taggedCount: cleanTags.length, pointsEarned: booking.pointsEarned })
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'Sunucu hatası.' })
@@ -426,13 +425,14 @@ export const cancelBooking = async (req: Request, res: Response) => {
         },
       })
 
-      // Kullandığı krediyi geri ver, kazandığı cashback'i geri al
-      // (rezervasyon gerçekleşmediği için cashback'i hak etmedi)
-      const creditDelta = booking.creditUsed - booking.cashbackEarned
-      if (creditDelta !== 0) {
+      // Rezervasyon gerçekleşmediği için kazandığı puanı geri al
+      if (booking.pointsEarned > 0) {
         await tx.user.update({
           where: { id: userId },
-          data: { creditBalance: { increment: creditDelta } },
+          data: { rewardPoints: { decrement: booking.pointsEarned } },
+        })
+        await tx.rewardPoint.create({
+          data: { userId, points: -booking.pointsEarned, source: 'booking_cancelled', bookingId: booking.id },
         })
       }
 
@@ -628,11 +628,11 @@ export const transferBooking = async (req: Request, res: Response) => {
           throw new BookingError('Hedef derste yeterli yer yok.', 400)
         }
 
-        // Finansal yeniden hesap (salon kuponu korunur; kredi kullanımı korunur)
+        // Finansal yeniden hesap (salon kuponu korunur)
         const couponDiscount = money(Math.max(0, oldBase - booking.venuePayout))
         const newVenuePayout = money(Math.max(0, newBase - couponDiscount))
-        const newFinalAmount = money(Math.max(0, newBase - couponDiscount - booking.creditUsed))
-        const priceRefund = money(Math.max(0, oldBase - newBase)) // krediye iade edilecek fiyat farkı
+        const newFinalAmount = money(Math.max(0, newBase - couponDiscount))
+        const priceRefund = money(Math.max(0, oldBase - newBase)) // daha ucuz derse geçişte iade edilecek fark (ödeme entegrasyonunda karta iade)
 
         const updated = await tx.booking.update({
           where: { id: bookingId },
@@ -641,16 +641,11 @@ export const transferBooking = async (req: Request, res: Response) => {
             baseAmount: newBase,
             venuePayout: newVenuePayout,
             finalAmount: newFinalAmount,
-            discountAmount: couponDiscount + booking.creditUsed,
-            notes: `${booking.notes ? booking.notes + ' | ' : ''}Transfer edildi${priceRefund > 0 ? ` (₺${priceRefund} kredi iade)` : ''}`,
+            discountAmount: couponDiscount,
+            notes: `${booking.notes ? booking.notes + ' | ' : ''}Transfer edildi${priceRefund > 0 ? ` (₺${priceRefund} iade)` : ''}`,
           },
           include: { session: { include: { class: true } } },
         })
-
-        // Fiyat farkını krediye iade et
-        if (priceRefund > 0) {
-          await tx.user.update({ where: { id: userId }, data: { creditBalance: { increment: priceRefund } } })
-        }
 
         return { updated, priceRefund }
       })
