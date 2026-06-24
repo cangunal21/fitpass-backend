@@ -2,7 +2,7 @@ import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import crypto from 'crypto'
 
-const REFERRAL_POINTS = 150
+const REFERRAL_POINTS = 100
 
 // Unique referral kodu üret (çakışma olursa tekrar dene)
 async function generateUniqueCode(): Promise<string> {
@@ -78,10 +78,10 @@ export const applyReferralCode = async (userId: number, code: string) => {
     })
     if (existing) return
 
-    // Referral kaydı oluştur + referrer sayacını artır.
-    // NOT: Davet edilene kredi BURADA (kayıt anında) verilmez — suistimali önlemek için
-    // (sahte/atılır email'lerle kredi farm'lanmasın). Kredi, email doğrulandığında verilir
-    // (bkz. grantReferredBonus, authController.verifyEmail'den çağrılır).
+    // Referral kaydı oluştur + referrer sayacını artır (hesap başına max 3 davet).
+    // NOT: Puan BURADA (kayıt anında) verilmez. Hem davet edene hem edilene puan, davet edilenin
+    // İLK ÜCRETLİ DERSİNİ tamamlamasıyla verilir (bkz. completeReferral) — sahte hesap farming'i önler,
+    // ödülü gerçek GMV'ye bağlar.
     await prisma.$transaction([
       prisma.referral.create({
         data: { referrerId: referrer.id, referredId: userId, creditAmount: REFERRAL_POINTS }
@@ -96,32 +96,9 @@ export const applyReferralCode = async (userId: number, code: string) => {
   }
 }
 
-// Davet edilen kullanıcı email'ini doğrulayınca kayıt bonusunu (150 TL kredi) ver.
-// Tek seferlik: referredBonusGranted flag'i ile korunur. Atılır email'lerle suistimali engeller.
-export const grantReferredBonus = async (userId: number) => {
-  try {
-    const referral = await prisma.referral.findFirst({
-      where: { referredId: userId, referredBonusGranted: false },
-    })
-    if (!referral) return
-
-    await prisma.$transaction([
-      prisma.referral.update({
-        where: { id: referral.id },
-        data: { referredBonusGranted: true },
-      }),
-      prisma.user.update({
-        where: { id: userId },
-        data: { rewardPoints: { increment: REFERRAL_POINTS } },
-      }),
-      prisma.rewardPoint.create({ data: { userId, points: REFERRAL_POINTS, source: 'referral_signup' } }),
-    ])
-  } catch (err) {
-    console.error('Referred bonus grant error:', err)
-  }
-}
-
-// İlk ödeme tamamlanınca davet edene kredi ver
+// Davet ödülü, davet edilenin ilk ÜCRETLİ dersini tamamlamasıyla hak edilir (kayıt anında DEĞİL).
+// Hem davet EDENE hem davet EDİLENE verilir → sahte hesap farming'i kaynağında biter, ödül gerçek GMV'ye bağlanır.
+// Idempotent: referral 'pending' → 'completed' olunca tekrar tetiklenmez.
 export const completeReferral = async (userId: number) => {
   try {
     const referral = await prisma.referral.findFirst({
@@ -132,13 +109,20 @@ export const completeReferral = async (userId: number) => {
     await prisma.$transaction([
       prisma.referral.update({
         where: { id: referral.id },
-        data: { status: 'completed', completedAt: new Date() }
+        data: { status: 'completed', completedAt: new Date(), referredBonusGranted: true }
       }),
+      // Davet eden
       prisma.user.update({
         where: { id: referral.referrerId },
         data: { rewardPoints: { increment: REFERRAL_POINTS } }
       }),
       prisma.rewardPoint.create({ data: { userId: referral.referrerId, points: REFERRAL_POINTS, source: 'referral_completed' } }),
+      // Davet edilen
+      prisma.user.update({
+        where: { id: referral.referredId },
+        data: { rewardPoints: { increment: REFERRAL_POINTS } }
+      }),
+      prisma.rewardPoint.create({ data: { userId: referral.referredId, points: REFERRAL_POINTS, source: 'referral_completed' } }),
     ])
   } catch (err) {
     console.error('Referral complete error:', err)
