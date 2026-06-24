@@ -285,7 +285,9 @@ model Instructor {
   venueId      Int
   fullName     String
   specialty    String?
+  specialtyEn  String?
   bio          String?
+  bioEn        String?
   avatarUrl    String?
   avgRating    Float      @default(0)
   totalReviews Int        @default(0)

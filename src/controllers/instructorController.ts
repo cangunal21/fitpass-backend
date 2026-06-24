@@ -1,5 +1,6 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
+import { translateInstructorBio, translateSpecialty } from '../utils/translate'
 
 // Hoca ekle
 export const createInstructor = async (req: Request, res: Response) => {
@@ -11,11 +12,17 @@ export const createInstructor = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Ad ve uzmanlık alanı zorunludur.' })
     }
 
+    // İngilizce kullanıcılar için otomatik AI çevirisi (best-effort; anahtar yoksa null)
+    const specialtyEn = await translateSpecialty(specialty)
+    const bioEn = bio ? await translateInstructorBio(bio) : null
+
     const instructor = await prisma.instructor.create({
       data: {
         fullName,
         specialty,
+        specialtyEn,
         bio: bio || null,
+        bioEn,
         avatarUrl: avatarUrl || null,
         phone: phone || null,
         email: email || null,
@@ -62,9 +69,17 @@ export const updateInstructor = async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Bu hocayı düzenleme yetkiniz yok.' })
     }
 
+    // Değişen alanları yeniden çevir
+    const specialtyEn = (specialty && specialty !== existing.specialty) ? await translateSpecialty(specialty) : undefined
+    const bioEn = (bio && bio !== existing.bio) ? await translateInstructorBio(bio) : undefined
+
     const updated = await prisma.instructor.update({
       where: { id: instructorId },
-      data: { fullName, specialty, bio, avatarUrl, phone, email }
+      data: {
+        fullName, specialty, bio, avatarUrl, phone, email,
+        ...(specialtyEn !== undefined ? { specialtyEn } : {}),
+        ...(bioEn !== undefined ? { bioEn } : {}),
+      }
     })
 
     return res.json({ message: 'Hoca güncellendi!', instructor: updated })
