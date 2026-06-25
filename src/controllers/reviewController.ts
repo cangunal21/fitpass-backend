@@ -1,13 +1,16 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
+import { clampStr } from '../utils/validate'
 
 // Yorum ekle (auth required)
 export const createReview = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId
-    const { bookingId, rating, comment, isAnonymous } = req.body
+    const bookingId = parseInt(req.body.bookingId)
+    const rating = parseInt(req.body.rating)
+    const { comment, isAnonymous } = req.body
 
-    if (!bookingId || !rating || rating < 1 || rating > 5) {
+    if (!bookingId || isNaN(bookingId) || !rating || rating < 1 || rating > 5) {
       return res.status(400).json({ error: 'Geçerli bir puan (1-5) ve rezervasyon gerekli.' })
     }
 
@@ -38,7 +41,7 @@ export const createReview = async (req: Request, res: Response) => {
         targetType: 'venue',
         venueId: venueId || null,
         rating,
-        comment: comment || null,
+        comment: clampStr(comment, 1000) || null,
         isAnonymous: isAnonymous ?? true,
       }
     })

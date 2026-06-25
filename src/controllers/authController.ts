@@ -8,6 +8,7 @@ import { applyReferralCode } from './referralController'
 import { syncUserTier, resetYearlyPointsIfNeeded } from '../utils/tier'
 import { syncUserBadges } from '../utils/badges'
 import { sendPushNotification } from '../utils/push'
+import { isValidEmail, MIN_PASSWORD, clampStr } from '../utils/validate'
 
 // KAYIT OL
 export const register = async (req: Request, res: Response) => {
@@ -20,8 +21,12 @@ export const register = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Tüm zorunlu alanları doldurun.' })
     }
 
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Şifre en az 6 karakter olmalı.' })
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ error: 'Geçerli bir e-posta adresi girin.' })
+    }
+
+    if (password.length < MIN_PASSWORD) {
+      return res.status(400).json({ error: `Şifre en az ${MIN_PASSWORD} karakter olmalı.` })
     }
 
     // Mevcut kullanıcı kontrolü
@@ -280,9 +285,9 @@ export const updateProfile = async (req: Request, res: Response) => {
     const { fullName, bio, neighborhoodId, avatarUrl } = req.body
 
     const data: any = {}
-    if (fullName !== undefined) data.fullName = fullName
-    if (bio !== undefined) data.bio = bio
-    if (avatarUrl !== undefined) data.avatarUrl = avatarUrl
+    if (fullName !== undefined) data.fullName = clampStr(fullName, 80)
+    if (bio !== undefined) data.bio = clampStr(bio, 500)
+    if (avatarUrl !== undefined) data.avatarUrl = clampStr(avatarUrl, 500)
     if (neighborhoodId !== undefined) {
       data.neighborhoodId = parseInt(neighborhoodId)
       data.cityId = 1

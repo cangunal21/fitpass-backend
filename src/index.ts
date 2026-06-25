@@ -6,6 +6,7 @@ initSentry()
 import express from 'express'
 import cors from 'cors'
 import crypto from 'crypto'
+import helmet from 'helmet'
 import rateLimit from 'express-rate-limit'
 import { sendRemindersJob } from './jobs/reminderJob'
 import { sendStreakNudges } from './jobs/streakJob'
@@ -23,10 +24,23 @@ import referralRoutes from './routes/referral'
 import { chat, getChatHistory } from './controllers/chatController'
 import { authMiddleware, optionalAuthMiddleware } from './middlewares/auth'
 
+// GÜVENLİK: production'da kritik secret'lar set DEĞİLSE zayıf varsayılana düşmek yerine
+// sunucuyu BAŞLATMA (fail-fast). Dev/test'te (NODE_ENV≠production) varsayılan kullanılabilir.
+if (process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || !process.env.ADMIN_SECRET)) {
+  console.error('FATAL: production ortamında JWT_SECRET ve ADMIN_SECRET set edilmeli (zayıf varsayılan kullanılamaz).')
+  process.exit(1)
+}
+if (!process.env.JWT_SECRET || !process.env.ADMIN_SECRET) {
+  console.warn('⚠️  JWT_SECRET/ADMIN_SECRET set değil — zayıf varsayılan kullanılıyor (yalnızca dev/test için kabul edilebilir).')
+}
+
 const app = express()
 const PORT = process.env.PORT || 3001
 
 app.set('trust proxy', 1) // Railway reverse proxy arkasında gerçek IP'yi al
+// Güvenlik başlıkları (HSTS, X-Content-Type-Options, X-Frame-Options, ...).
+// CORP=cross-origin: bu kasıtlı bir public API, web/mobil farklı origin'den tüketir.
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }))
 
 // CORS: sadece bilinen web origin'lerine izin ver. Mobil native istekler Origin
 // header'ı göndermediği için (origin=undefined) onlar da kabul edilir.

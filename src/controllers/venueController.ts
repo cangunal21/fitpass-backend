@@ -5,6 +5,7 @@ import { translateClassTitle } from '../utils/translate'
 import { generateToken } from '../utils/jwt'
 import { sendVenueRegistrationAdminEmail, sendVenuePasswordResetEmail } from '../utils/email'
 import { sendPushNotification } from '../utils/push'
+import { isValidEmail, MIN_PASSWORD } from '../utils/validate'
 import crypto from 'crypto'
 
 // Bir seans/ders silinirken aktif rezervasyonları GÜVENLİ kaldırır:
@@ -52,8 +53,12 @@ export const venueRegister = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Ad, email, şifre, telefon ve adres zorunludur.' })
     }
 
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Şifre en az 6 karakter olmalı.' })
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ error: 'Geçerli bir e-posta adresi girin.' })
+    }
+
+    if (password.length < MIN_PASSWORD) {
+      return res.status(400).json({ error: `Şifre en az ${MIN_PASSWORD} karakter olmalı.` })
     }
 
     const existing = await prisma.venue.findUnique({ where: { email } })
