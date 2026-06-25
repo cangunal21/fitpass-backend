@@ -106,6 +106,25 @@ if (process.env.SENTRY_DSN) {
   Sentry.setupExpressErrorHandler(app)
 }
 
+// Son güvenlik ağı: route'tan sızan hata olursa temiz JSON 500 dön (HTML/çökme yerine)
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  // body-parser gibi istemci hataları 4xx taşır → onları 5xx'e çevirme
+  const status = err?.status || err?.statusCode || 500
+  if (status >= 500) console.error('Express hata:', err)
+  if (res.headersSent) return next(err)
+  res.status(status).json({ error: status >= 500 ? 'Sunucu hatası.' : 'Geçersiz istek.' })
+})
+
+// SÜREÇ GÜVENLİĞİ: tek bir yakalanmamış hata/promise TÜM sunucuyu düşürmesin.
+// Logla (Sentry'ye iletilir) ama süreci ayakta tut → diğer kullanıcılar etkilenmesin.
+process.on('unhandledRejection', (reason) => {
+  console.error('UnhandledRejection (yakalandı, sunucu ayakta):', reason)
+})
+process.on('uncaughtException', (err) => {
+  console.error('UncaughtException (yakalandı, sunucu ayakta):', err)
+})
+
 app.listen(PORT, () => {
   console.log(`✅ Fitpass sunucusu http://localhost:${PORT} adresinde çalışıyor`)
   // Her 30 dakikada hatırlatma maili gönder

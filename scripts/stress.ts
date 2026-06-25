@@ -186,26 +186,65 @@ async function run() {
       '/api/social/leaderboard/users', '/api/social/leaderboard/streaks', '/api/social/leaderboard/venues',
       `/api/public/venues/${V}`, '/api/public/categories', '/api/public/neighborhoods',
     ]
-    const ops: Promise<any>[] = []
-    for (let i = 0; i < 250; i++) {
-      if (i % 5 === 0) {
-        const u = users[i % users.length]
-        ops.push(http('/api/social/feed', { token: u.token }))
-      } else if (i % 7 === 0) {
-        const u = users[i % users.length]
-        ops.push(http('/api/auth/me', { token: u.token }))
-      } else {
-        ops.push(http(reads[i % reads.length]))
+    // Gerçekçi sürekli yük: 5 dalga × 50 eşzamanlı = 250 istek (dalga arası kısa boşluk)
+    const res: { status: number; ms: number }[] = []
+    for (let w = 0; w < 5; w++) {
+      const ops: Promise<any>[] = []
+      for (let i = 0; i < 50; i++) {
+        const idx = w * 50 + i
+        if (idx % 5 === 0) ops.push(http('/api/social/feed', { token: users[idx % users.length].token }))
+        else if (idx % 7 === 0) ops.push(http('/api/auth/me', { token: users[idx % users.length].token }))
+        else ops.push(http(reads[idx % reads.length]))
       }
+      res.push(...await Promise.all(ops))
+      await new Promise(r => setTimeout(r, 60))
     }
-    const res = await Promise.all(ops)
     const server5xx = res.filter(r => r.status >= 500).length
     const conns = res.filter(r => r.status === 0).length
     const max = Math.max(...res.map(r => r.ms)); const avg = Math.round(res.reduce((s, r) => s + r.ms, 0) / res.length)
-    ok('T6 yük: 250 istekte 5xx/çökme yok', server5xx === 0 && conns === 0, `5xx=${server5xx}, conn=${conns}`)
+    ok('T6 yük: 250 istek (5×50 dalga) 5xx/çökme yok', server5xx === 0 && conns === 0, `5xx=${server5xx}, conn=${conns}`)
     lines.push(`     ↳ gecikme: ort ${avg}ms, max ${max}ms`)
     const health = await http('/')
     ok('T6 yük: sunucu hâlâ ayakta', health.status === 200, `status=${health.status}`)
+  }
+
+  // ── TEST 8: Dayanıklılık / fuzz — bozuk girdi & hatalı auth 5xx/çökme yapmamalı ──
+  {
+    const u = users[7]
+    const bad: { status: number }[] = []
+    const reqs: Promise<any>[] = [
+      http('/api/bookings', { method: 'POST', token: u.token, body: { sessionId: 'abc' } }),
+      http('/api/bookings', { method: 'POST', token: u.token, body: { sessionId: -1 } }),
+      http('/api/bookings', { method: 'POST', token: u.token, body: { sessionId: 999999999 } }),
+      http('/api/bookings', { method: 'POST', token: u.token, body: { sessionId: SESS_CANCEL, groupSize: -5 } }),
+      http('/api/bookings', { method: 'POST', token: u.token, body: { sessionId: SESS_CANCEL, groupSize: 99999 } }),
+      http('/api/bookings', { method: 'POST', token: u.token, body: {} }),
+      http('/api/bookings', { method: 'POST', token: u.token, body: { sessionId: SESS_CANCEL, groupSize: 'x', taggedUsernames: 'notarray' } }),
+      http('/api/bookings', { method: 'POST', body: { sessionId: SESS_CANCEL } }),           // token yok
+      http('/api/bookings', { method: 'POST', token: 'bozuk.token.xx', body: { sessionId: SESS_CANCEL } }),
+      http('/api/auth/me', { token: 'bozuk.token' }),
+      http('/api/bookings/dropin/abc/join', { method: 'POST', token: u.token }),
+      http('/api/bookings/99999/cancel', { method: 'PUT', token: u.token }),
+      http('/api/public/sessions/abc'),
+      http('/api/public/sessions/999999999'),
+      http('/api/public/venues/abc'),
+      http('/api/public/users/yok_boyle_kullanici_xyz'),
+      http(`/api/public/for-you`, { token: 'bozuk' }),
+    ]
+    const res = await Promise.all(reqs)
+    const server5xx = res.filter(r => r.status >= 500).length
+    const conns = res.filter(r => r.status === 0).length
+    bad.push(...res)
+    // Bozuk JSON gövde (body-parser hatası 5xx değil 400 olmalı)
+    let rawStatus = 0
+    try {
+      const r = await fetch(BASE + '/api/bookings', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${u.token}` }, body: '{bozuk json' })
+      rawStatus = r.status
+    } catch { rawStatus = 0 }
+    ok('T8 fuzz: hiçbir bozuk istek 5xx/çökme yapmadı', server5xx === 0 && conns === 0, `5xx=${server5xx}, conn=${conns}`)
+    ok('T8 fuzz: bozuk JSON gövde 5xx değil', rawStatus < 500 && rawStatus !== 0, `status=${rawStatus}`)
+    const health = await http('/')
+    ok('T8 fuzz: sunucu hâlâ ayakta', health.status === 200, `status=${health.status}`)
   }
 
   // ── TEST 7: Veri tutarlılığı taraması ──
