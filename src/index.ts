@@ -5,6 +5,7 @@ initSentry()
 
 import express from 'express'
 import cors from 'cors'
+import crypto from 'crypto'
 import rateLimit from 'express-rate-limit'
 import { sendRemindersJob } from './jobs/reminderJob'
 import { sendStreakNudges } from './jobs/streakJob'
@@ -48,19 +49,34 @@ app.use(cors({
 app.use(express.json())
 
 // Rate limiting
+// Test sırasında limiter'ı kapat (gerçek yük testi yapılabilsin)
+const skipRateLimit = () => process.env.DISABLE_RATE_LIMIT === 'true'
+
+// Anahtar: girişli kullanıcı → token bazlı (aynı IP'yi paylaşan NAT/operatör kullanıcıları
+// birbirini limite sokmasın); anonim → IP bazlı.
+function rlKey(req: express.Request): string {
+  const auth = req.headers.authorization
+  if (auth && auth.startsWith('Bearer ')) return 'u:' + crypto.createHash('sha1').update(auth.slice(7)).digest('hex')
+  return 'ip:' + (req.ip || req.socket?.remoteAddress || 'unknown')
+}
+
 const generalLimiter = rateLimit({
   windowMs: 60 * 1000,      // 1 dakika
-  max: 100,                  // 1 dakikada max 100 istek
+  max: 200,                  // kullanıcı/IP başına dakikada 200 istek (aktif gezinme + NAT payı)
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: rlKey,
+  skip: skipRateLimit,
   message: { error: 'Çok fazla istek gönderildi. Lütfen bir dakika bekleyin.' },
 })
 
 const authLimiter = rateLimit({
   windowMs: 60 * 1000,      // 1 dakika
-  max: 10,                   // 1 dakikada max 10 deneme (login, register, şifre sıfırlama)
+  max: 10,                   // 1 dakikada max 10 deneme (login, register, şifre sıfırlama) — IP bazlı (brute-force)
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req: express.Request) => 'ip:' + (req.ip || req.socket?.remoteAddress || 'unknown'),
+  skip: skipRateLimit,
   message: { error: 'Çok fazla giriş denemesi. Lütfen bir dakika bekleyin.' },
 })
 
@@ -69,6 +85,8 @@ const chatLimiter = rateLimit({
   max: 20,                   // 1 dakikada max 20 chat isteği
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: rlKey,
+  skip: skipRateLimit,
   message: { error: 'Çok fazla mesaj gönderildi. Lütfen bir dakika bekleyin.' },
 })
 

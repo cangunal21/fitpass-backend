@@ -22,14 +22,15 @@ const money = (x: number) => Math.round(x * 100) / 100
 export const createBooking = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId
-    const { sessionId, notes, groupSize: rawGroupSize, taggedUsernames, couponCode } = req.body
+    const { sessionId: rawSessionId, notes, groupSize: rawGroupSize, taggedUsernames, couponCode } = req.body
+    const sessionId = parseInt(rawSessionId)
     const groupSize = Math.max(1, Math.min(parseInt(rawGroupSize) || 1, 10))
     const rawTags: string[] = Array.isArray(taggedUsernames) ? taggedUsernames.slice(0, groupSize - 1) : []
     // normalize: strip @ prefix, lowercase
     const cleanTags = rawTags.map((u: string) => u.replace(/^@/, '').toLowerCase().trim()).filter(Boolean)
 
-    if (!sessionId) {
-      return res.status(400).json({ error: 'Ders seansı gerekli.' })
+    if (!sessionId || isNaN(sessionId)) {
+      return res.status(400).json({ error: 'Geçerli bir ders seansı gerekli.' })
     }
 
     let coupon: { id: number; discountType: string; discountValue: number } | null = null
@@ -329,6 +330,7 @@ export const joinDropIn = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId
     const slotId = parseInt(req.params.slotId as string)
+    if (isNaN(slotId)) return res.status(400).json({ error: 'Geçersiz slot.' })
 
     let participant: any
     try {

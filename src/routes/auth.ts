@@ -1,8 +1,10 @@
+import { registerNumericParams } from '../middlewares/numericParams'
 import { Router } from 'express'
 import { register, login, getMe, changePassword, forgotPassword, resetPassword, updatePrivacy, updateProfile, updateNotificationSettings, verifyEmail, resendVerification, registerPushToken } from '../controllers/authController'
 import { authMiddleware } from '../middlewares/auth'
 
 const router = Router()
+registerNumericParams(router)
 
 router.post('/register', register)
 router.post('/login', login)

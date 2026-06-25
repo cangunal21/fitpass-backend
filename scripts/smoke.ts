@@ -121,7 +121,7 @@ async function main() {
   try {
     let serverLog = ''
     server = spawn('npx', ['ts-node', 'src/index.ts'], {
-      env: { ...process.env, PORT: String(PORT) },
+      env: { ...process.env, PORT: String(PORT), DISABLE_RATE_LIMIT: 'true' },
       detached: true,
     })
     server.stdout?.on('data', d => { serverLog += d })

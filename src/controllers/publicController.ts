@@ -202,6 +202,7 @@ export const getForYouSessions = async (req: Request, res: Response) => {
 export const getSessionById = async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id as string)
+    if (isNaN(id)) return res.status(404).json({ error: 'Seans bulunamadı.' })
 
     const s = await prisma.class_Session.findUnique({
       where: { id },
@@ -277,6 +278,7 @@ export const getVenues = async (req: Request, res: Response) => {
 export const getVenueById = async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id as string)
+    if (isNaN(id)) return res.status(404).json({ error: 'Salon bulunamadı.' })
 
     const venue = await prisma.venue.findUnique({
       where: { id },

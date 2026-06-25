@@ -1,3 +1,4 @@
+import { registerNumericParams } from '../middlewares/numericParams'
 import { Router } from 'express'
 import {
   venueRegister, venueLogin, getVenueMe, venueForgotPassword, venueResetPassword,
@@ -15,6 +16,7 @@ import { createCoupon, getVenueCoupons, deleteCoupon } from '../controllers/coup
 import { getVenueStats, getVenueRevenue } from '../controllers/statsController'
 
 const router = Router()
+registerNumericParams(router)
 
 router.post('/register', venueRegister)
 router.post('/login', venueLogin)

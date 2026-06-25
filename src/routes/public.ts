@@ -1,3 +1,4 @@
+import { registerNumericParams } from '../middlewares/numericParams'
 import { Router } from 'express'
 import {
   getSessions,
@@ -19,6 +20,7 @@ import { validateCoupon } from '../controllers/couponController'
 import { optionalAuthMiddleware } from '../middlewares/auth'
 
 const router = Router()
+registerNumericParams(router)
 
 router.get('/sessions', getSessions)
 router.get('/for-you', optionalAuthMiddleware, getForYouSessions)

@@ -1,9 +1,11 @@
+import { registerNumericParams } from '../middlewares/numericParams'
 import { Router } from 'express'
 import { getStats, getAllVenues, approveVenue, getAllUsers, getAllBookings, suspendVenue, deleteVenue, banUser, getAllCoupons, adminDeleteCoupon, getCategories, createCategory, deleteCategory, updateCategory, getPendingVenueImages, reviewVenueImages } from '../controllers/adminController'
 import { getReports, resolveReport } from '../controllers/reportController'
 import { adminAuthMiddleware } from '../middlewares/adminAuth'
 
 const router = Router()
+registerNumericParams(router)
 
 router.use(adminAuthMiddleware)
 

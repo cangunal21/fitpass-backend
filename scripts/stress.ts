@@ -16,7 +16,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'fitpass-secret-key-change-in-produ
 // Yüksek ID aralığı (çakışmasın)
 const B = 980000
 const V = B, C = B, NB = B
-const SESS_CAP3 = B + 1, SESS_GROUP = B + 2, SESS_CANCEL = B + 3, SESS_DOUBLE = B + 4
+const SESS_CAP3 = B + 1, SESS_GROUP = B + 2, SESS_CANCEL = B + 3, SESS_DOUBLE = B + 4, SESS_DELETE = B + 5
 const SLOT = B + 1
 const NUSERS = 30
 
@@ -64,6 +64,7 @@ async function seed() {
   await makeSession(SESS_GROUP, 6)
   await makeSession(SESS_CANCEL, 5)
   await makeSession(SESS_DOUBLE, 10)
+  await makeSession(SESS_DELETE, 5)
   // Drop-in slot (4 kişilik)
   await prisma.dropInParticipant.deleteMany({ where: { slotId: SLOT } }).catch(() => {})
   await prisma.dropInSlot.upsert({
@@ -85,10 +86,10 @@ async function seed() {
 async function cleanup() {
   const ids = users.map(u => u.id)
   await prisma.rewardPoint.deleteMany({ where: { userId: { in: ids } } }).catch(() => {})
-  await prisma.booking.deleteMany({ where: { OR: [{ userId: { in: ids } }, { sessionId: { in: [SESS_CAP3, SESS_GROUP, SESS_CANCEL, SESS_DOUBLE] } }] } }).catch(() => {})
+  await prisma.booking.deleteMany({ where: { OR: [{ userId: { in: ids } }, { sessionId: { in: [SESS_CAP3, SESS_GROUP, SESS_CANCEL, SESS_DOUBLE, SESS_DELETE] } }] } }).catch(() => {})
   await prisma.dropInParticipant.deleteMany({ where: { slotId: SLOT } }).catch(() => {})
   await prisma.dropInSlot.deleteMany({ where: { id: SLOT } }).catch(() => {})
-  await prisma.class_Session.deleteMany({ where: { id: { in: [SESS_CAP3, SESS_GROUP, SESS_CANCEL, SESS_DOUBLE] } } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: { in: [SESS_CAP3, SESS_GROUP, SESS_CANCEL, SESS_DOUBLE, SESS_DELETE] } } }).catch(() => {})
   await prisma.class.deleteMany({ where: { id: C } }).catch(() => {})
   await prisma.dropInSlot.deleteMany({ where: { venueId: V } }).catch(() => {})
   await prisma.venue.deleteMany({ where: { id: V } }).catch(() => {})
@@ -211,30 +212,30 @@ async function run() {
   // ── TEST 8: Dayanıklılık / fuzz — bozuk girdi & hatalı auth 5xx/çökme yapmamalı ──
   {
     const u = users[7]
-    const bad: { status: number }[] = []
-    const reqs: Promise<any>[] = [
-      http('/api/bookings', { method: 'POST', token: u.token, body: { sessionId: 'abc' } }),
-      http('/api/bookings', { method: 'POST', token: u.token, body: { sessionId: -1 } }),
-      http('/api/bookings', { method: 'POST', token: u.token, body: { sessionId: 999999999 } }),
-      http('/api/bookings', { method: 'POST', token: u.token, body: { sessionId: SESS_CANCEL, groupSize: -5 } }),
-      http('/api/bookings', { method: 'POST', token: u.token, body: { sessionId: SESS_CANCEL, groupSize: 99999 } }),
-      http('/api/bookings', { method: 'POST', token: u.token, body: {} }),
-      http('/api/bookings', { method: 'POST', token: u.token, body: { sessionId: SESS_CANCEL, groupSize: 'x', taggedUsernames: 'notarray' } }),
-      http('/api/bookings', { method: 'POST', body: { sessionId: SESS_CANCEL } }),           // token yok
-      http('/api/bookings', { method: 'POST', token: 'bozuk.token.xx', body: { sessionId: SESS_CANCEL } }),
-      http('/api/auth/me', { token: 'bozuk.token' }),
-      http('/api/bookings/dropin/abc/join', { method: 'POST', token: u.token }),
-      http('/api/bookings/99999/cancel', { method: 'PUT', token: u.token }),
-      http('/api/public/sessions/abc'),
-      http('/api/public/sessions/999999999'),
-      http('/api/public/venues/abc'),
-      http('/api/public/users/yok_boyle_kullanici_xyz'),
-      http(`/api/public/for-you`, { token: 'bozuk' }),
+    const cases: { label: string; p: Promise<any> }[] = [
+      { label: 'POST booking sessionId=abc', p: http('/api/bookings', { method: 'POST', token: u.token, body: { sessionId: 'abc' } }) },
+      { label: 'POST booking sessionId=-1', p: http('/api/bookings', { method: 'POST', token: u.token, body: { sessionId: -1 } }) },
+      { label: 'POST booking sessionId=999999999', p: http('/api/bookings', { method: 'POST', token: u.token, body: { sessionId: 999999999 } }) },
+      { label: 'POST booking groupSize=-5', p: http('/api/bookings', { method: 'POST', token: u.token, body: { sessionId: SESS_CANCEL, groupSize: -5 } }) },
+      { label: 'POST booking groupSize=99999', p: http('/api/bookings', { method: 'POST', token: u.token, body: { sessionId: SESS_CANCEL, groupSize: 99999 } }) },
+      { label: 'POST booking body={}', p: http('/api/bookings', { method: 'POST', token: u.token, body: {} }) },
+      { label: 'POST booking groupSize=x,tagged=notarray', p: http('/api/bookings', { method: 'POST', token: u.token, body: { sessionId: SESS_CANCEL, groupSize: 'x', taggedUsernames: 'notarray' } }) },
+      { label: 'POST booking no-token', p: http('/api/bookings', { method: 'POST', body: { sessionId: SESS_CANCEL } }) },
+      { label: 'POST booking bad-token', p: http('/api/bookings', { method: 'POST', token: 'bozuk.token.xx', body: { sessionId: SESS_CANCEL } }) },
+      { label: 'GET me bad-token', p: http('/api/auth/me', { token: 'bozuk.token' }) },
+      { label: 'POST dropin/abc/join', p: http('/api/bookings/dropin/abc/join', { method: 'POST', token: u.token }) },
+      { label: 'PUT booking/99999/cancel', p: http('/api/bookings/99999/cancel', { method: 'PUT', token: u.token }) },
+      { label: 'GET sessions/abc', p: http('/api/public/sessions/abc') },
+      { label: 'GET sessions/999999999', p: http('/api/public/sessions/999999999') },
+      { label: 'GET venues/abc', p: http('/api/public/venues/abc') },
+      { label: 'GET users/yok_boyle', p: http('/api/public/users/yok_boyle_kullanici_xyz') },
+      { label: 'GET for-you bad-token', p: http('/api/public/for-you', { token: 'bozuk' }) },
     ]
-    const res = await Promise.all(reqs)
+    const res = await Promise.all(cases.map(c => c.p))
     const server5xx = res.filter(r => r.status >= 500).length
     const conns = res.filter(r => r.status === 0).length
-    bad.push(...res)
+    const culprits = cases.map((c, i) => ({ c, s: res[i].status })).filter(x => x.s >= 500).map(x => `${x.c.label}→${x.s}`)
+    if (culprits.length) lines.push(`     ↳ 5xx dönenler: ${culprits.join(' | ')}`)
     // Bozuk JSON gövde (body-parser hatası 5xx değil 400 olmalı)
     let rawStatus = 0
     try {
@@ -245,6 +246,24 @@ async function run() {
     ok('T8 fuzz: bozuk JSON gövde 5xx değil', rawStatus < 500 && rawStatus !== 0, `status=${rawStatus}`)
     const health = await http('/')
     ok('T8 fuzz: sunucu hâlâ ayakta', health.status === 200, `status=${health.status}`)
+  }
+
+  // ── TEST 9: Salon dolu+yorumlu seansı silince — 500 yok, puan iade, FK temiz ──
+  {
+    const venueToken = jwt.sign({ venueId: V, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const u1 = users[8], u2 = users[9]
+    const before1 = (await prisma.user.findUnique({ where: { id: u1.id }, select: { rewardPoints: true } }))?.rewardPoints || 0
+    await http('/api/bookings', { method: 'POST', token: u1.token, body: { sessionId: SESS_DELETE } })
+    await http('/api/bookings', { method: 'POST', token: u2.token, body: { sessionId: SESS_DELETE } })
+    const b1 = await prisma.booking.findFirst({ where: { userId: u1.id, sessionId: SESS_DELETE } })
+    if (b1) await prisma.review.create({ data: { bookingId: b1.id, reviewerUserId: u1.id, targetType: 'venue', venueId: V, rating: 5, comment: 'test' } }).catch(() => {})
+    const occBefore = await occupancy(SESS_DELETE)
+    const del = await http(`/api/venue/classes/${C}/sessions/${SESS_DELETE}`, { method: 'DELETE', token: venueToken })
+    const sessGone = !(await prisma.class_Session.findUnique({ where: { id: SESS_DELETE } }))
+    const after1 = (await prisma.user.findUnique({ where: { id: u1.id }, select: { rewardPoints: true } }))?.rewardPoints || 0
+    ok('T9 salon siler: 200 (FK 500 yok)', del.status === 200, `status=${del.status}, occÖnce=${occBefore}`)
+    ok('T9 salon siler: seans silindi + booking temizlendi', sessGone && (await occupancy(SESS_DELETE)) === 0)
+    ok('T9 salon siler: puan iade edildi (bakiye başa döndü)', after1 === before1, `önce=${before1}, sonra=${after1}`)
   }
 
   // ── TEST 7: Veri tutarlılığı taraması ──
@@ -268,7 +287,7 @@ async function main() {
   let server: ChildProcess | null = null
   try {
     let log = ''
-    server = spawn('npx', ['ts-node', 'src/index.ts'], { env: { ...process.env, PORT: String(PORT) }, detached: true })
+    server = spawn('npx', ['ts-node', 'src/index.ts'], { env: { ...process.env, PORT: String(PORT), DISABLE_RATE_LIMIT: 'true' }, detached: true })
     server.stdout?.on('data', d => { log += d }); server.stderr?.on('data', d => { log += d })
     try { await waitForServer() } catch (e) { console.error('Sunucu log:\n', log.slice(0, 1200)); throw e }
     await seed()

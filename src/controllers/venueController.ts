@@ -4,7 +4,44 @@ import prisma from '../utils/prisma'
 import { translateClassTitle } from '../utils/translate'
 import { generateToken } from '../utils/jwt'
 import { sendVenueRegistrationAdminEmail, sendVenuePasswordResetEmail } from '../utils/email'
+import { sendPushNotification } from '../utils/push'
 import crypto from 'crypto'
+
+// Bir seans/ders silinirken aktif rezervasyonları GÜVENLİ kaldırır:
+// puanları iade eder, FK'lı alt kayıtları temizler (Payment/Review/Commission/ActivityLog),
+// rezervasyonları siler. Etkilenen kullanıcıları (bildirim için) döndürür.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function purgeBookingsForSessions(tx: any, sessionIds: number[]) {
+  const bookings = await tx.booking.findMany({
+    where: { sessionId: { in: sessionIds } },
+    select: { id: true, userId: true, pointsEarned: true, status: true },
+  })
+  if (bookings.length === 0) return []
+  const ids = bookings.map((b: any) => b.id)
+  for (const b of bookings) {
+    if (b.pointsEarned > 0 && (b.status === 'confirmed' || b.status === 'pending')) {
+      await tx.user.update({ where: { id: b.userId }, data: { rewardPoints: { decrement: b.pointsEarned } } })
+      await tx.rewardPoint.create({ data: { userId: b.userId, points: -b.pointsEarned, source: 'session_removed', bookingId: b.id } })
+    }
+  }
+  // FK kısıtlı alt kayıtlar (onDelete tanımsız = Restrict) → önce sil
+  await tx.payment.deleteMany({ where: { bookingId: { in: ids } } })
+  await tx.review.deleteMany({ where: { bookingId: { in: ids } } })
+  await tx.commissionHistory.deleteMany({ where: { bookingId: { in: ids } } })
+  await tx.activityLog.deleteMany({ where: { bookingId: { in: ids } } })
+  await tx.booking.deleteMany({ where: { id: { in: ids } } })
+  return bookings as { id: number; userId: number; status: string }[]
+}
+
+// Etkilenen kullanıcılara "rezervasyonun salon tarafından kaldırıldı" push'u (best-effort)
+async function notifyRemovedBookings(affected: { userId: number; status: string }[], classTitle: string) {
+  const userIds = [...new Set(affected.filter(b => b.status === 'confirmed' || b.status === 'pending').map(b => b.userId))]
+  if (userIds.length === 0) return
+  const users = await prisma.user.findMany({ where: { id: { in: userIds }, pushToken: { not: null } }, select: { pushToken: true } })
+  for (const u of users) {
+    if (u.pushToken) sendPushNotification(u.pushToken, 'Rezervasyonun iptal edildi', `${classTitle} dersi salon tarafından kaldırıldı. Ödemen iade edilecektir.`).catch(() => {})
+  }
+}
 
 // SALON KAYIT
 export const venueRegister = async (req: Request, res: Response) => {
@@ -523,14 +560,16 @@ export const deleteClass = async (req: Request, res: Response) => {
     const classId = parseInt(req.params.id as string)
     const cls = await prisma.class.findUnique({ where: { id: classId } })
     if (!cls || cls.venueId !== venueId) return res.status(403).json({ error: 'Yetki yok.' })
-    // First delete sessions and their bookings
-    const sessions = await prisma.class_Session.findMany({ where: { classId } })
-    for (const s of sessions) {
-      await prisma.booking.deleteMany({ where: { sessionId: s.id } })
-    }
-    await prisma.class_Session.deleteMany({ where: { classId } })
-    await prisma.class.delete({ where: { id: classId } })
-    return res.json({ message: 'Ders silindi.' })
+    const sessions = await prisma.class_Session.findMany({ where: { classId }, select: { id: true } })
+    const sessIds = sessions.map(s => s.id)
+    const affected = await prisma.$transaction(async (tx) => {
+      const a = sessIds.length ? await purgeBookingsForSessions(tx, sessIds) : []
+      await tx.class_Session.deleteMany({ where: { classId } })
+      await tx.class.delete({ where: { id: classId } })
+      return a
+    })
+    await notifyRemovedBookings(affected, cls.title).catch(() => {})
+    return res.json({ message: 'Ders silindi.', affectedBookings: affected.length })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
@@ -544,9 +583,13 @@ export const deleteSession = async (req: Request, res: Response) => {
     const sessionId = parseInt(req.params.sessionId as string)
     const session = await prisma.class_Session.findUnique({ where: { id: sessionId }, include: { class: true } })
     if (!session || session.class.venueId !== venueId) return res.status(403).json({ error: 'Yetki yok.' })
-    await prisma.booking.deleteMany({ where: { sessionId } })
-    await prisma.class_Session.delete({ where: { id: sessionId } })
-    return res.json({ message: 'Seans silindi.' })
+    const affected = await prisma.$transaction(async (tx) => {
+      const a = await purgeBookingsForSessions(tx, [sessionId])
+      await tx.class_Session.delete({ where: { id: sessionId } })
+      return a
+    })
+    await notifyRemovedBookings(affected, session.class.title).catch(() => {})
+    return res.json({ message: 'Seans silindi.', affectedBookings: affected.length })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })

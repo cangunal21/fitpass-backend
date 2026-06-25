@@ -1,9 +1,11 @@
+import { registerNumericParams } from '../middlewares/numericParams'
 import { Router } from 'express'
 import { createBooking, getMyBookings, cancelBooking, joinDropIn, checkInBooking, checkInDropIn, getTransferOptions, transferBooking } from '../controllers/bookingController'
 import { authMiddleware } from '../middlewares/auth'
 import { venueAuthMiddleware } from '../middlewares/venueAuth'
 
 const router = Router()
+registerNumericParams(router)
 
 router.post('/', authMiddleware, createBooking)
 router.get('/my', authMiddleware, getMyBookings)
