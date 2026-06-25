@@ -119,6 +119,13 @@ app.get('/', (req, res) => {
   res.json({ message: 'Fitpass API çalışıyor 🚀', version: '1.0.0' })
 })
 
+// KAOS test route'ları — SADECE CHAOS_TEST=true iken mount edilir (prod'da asla aktif değil).
+// "Tek bir hata tüm sistemi düşürmez" güvencesini kanıtlamak için kasıtlı hata enjekte eder.
+if (process.env.CHAOS_TEST === 'true') {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  app.use('/_chaos', require('./routes/_chaos').default)
+}
+
 // Propagate olan (yakalanmamış) hataları Sentry'ye ilet
 if (process.env.SENTRY_DSN) {
   Sentry.setupExpressErrorHandler(app)
