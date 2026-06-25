@@ -122,6 +122,7 @@ async function main() {
     let serverLog = ''
     server = spawn('npx', ['ts-node', 'src/index.ts'], {
       env: { ...process.env, PORT: String(PORT) },
+      detached: true,
     })
     server.stdout?.on('data', d => { serverLog += d })
     server.stderr?.on('data', d => { serverLog += d })
@@ -131,7 +132,8 @@ async function main() {
     fail++; lines.push(`  ❌ KURULUM — ${e.message}`)
   } finally {
     await cleanup().catch(() => {})
-    if (server) server.kill('SIGKILL')
+    // Tüm süreç grubunu öldür (npx + alt ts-node) → zombie kalmasın
+    if (server?.pid) { try { process.kill(-server.pid, 'SIGKILL') } catch { try { server.kill('SIGKILL') } catch {} } }
   }
 
   console.log('\n=== SMOKE TEST ===')

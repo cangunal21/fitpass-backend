@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import { sendPushNotification } from '../utils/push'
 import { longestDailyStreak } from '../utils/streak'
+import { cached } from '../utils/cache'
 
 export const followUser = async (req: Request, res: Response) => {
   try {
@@ -81,40 +82,40 @@ export const getUserLeaderboard = async (req: Request, res: Response) => {
   try {
     const { branch, neighborhoodId } = req.query
 
-    // Liderlik her yıl sıfırlanır: sadece bu takvim yılındaki dersler sayılır
-    const startOfYear = new Date(new Date().getFullYear(), 0, 1)
-
-    // activityPrivacy gizli olanları hariç tut
-    const users = await prisma.user.findMany({
-      where: {
-        activityPrivacy: { not: 'private' },
-        ...(neighborhoodId ? { neighborhoodId: parseInt(neighborhoodId as string) } : {}),
-      },
-      select: {
-        id: true,
-        username: true,
-        avatarUrl: true,
-        neighborhoodId: true,
-        neighborhood: { select: { name: true } },
-        tier: { select: { name: true, colorHex: true, iconUrl: true } },
-        bookings: {
-          where: {
-            status: 'confirmed',
-            session: {
-              startsAt: { gte: startOfYear },
-              ...(branch ? { class: { category: branch as string } } : {}),
+    const ranked = await cached(`lb-users:${branch || ''}:${neighborhoodId || ''}`, 45000, async () => {
+      // Liderlik her yıl sıfırlanır: sadece bu takvim yılındaki dersler sayılır
+      const startOfYear = new Date(new Date().getFullYear(), 0, 1)
+      // activityPrivacy gizli olanları hariç tut
+      const users = await prisma.user.findMany({
+        where: {
+          activityPrivacy: { not: 'private' },
+          ...(neighborhoodId ? { neighborhoodId: parseInt(neighborhoodId as string) } : {}),
+        },
+        select: {
+          id: true,
+          username: true,
+          avatarUrl: true,
+          neighborhoodId: true,
+          neighborhood: { select: { name: true } },
+          tier: { select: { name: true, colorHex: true, iconUrl: true } },
+          bookings: {
+            where: {
+              status: 'confirmed',
+              session: {
+                startsAt: { gte: startOfYear },
+                ...(branch ? { class: { category: branch as string } } : {}),
+              },
             },
-          },
-          select: { id: true }
+            select: { id: true }
+          }
         }
-      }
+      })
+      return users
+        .map(u => ({ ...u, lessonCount: u.bookings.length, bookings: undefined }))
+        .filter(u => u.lessonCount > 0)
+        .sort((a, b) => b.lessonCount - a.lessonCount)
+        .slice(0, 50)
     })
-
-    const ranked = users
-      .map(u => ({ ...u, lessonCount: u.bookings.length, bookings: undefined }))
-      .filter(u => u.lessonCount > 0)
-      .sort((a, b) => b.lessonCount - a.lessonCount)
-      .slice(0, 50)
 
     return res.json({ leaderboard: ranked })
   } catch (err) {
@@ -130,6 +131,7 @@ export const getStreakLeaderboard = async (req: Request, res: Response) => {
     const { branch, neighborhoodId } = req.query
     const now = new Date()
 
+    const ranked = await cached(`lb-streak:${branch || ''}:${neighborhoodId || ''}`, 45000, async () => {
     const users = await prisma.user.findMany({
       where: {
         activityPrivacy: { not: 'private' },
@@ -165,7 +167,7 @@ export const getStreakLeaderboard = async (req: Request, res: Response) => {
       },
     })
 
-    const ranked = users
+    return users
       .map(u => {
         const dates: Date[] = [
           ...u.bookings.map(b => b.session?.startsAt).filter(Boolean) as Date[],
@@ -185,6 +187,7 @@ export const getStreakLeaderboard = async (req: Request, res: Response) => {
       .filter(u => u.streak >= 2) // en az 2 gün üst üste
       .sort((a, b) => b.streak - a.streak)
       .slice(0, 50)
+    })
 
     return res.json({ leaderboard: ranked })
   } catch (err) {
@@ -198,7 +201,7 @@ export const getVenueLeaderboard = async (req: Request, res: Response) => {
   try {
     const { branch, neighborhoodId } = req.query
 
-    const venues = await prisma.venue.findMany({
+    const venues = await cached(`lb-venue:${branch || ''}:${neighborhoodId || ''}`, 45000, () => prisma.venue.findMany({
       where: {
         isApproved: true,
         ...(neighborhoodId ? { neighborhoodId: parseInt(neighborhoodId as string) } : {}),
@@ -221,7 +224,7 @@ export const getVenueLeaderboard = async (req: Request, res: Response) => {
       },
       orderBy: { avgRating: 'desc' },
       take: 50
-    })
+    }))
 
     return res.json({ leaderboard: venues })
   } catch (err) {

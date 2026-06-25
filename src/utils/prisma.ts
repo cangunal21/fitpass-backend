@@ -3,7 +3,9 @@ import { PrismaClient } from '@prisma/client'
 
 const connectionString = process.env.DATABASE_URL ?? 'postgresql://cangunal@localhost:5432/fitpass'
 
-const adapter = new PrismaPg({ connectionString })
+// Bağlantı havuzu: varsayılan pg max=10 yük altında darboğaz yapıyordu.
+// DB_POOL_MAX ile ayarlanır (Railway/Postgres plan limitine göre); varsayılan 20.
+const adapter = new PrismaPg({ connectionString, max: Number(process.env.DB_POOL_MAX || 20) })
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient }
 

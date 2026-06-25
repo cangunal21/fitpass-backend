@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import { sendComplaintEmail } from '../utils/email'
 import { syncUserTier } from '../utils/tier'
+import { cached } from '../utils/cache'
 
 // GET /api/public/sessions
 export const getSessions = async (req: Request, res: Response) => {
@@ -360,9 +361,9 @@ export const getDropInSlotById = async (req: Request, res: Response) => {
 // GET /api/public/categories
 export const getCategories = async (req: Request, res: Response) => {
   try {
-    const categories = await prisma.sportCategory.findMany({
+    const categories = await cached('categories', 300000, () => prisma.sportCategory.findMany({
       orderBy: { name: 'asc' },
-    })
+    }))
 
     return res.json({ categories })
   } catch (err) {
@@ -374,11 +375,11 @@ export const getCategories = async (req: Request, res: Response) => {
 // GET /api/public/neighborhoods
 export const getNeighborhoods = async (req: Request, res: Response) => {
   try {
-    const neighborhoods = await prisma.neighborhood.findMany({
+    const neighborhoods = await cached('neighborhoods', 300000, () => prisma.neighborhood.findMany({
       where: { city: { name: 'İstanbul' } },
       select: { id: true, name: true },
       orderBy: { name: 'asc' },
-    })
+    }))
     return res.json({ neighborhoods })
   } catch (err) {
     return res.status(500).json({ error: 'Sunucu hatası.' })

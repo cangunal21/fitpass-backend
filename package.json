@@ -10,7 +10,8 @@
     "seed": "ts-node prisma/seed.ts",
     "db:push:force": "npx prisma db push --accept-data-loss",
     "smoke": "ts-node scripts/smoke.ts",
-    "iyzico:test": "ts-node scripts/iyzico-sandbox-test.ts"
+    "iyzico:test": "ts-node scripts/iyzico-sandbox-test.ts",
+    "stress": "ts-node scripts/stress.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
