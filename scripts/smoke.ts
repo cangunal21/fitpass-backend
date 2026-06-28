@@ -87,6 +87,13 @@ async function run() {
     if (!r.json.sessions.find((s: any) => s.id === S)) throw new Error('seed seansı listede yok')
   })
   await check('GET /api/public/sessions?category', async () => { await expectOk(`/api/public/sessions?category=${encodeURIComponent(catName)}`) })
+  // İlçe filtresi: salonun ilçesiyle (neighborhoodId=V) arayınca o salonun dersi çıkmalı
+  await check('GET /api/public/sessions?neighborhoodId (ilçe filtresi salonu buluyor)', async () => {
+    const r = await expectOk(`/api/public/sessions?neighborhoodId=${V}`)
+    if (!Array.isArray(r.json?.sessions) || !r.json.sessions.find((s: any) => s.id === S)) {
+      throw new Error('salon kendi ilçe filtresinde çıkmadı')
+    }
+  })
   await check('GET /api/public/sessions/:id', async () => { await expectOk(`/api/public/sessions/${S}`) })
   await check('GET /api/public/venues', async () => { await expectOk('/api/public/venues') })
   await check('GET /api/public/venues/:id', async () => { await expectOk(`/api/public/venues/${V}`) })

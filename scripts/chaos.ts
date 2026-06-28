@@ -107,6 +107,34 @@ async function run() {
     ok('C6 karışık yük: yağmurdan sonra sunucu ayakta', alive.status === 200, `health=${alive.status}`)
   }
 
+  // C8: GERÇEK hata yanıtları (400/404) + geçerli yük AYNI ANDA — platform başka işler
+  //     dönerken hatalı istekler hiçbir şeyi etkilememeli (kullanıcının istediği senaryo).
+  {
+    const badReal = ['/api/public/sessions/abc', '/api/public/venues/abc', '/api/public/instructors/abc', '/api/public/sessions/999999999', '/api/public/users/yokboyle']
+    const res: { status: number; good: boolean }[] = []
+    for (let w = 0; w < 3; w++) {
+      const ops: Promise<{ status: number; good: boolean }>[] = []
+      for (let i = 0; i < 60; i++) {
+        const idx = w * 60 + i
+        if (idx % 3 === 0) ops.push(http(badReal[idx % badReal.length]).then(r => ({ status: r.status, good: false })))   // 400/404
+        else if (idx % 11 === 0) ops.push(http('/_chaos/throw-sync').then(r => ({ status: r.status, good: false })))       // araya enjekte 500
+        else ops.push(http(GOOD).then(r => ({ status: r.status, good: true })))                                            // geçerli yük
+      }
+      res.push(...await Promise.all(ops))
+      await new Promise(r => setTimeout(r, 50))
+    }
+    const goods = res.filter(r => r.good)
+    const goodOk = goods.filter(r => r.status === 200).length
+    const conns = res.filter(r => r.status === 0).length
+    const badErrors = res.filter(r => !r.good)
+    const all4xxOr5xxHandled = badErrors.every(r => r.status >= 400) // hepsi düzgün hata kodu, conn=0
+    await sleep(150)
+    const alive = await http('/')
+    ok('C8 eşzamanlı 400/404+500+yük: TÜM geçerli istekler 200', goodOk === goods.length, `${goodOk}/${goods.length}`)
+    ok('C8 eşzamanlı: hatalı istekler düzgün kod döndü, bağlantı kopması yok', all4xxOr5xxHandled && conns === 0, `conn=${conns}`)
+    ok('C8 eşzamanlı: fırtına sonrası sunucu ayakta', alive.status === 200, `health=${alive.status}`)
+  }
+
   // C7: Tek bir bozuk uç 50x dövülürken iyi uç hep 200 mü?
   {
     const hammer = await Promise.all(Array.from({ length: 50 }, () => http('/_chaos/throw-sync')))

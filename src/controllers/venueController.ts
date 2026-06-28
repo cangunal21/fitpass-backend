@@ -5,7 +5,7 @@ import { translateClassTitle } from '../utils/translate'
 import { generateToken } from '../utils/jwt'
 import { sendVenueRegistrationAdminEmail, sendVenuePasswordResetEmail } from '../utils/email'
 import { sendPushNotification } from '../utils/push'
-import { isValidEmail, MIN_PASSWORD } from '../utils/validate'
+import { isValidEmail, MIN_PASSWORD, parseIntSafe } from '../utils/validate'
 import crypto from 'crypto'
 
 // Bir seans/ders silinirken aktif rezervasyonları GÜVENLİ kaldırır:
@@ -235,7 +235,12 @@ export const updateVenueProfile = async (req: Request, res: Response) => {
     if (address !== undefined) data.address = address
     if (description !== undefined) data.description = description
     if (website !== undefined) data.website = website
-    if (neighborhoodId !== undefined) data.neighborhoodId = parseInt(neighborhoodId)
+    // Boş/geçersiz ilçe → NaN ile 500 olmasın; geçerliyse ata, boşsa null (ilçe kaldır)
+    if (neighborhoodId !== undefined) {
+      const nId = parseIntSafe(neighborhoodId)
+      data.neighborhoodId = nId ?? null
+      if (nId) data.cityId = 1
+    }
 
     const venue = await prisma.venue.update({
       where: { id: venueId },
