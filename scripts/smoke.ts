@@ -115,12 +115,39 @@ async function run() {
     if (r.status !== 201) throw new Error(`beklenen 201, gelen ${r.status}: ${r.text.slice(0, 120)}`)
   })
 
-  // Aktivite takvimi: booking sonrası en az 1 aktivite dönmeli
-  await check('GET /api/social/my-calendar (token)', async () => {
+  // Takvim check-in'e bağlı: rezervasyon yapıldı ama check-in YAPILMADI → takvim BOŞ olmalı
+  await check('Takvim: check-in ÖNCESİ aktivite yok', async () => {
     const r = await expectOk('/api/social/my-calendar', { token })
     if (!Array.isArray(r.json?.activities)) throw new Error('activities dizisi yok')
-    if (!r.json.activities.some((a: any) => typeof a.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(a.date))) {
-      throw new Error('geçerli tarih formatında aktivite yok')
+    if (r.json.activities.length !== 0) throw new Error(`check-in öncesi takvim boş olmalı (gelen: ${r.json.activities.length})`)
+  })
+
+  // Check-in sistemi: salon kodu doğrulayıp check-in yapıyor mu (uçtan uca)
+  await check('Check-in: salon kodu ile check-in başarılı', async () => {
+    const b = await prisma.booking.findFirst({ where: { userId: U, sessionId: S }, select: { checkInCode: true, status: true } })
+    if (!b?.checkInCode) throw new Error('checkInCode üretilmemiş')
+    const venueToken = jwt.sign({ venueId: V, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http('/api/bookings/checkin', { method: 'POST', token: venueToken, body: { code: b.checkInCode } })
+    if (r.status !== 200 || !r.json?.success) throw new Error(`check-in başarısız (status=${b.status}): ${r.status} ${r.text.slice(0, 140)}`)
+  })
+
+  // Check-in yanlış salon token'ı ile reddedilmeli (IDOR koruması)
+  await check('Check-in: başka salon reddediliyor (403)', async () => {
+    const b = await prisma.booking.findFirst({ where: { userId: U, sessionId: S }, select: { checkInCode: true } })
+    const otherVenueToken = jwt.sign({ venueId: V + 7777, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http('/api/bookings/checkin', { method: 'POST', token: otherVenueToken, body: { code: b?.checkInCode } })
+    if (r.status !== 403) throw new Error(`başka salon check-in yapabildi: ${r.status}`)
+  })
+
+  // Takvim check-in SONRASI aktiviteyi göstermeli + streak alanları dönmeli
+  await check('Takvim: check-in SONRASI aktivite + streak var', async () => {
+    const r = await expectOk('/api/social/my-calendar', { token })
+    const acts = r.json?.activities || []
+    if (!acts.some((a: any) => typeof a.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(a.date))) {
+      throw new Error('check-in sonrası takvimde geçerli tarihli aktivite olmalı')
+    }
+    if (typeof r.json?.dailyStreak !== 'number' || typeof r.json?.weeklyStreak !== 'number') {
+      throw new Error('dailyStreak/weeklyStreak alanları dönmüyor')
     }
   })
 }

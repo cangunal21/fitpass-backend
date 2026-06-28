@@ -1,7 +1,7 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import { sendPushNotification } from '../utils/push'
-import { longestDailyStreak } from '../utils/streak'
+import { longestDailyStreak, currentDailyStreak, currentWeeklyStreak } from '../utils/streak'
 import { cached } from '../utils/cache'
 
 export const followUser = async (req: Request, res: Response) => {
@@ -196,8 +196,9 @@ export const getStreakLeaderboard = async (req: Request, res: Response) => {
   }
 }
 
-// Kullanıcının aktivite takvimi — her aktivite için { date: 'YYYY-MM-DD' (Europe/Istanbul), category }.
-// Takvim ızgarasında günün üstünde spor ikonu göstermek için (Strava tarzı).
+// Kullanıcının aktivite takvimi — SADECE check-in YAPILMIŞ (gerçekten gidilmiş) aktiviteler.
+// Her aktivite için { date: 'YYYY-MM-DD' (Europe/Istanbul), category }. Ayrıca güncel günlük + haftalık seri.
+// (Aktivite takvime rezervasyonda değil, salon check-in'inde düşer.)
 export const getMyCalendar = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId
@@ -206,29 +207,31 @@ export const getMyCalendar = async (req: Request, res: Response) => {
 
     const [bookings, dropins] = await Promise.all([
       prisma.booking.findMany({
-        where: { userId, status: 'confirmed', bookingType: 'class' },
+        where: { userId, checkedIn: true, bookingType: 'class' },
         select: { session: { select: { startsAt: true, class: { select: { category: true, title: true } } } } },
       }),
       prisma.dropInParticipant.findMany({
-        where: { userId, status: 'confirmed' },
+        where: { userId, checkedIn: true },
         select: { slot: { select: { startsAt: true, title: true, sportCategory: { select: { name: true } } } } },
       }),
     ])
 
-    const activities = [
-      ...bookings.filter(b => b.session).map(b => ({
-        date: ymd(b.session!.startsAt),
-        category: b.session!.class.category || null,
-        title: b.session!.class.title,
-      })),
-      ...dropins.filter(d => d.slot).map(d => ({
-        date: ymd(d.slot!.startsAt),
-        category: d.slot!.sportCategory?.name || null,
-        title: d.slot!.title,
-      })),
-    ]
+    const dates: Date[] = []
+    const activities: { date: string; category: string | null; title: string }[] = []
+    for (const b of bookings) if (b.session) {
+      dates.push(b.session.startsAt)
+      activities.push({ date: ymd(b.session.startsAt), category: b.session.class.category || null, title: b.session.class.title })
+    }
+    for (const d of dropins) if (d.slot) {
+      dates.push(d.slot.startsAt)
+      activities.push({ date: ymd(d.slot.startsAt), category: d.slot.sportCategory?.name || null, title: d.slot.title })
+    }
 
-    return res.json({ activities })
+    return res.json({
+      activities,
+      dailyStreak: currentDailyStreak(dates),
+      weeklyStreak: currentWeeklyStreak(dates),
+    })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
