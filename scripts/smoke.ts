@@ -150,6 +150,13 @@ async function run() {
       throw new Error('dailyStreak/weeklyStreak alanları dönmüyor')
     }
   })
+
+  // Review: ders henüz gerçekleşmediyse (gelecek seans) yorum 400 olmalı
+  await check('Review: gerçekleşmemiş derse yorum reddediliyor (400)', async () => {
+    const b = await prisma.booking.findFirst({ where: { userId: U, sessionId: S }, select: { id: true } })
+    const r = await http('/api/reviews', { method: 'POST', token, body: { bookingId: b?.id, rating: 5, comment: 'erken yorum' } })
+    if (r.status !== 400) throw new Error(`gerçekleşmemiş derse yorum yapılabildi: ${r.status}`)
+  })
 }
 
 async function main() {

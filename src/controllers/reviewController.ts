@@ -26,6 +26,12 @@ export const createReview = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Yalnızca tamamlanan rezervasyonlar için yorum yapılabilir.' })
     }
 
+    // Ders henüz gerçekleşmediyse yorum yapılamaz (gitmeden/erken yorum engeli)
+    const startsAt = booking.session?.startsAt
+    if (startsAt && new Date(startsAt).getTime() > Date.now()) {
+      return res.status(400).json({ error: 'Ders henüz gerçekleşmedi. Dersten sonra yorum yapabilirsiniz.' })
+    }
+
     // Zaten yorum var mı?
     const existing = await prisma.review.findUnique({ where: { bookingId } })
     if (existing) {
