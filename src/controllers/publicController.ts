@@ -8,7 +8,9 @@ import { parseIntSafe, parseDateSafe } from '../utils/validate'
 // GET /api/public/sessions
 export const getSessions = async (req: Request, res: Response) => {
   try {
-    const { category, date, dateFrom, dateTo, venueId, neighborhoodId, search, sort, userNeighborhoodId } = req.query
+    const { category, date, dateFrom, dateTo, venueId, neighborhoodId, search, sort, userNeighborhoodId, page, limit } = req.query
+    const pageNum = Math.max(1, parseIntSafe(page) || 1)
+    const pageSize = Math.min(50, Math.max(1, parseIntSafe(limit) || 24))
 
     const where: any = {
       status: 'open',
@@ -52,22 +54,26 @@ export const getSessions = async (req: Request, res: Response) => {
       ? [{ class: { venue: { avgRating: 'desc' } } }]
       : [{ startsAt: 'asc' }]
 
-    const sessions = await prisma.class_Session.findMany({
-      where,
-      include: {
-        class: {
-          include: {
-            sportCategory: true,
-            venue: {
-              include: { neighborhood: { select: { id: true, name: true, latitude: true, longitude: true } } },
+    const [sessions, total] = await Promise.all([
+      prisma.class_Session.findMany({
+        where,
+        include: {
+          class: {
+            include: {
+              sportCategory: true,
+              venue: {
+                include: { neighborhood: { select: { id: true, name: true, latitude: true, longitude: true } } },
+              },
+              instructor: true,
             },
-            instructor: true,
           },
         },
-      },
-      orderBy,
-      take: 50,
-    })
+        orderBy,
+        skip: (pageNum - 1) * pageSize,
+        take: pageSize,
+      }),
+      prisma.class_Session.count({ where }),
+    ])
 
     let formattedSessions = sessions.map((s) => ({
       id: s.id,
@@ -127,7 +133,13 @@ export const getSessions = async (req: Request, res: Response) => {
       }
     }
 
-    return res.json({ sessions: formattedSessions })
+    return res.json({
+      sessions: formattedSessions,
+      total,
+      page: pageNum,
+      pageSize,
+      hasMore: pageNum * pageSize < total,
+    })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
