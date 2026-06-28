@@ -328,6 +328,79 @@ export const updatePrivacy = async (req: Request, res: Response) => {
   }
 }
 
+// HESAP SİL — kullanıcı kendi hesabını kalıcı siler. Parola onayı + tüm ilişkili veri temizliği.
+export const deleteAccount = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    const { password } = req.body
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { passwordHash: true } })
+    if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
+
+    // Güvenlik: çalınan token'la silme olmasın → parola doğrulaması zorunlu
+    if (!password || !(await bcrypt.compare(password, user.passwordHash))) {
+      return res.status(401).json({ error: 'Hesabı silmek için mevcut şifrenizi doğru girin.' })
+    }
+
+    await prisma.$transaction(async (tx) => {
+      // Drop-in sayaçlarını düzelt (silinen katılımcı slotu dolu göstermesin)
+      const dps = await tx.dropInParticipant.findMany({ where: { userId, status: 'confirmed' }, select: { slotId: true } })
+      for (const dp of dps) {
+        await tx.dropInSlot.update({ where: { id: dp.slotId }, data: { currentPlayers: { decrement: 1 } } }).catch(() => {})
+      }
+
+      // Booking'lerin FK'lı çocukları (Payment/Commission), review'lar bookingId'ye bağlı
+      const bookings = await tx.booking.findMany({ where: { userId }, select: { id: true } })
+      const bookingIds = bookings.map(b => b.id)
+      if (bookingIds.length) {
+        await tx.payment.deleteMany({ where: { bookingId: { in: bookingIds } } })
+        await tx.commissionHistory.deleteMany({ where: { bookingId: { in: bookingIds } } })
+      }
+      // Kullanıcının yazdığı yorumlar (kendi booking'lerine ait) — bookingId FK'sından önce
+      await tx.review.deleteMany({ where: { reviewerUserId: userId } })
+
+      // Kullanıcının yorumlarına gelen cevapların parent'ını boşalt (self-FK kırılmasın), sonra sil
+      const myComments = await tx.activityComment.findMany({ where: { userId }, select: { id: true } })
+      const myCommentIds = myComments.map(c => c.id)
+      if (myCommentIds.length) {
+        await tx.activityComment.updateMany({ where: { parentId: { in: myCommentIds } }, data: { parentId: null } })
+      }
+      await tx.activityComment.deleteMany({ where: { userId } })
+
+      // Doğrudan userId'ye bağlı tüm çocuklar (ActivityLog booking'lerden ÖNCE — bookingId FK'sı)
+      await tx.activityLike.deleteMany({ where: { userId } })
+      await tx.activityLog.deleteMany({ where: { userId } })
+      await tx.userBadge.deleteMany({ where: { userId } })
+      await tx.userTierHistory.deleteMany({ where: { userId } })
+      await tx.monthlyLeaderboard.deleteMany({ where: { userId } })
+      await tx.rewardPoint.deleteMany({ where: { userId } })
+      await tx.rewardRedemption.deleteMany({ where: { userId } })
+      await tx.waitlist.deleteMany({ where: { userId } })
+      await tx.favoriteVenue.deleteMany({ where: { userId } })
+      await tx.dropInParticipant.deleteMany({ where: { userId } })
+      await tx.chatMessage.deleteMany({ where: { userId } })
+      await tx.passwordResetToken.deleteMany({ where: { userId } })
+      await tx.emailVerificationToken.deleteMany({ where: { userId } })
+
+      // Çift yönlü ilişkiler
+      await tx.follow.deleteMany({ where: { OR: [{ followerId: userId }, { followingId: userId }] } })
+      await tx.notification.deleteMany({ where: { OR: [{ userId }, { relatedUserId: userId }] } })
+      await tx.referral.deleteMany({ where: { OR: [{ referrerId: userId }, { referredId: userId }] } })
+      await tx.report.deleteMany({ where: { OR: [{ reporterUserId: userId }, { reportedUserId: userId }] } })
+
+      // Booking'leri sil, sahip olunan salonların owner bağını boşalt, en son kullanıcıyı sil
+      await tx.booking.deleteMany({ where: { userId } })
+      await tx.venue.updateMany({ where: { ownerUserId: userId }, data: { ownerUserId: null } })
+      await tx.user.delete({ where: { id: userId } })
+    })
+
+    return res.json({ message: 'Hesabınız ve tüm verileriniz kalıcı olarak silindi.' })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
 // ŞİFRE DEĞİŞTİR
 export const changePassword = async (req: Request & { userId?: number }, res: Response) => {
   try {

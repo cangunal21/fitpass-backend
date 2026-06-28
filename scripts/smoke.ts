@@ -7,6 +7,7 @@
  */
 import { spawn, ChildProcess } from 'child_process'
 import jwt from 'jsonwebtoken'
+import bcrypt from 'bcryptjs'
 import prisma from '../src/utils/prisma'
 
 const PORT = 3199
@@ -156,6 +157,20 @@ async function run() {
     const b = await prisma.booking.findFirst({ where: { userId: U, sessionId: S }, select: { id: true } })
     const r = await http('/api/reviews', { method: 'POST', token, body: { bookingId: b?.id, rating: 5, comment: 'erken yorum' } })
     if (r.status !== 400) throw new Error(`gerçekleşmemiş derse yorum yapılabildi: ${r.status}`)
+  })
+
+  // Hesap silme — EN SON (kullanıcıyı kaldırır). Yanlış parola reddedilmeli, doğru parola tüm veriyi temizlemeli.
+  await check('Hesap silme: yanlış parola → 401', async () => {
+    const r = await http('/api/auth/account', { method: 'DELETE', token, body: { password: 'yanlis-parola' } })
+    if (r.status !== 401) throw new Error(`yanlış parolayla silindi: ${r.status}`)
+  })
+  await check('Hesap silme: doğru parola → silinir + veriler (booking dahil) temizlenir', async () => {
+    const hash = await bcrypt.hash('SilTest1234', 12)
+    await prisma.user.update({ where: { id: U }, data: { passwordHash: hash } })
+    const r = await http('/api/auth/account', { method: 'DELETE', token, body: { password: 'SilTest1234' } })
+    if (r.status !== 200) throw new Error(`silme başarısız: ${r.status} ${r.text.slice(0, 160)}`)
+    if (await prisma.user.findUnique({ where: { id: U } })) throw new Error('kullanıcı hâlâ DB\'de')
+    if ((await prisma.booking.count({ where: { userId: U } })) > 0) throw new Error('booking temizlenmedi (FK sızıntısı)')
   })
 }
 
