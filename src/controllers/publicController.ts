@@ -3,6 +3,7 @@ import prisma from '../utils/prisma'
 import { sendComplaintEmail } from '../utils/email'
 import { syncUserTier } from '../utils/tier'
 import { cached } from '../utils/cache'
+import { parseIntSafe } from '../utils/validate'
 
 // GET /api/public/sessions
 export const getSessions = async (req: Request, res: Response) => {
@@ -30,8 +31,10 @@ export const getSessions = async (req: Request, res: Response) => {
     const classWhere: any = {}
     // Kategori, Class.category metin alanıyla filtrelenir (sportCategoryId null olabilir)
     if (category) classWhere.category = { equals: category as string, mode: 'insensitive' }
-    if (venueId) classWhere.venueId = parseInt(venueId as string)
-    if (neighborhoodId) classWhere.venue = { neighborhoodId: parseInt(neighborhoodId as string) }
+    const vId = parseIntSafe(venueId)
+    if (vId) classWhere.venueId = vId
+    const nId = parseIntSafe(neighborhoodId)
+    if (nId) classWhere.venue = { neighborhoodId: nId }
     if (search) {
       classWhere.OR = [
         { title: { contains: search as string, mode: 'insensitive' } },
@@ -89,9 +92,10 @@ export const getSessions = async (req: Request, res: Response) => {
     }))
 
     // Nearby sort
-    if (sort === 'nearby' && userNeighborhoodId) {
+    const userNbId = parseIntSafe(userNeighborhoodId)
+    if (sort === 'nearby' && userNbId) {
       const userNeighborhood = await prisma.neighborhood.findUnique({
-        where: { id: parseInt(userNeighborhoodId as string) },
+        where: { id: userNbId },
         select: { latitude: true, longitude: true },
       })
       if (userNeighborhood?.latitude && userNeighborhood?.longitude) {
@@ -114,8 +118,8 @@ export const getSessions = async (req: Request, res: Response) => {
       } else {
         // Fallback: match by neighborhoodId
         formattedSessions = formattedSessions.sort((a: any, b: any) => {
-          const aMatch = a.neighborhoodId === parseInt(userNeighborhoodId as string) ? 0 : 1
-          const bMatch = b.neighborhoodId === parseInt(userNeighborhoodId as string) ? 0 : 1
+          const aMatch = a.neighborhoodId === userNbId ? 0 : 1
+          const bMatch = b.neighborhoodId === userNbId ? 0 : 1
           return aMatch - bMatch
         })
       }

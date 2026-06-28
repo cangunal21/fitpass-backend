@@ -230,6 +230,10 @@ async function run() {
       { label: 'GET venues/abc', p: http('/api/public/venues/abc') },
       { label: 'GET users/yok_boyle', p: http('/api/public/users/yok_boyle_kullanici_xyz') },
       { label: 'GET for-you bad-token', p: http('/api/public/for-you', { token: 'bozuk' }) },
+      { label: 'GET sessions?venueId=abc', p: http('/api/public/sessions?venueId=abc') },
+      { label: 'GET sessions?neighborhoodId=abc', p: http('/api/public/sessions?neighborhoodId=abc') },
+      { label: 'GET sessions?sort=nearby&userNeighborhoodId=abc', p: http('/api/public/sessions?sort=nearby&userNeighborhoodId=abc') },
+      { label: 'GET leaderboard?neighborhoodId=abc', p: http('/api/social/leaderboard/users?neighborhoodId=abc') },
     ]
     const res = await Promise.all(cases.map(c => c.p))
     const server5xx = res.filter(r => r.status >= 500).length

@@ -575,8 +575,9 @@ export const addActivityComment = async (req: Request, res: Response) => {
     if (!content || !String(content).trim()) return res.status(400).json({ error: 'Yorum boş olamaz.' })
 
     let parentComment = null
-    if (parentId) {
-      parentComment = await prisma.activityComment.findUnique({ where: { id: parseInt(parentId, 10) } })
+    const pid = parseInt(parentId, 10)
+    if (parentId && !Number.isNaN(pid)) {
+      parentComment = await prisma.activityComment.findUnique({ where: { id: pid } })
       if (!parentComment || parentComment.feedKey !== feedKey) {
         return res.status(400).json({ error: 'Geçersiz yorum.' })
       }
