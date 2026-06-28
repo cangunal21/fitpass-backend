@@ -4,7 +4,7 @@ import {
   followUser, unfollowUser, getFollowStatus, getFollowers, getFollowing,
   getUserLeaderboard, getVenueLeaderboard, getStreakLeaderboard, getSuggestions, getFeed,
   likeActivity, unlikeActivity, getActivityComments, addActivityComment,
-  getNotifications, markNotificationsRead,
+  getNotifications, markNotificationsRead, getMyCalendar,
 } from '../controllers/socialController'
 import { reportUser } from '../controllers/reportController'
 import { authMiddleware } from '../middlewares/auth'
@@ -19,6 +19,7 @@ router.get('/following/:username', getFollowing)
 router.get('/leaderboard/users', getUserLeaderboard)
 router.get('/leaderboard/venues', getVenueLeaderboard)
 router.get('/leaderboard/streaks', getStreakLeaderboard)
+router.get('/my-calendar', authMiddleware, getMyCalendar)
 router.get('/suggestions', authMiddleware, getSuggestions)
 router.get('/feed', authMiddleware, getFeed)
 router.post('/feed/:feedKey/like', authMiddleware, likeActivity)

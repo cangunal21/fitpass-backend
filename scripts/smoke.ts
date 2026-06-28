@@ -114,6 +114,15 @@ async function run() {
     const r = await http('/api/bookings', { method: 'POST', token, body: { sessionId: S } })
     if (r.status !== 201) throw new Error(`beklenen 201, gelen ${r.status}: ${r.text.slice(0, 120)}`)
   })
+
+  // Aktivite takvimi: booking sonrası en az 1 aktivite dönmeli
+  await check('GET /api/social/my-calendar (token)', async () => {
+    const r = await expectOk('/api/social/my-calendar', { token })
+    if (!Array.isArray(r.json?.activities)) throw new Error('activities dizisi yok')
+    if (!r.json.activities.some((a: any) => typeof a.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(a.date))) {
+      throw new Error('geçerli tarih formatında aktivite yok')
+    }
+  })
 }
 
 async function main() {

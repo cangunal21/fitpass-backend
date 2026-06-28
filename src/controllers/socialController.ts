@@ -196,6 +196,45 @@ export const getStreakLeaderboard = async (req: Request, res: Response) => {
   }
 }
 
+// Kullanıcının aktivite takvimi — her aktivite için { date: 'YYYY-MM-DD' (Europe/Istanbul), category }.
+// Takvim ızgarasında günün üstünde spor ikonu göstermek için (Strava tarzı).
+export const getMyCalendar = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    // Yerel (İstanbul) güne göre grupla — startsAt UTC saklanır.
+    const ymd = (d: Date) => d.toLocaleDateString('en-CA', { timeZone: 'Europe/Istanbul' })
+
+    const [bookings, dropins] = await Promise.all([
+      prisma.booking.findMany({
+        where: { userId, status: 'confirmed', bookingType: 'class' },
+        select: { session: { select: { startsAt: true, class: { select: { category: true, title: true } } } } },
+      }),
+      prisma.dropInParticipant.findMany({
+        where: { userId, status: 'confirmed' },
+        select: { slot: { select: { startsAt: true, title: true, sportCategory: { select: { name: true } } } } },
+      }),
+    ])
+
+    const activities = [
+      ...bookings.filter(b => b.session).map(b => ({
+        date: ymd(b.session!.startsAt),
+        category: b.session!.class.category || null,
+        title: b.session!.class.title,
+      })),
+      ...dropins.filter(d => d.slot).map(d => ({
+        date: ymd(d.slot!.startsAt),
+        category: d.slot!.sportCategory?.name || null,
+        title: d.slot!.title,
+      })),
+    ]
+
+    return res.json({ activities })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
 // Salon liderlik tablosu
 export const getVenueLeaderboard = async (req: Request, res: Response) => {
   try {
