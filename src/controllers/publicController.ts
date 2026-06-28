@@ -3,7 +3,7 @@ import prisma from '../utils/prisma'
 import { sendComplaintEmail } from '../utils/email'
 import { syncUserTier } from '../utils/tier'
 import { cached } from '../utils/cache'
-import { parseIntSafe } from '../utils/validate'
+import { parseIntSafe, parseDateSafe } from '../utils/validate'
 
 // GET /api/public/sessions
 export const getSessions = async (req: Request, res: Response) => {
@@ -14,15 +14,17 @@ export const getSessions = async (req: Request, res: Response) => {
       status: 'open',
     }
 
-    if (dateFrom || dateTo) {
+    const dFrom = parseDateSafe(dateFrom)
+    const dTo = parseDateSafe(dateTo)
+    const dExact = parseDateSafe(date)
+    if (dFrom || dTo) {
       where.startsAt = {}
-      if (dateFrom) where.startsAt.gte = new Date(dateFrom as string)
-      if (dateTo) where.startsAt.lt = new Date(dateTo as string)
-    } else if (date) {
-      const d = new Date(date as string)
-      const nextDay = new Date(d)
+      if (dFrom) where.startsAt.gte = dFrom
+      if (dTo) where.startsAt.lt = dTo
+    } else if (dExact) {
+      const nextDay = new Date(dExact)
       nextDay.setDate(nextDay.getDate() + 1)
-      where.startsAt = { gte: d, lt: nextDay }
+      where.startsAt = { gte: dExact, lt: nextDay }
     } else {
       where.startsAt = { gte: new Date() }
     }

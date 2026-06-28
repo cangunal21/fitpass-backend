@@ -12,7 +12,8 @@
     "smoke": "ts-node scripts/smoke.ts",
     "iyzico:test": "ts-node scripts/iyzico-sandbox-test.ts",
     "stress": "ts-node scripts/stress.ts",
-    "chaos": "ts-node scripts/chaos.ts"
+    "chaos": "ts-node scripts/chaos.ts",
+    "fuzz": "ts-node scripts/fuzz.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
