@@ -15,6 +15,7 @@ const sports = [
   { name: 'Halı Saha', iconUrl: 'football', colorHex: '#16A34A', hasInstructor: false },
   { name: 'Basketbol', iconUrl: 'basketball', colorHex: '#D97706', hasInstructor: false },
   { name: 'Padel', iconUrl: 'padel', colorHex: '#0891B2', hasInstructor: false },
+  { name: 'Tenis', iconUrl: 'padel', colorHex: '#65A30D', hasInstructor: true },
   { name: 'Dans', iconUrl: 'dance', colorHex: '#C026D3', hasInstructor: true },
   { name: 'Yüzme', iconUrl: 'swimming', colorHex: '#0284C7', hasInstructor: true },
   { name: 'Crossfit', iconUrl: 'crossfit', colorHex: '#B45309', hasInstructor: true },
