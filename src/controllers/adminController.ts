@@ -124,12 +124,83 @@ export const suspendVenue = async (req: Request, res: Response) => {
   }
 }
 
-// Salon sil
+// Salon sil — salona bağlı TÜM kayıtları (ders/seans/rezervasyon/bekleme listesi/drop-in/
+// kupon/yorum/rozet/payout/komisyon/favori vb.) FK sırasına göre güvenle temizler.
+// Düz `venue.delete` ders/rezervasyonu olan salonda FK ihlaliyle 500 verirdi.
 export const deleteVenue = async (req: Request, res: Response) => {
   try {
     const venueId = parseInt(req.params.id as string)
-    await prisma.venue.delete({ where: { id: venueId } })
-    return res.json({ message: 'Salon silindi.' })
+    if (!venueId || isNaN(venueId)) return res.status(400).json({ error: 'Geçersiz salon.' })
+    const venue = await prisma.venue.findUnique({ where: { id: venueId }, select: { id: true } })
+    if (!venue) return res.status(404).json({ error: 'Salon bulunamadı.' })
+
+    await prisma.$transaction(async (tx) => {
+      // Salonun dersleri → seansları
+      const classes = await tx.class.findMany({ where: { venueId }, select: { id: true } })
+      const classIds = classes.map((c) => c.id)
+      const sessions = classIds.length
+        ? await tx.class_Session.findMany({ where: { classId: { in: classIds } }, select: { id: true } })
+        : []
+      const sessionIds = sessions.map((s) => s.id)
+      // Drop-in slotları
+      const slots = await tx.dropInSlot.findMany({ where: { venueId }, select: { id: true } })
+      const slotIds = slots.map((s) => s.id)
+
+      // Bu salona ait TÜM rezervasyonlar (seans + drop-in) — puan iadesiyle birlikte temizle
+      const orBooking: any[] = []
+      if (sessionIds.length) orBooking.push({ sessionId: { in: sessionIds } })
+      if (slotIds.length) orBooking.push({ dropInSlotId: { in: slotIds } })
+      if (orBooking.length) {
+        const bookings = await tx.booking.findMany({
+          where: { OR: orBooking },
+          select: { id: true, userId: true, pointsEarned: true, status: true },
+        })
+        const bookingIds = bookings.map((b) => b.id)
+        for (const b of bookings) {
+          if (b.pointsEarned > 0 && (b.status === 'confirmed' || b.status === 'pending')) {
+            await tx.user.update({ where: { id: b.userId }, data: { rewardPoints: { decrement: b.pointsEarned } } })
+            await tx.rewardPoint.create({ data: { userId: b.userId, points: -b.pointsEarned, source: 'venue_removed', bookingId: b.id } })
+          }
+        }
+        if (bookingIds.length) {
+          // Booking'e gerçek FK ile bağlı çocuklar önce silinir
+          await tx.payment.deleteMany({ where: { bookingId: { in: bookingIds } } })
+          await tx.review.deleteMany({ where: { bookingId: { in: bookingIds } } })
+          await tx.commissionHistory.deleteMany({ where: { bookingId: { in: bookingIds } } })
+          await tx.activityLog.deleteMany({ where: { bookingId: { in: bookingIds } } })
+          await tx.booking.deleteMany({ where: { id: { in: bookingIds } } })
+        }
+      }
+
+      // Bekleme listesi seansa gerçek FK ile bağlı → seanslar silinmeden önce
+      if (sessionIds.length) await tx.waitlist.deleteMany({ where: { sessionId: { in: sessionIds } } })
+      // Seans + ders
+      if (classIds.length) {
+        await tx.class_Session.deleteMany({ where: { classId: { in: classIds } } })
+        await tx.class.deleteMany({ where: { id: { in: classIds } } })
+      }
+      // Drop-in: katılımcılar (slot'a gerçek FK) → slotlar
+      if (slotIds.length) {
+        await tx.dropInParticipant.deleteMany({ where: { slotId: { in: slotIds } } })
+        await tx.dropInSlot.deleteMany({ where: { id: { in: slotIds } } })
+      }
+      // Eğitmenler (artık ders/seans referansı kalmadı)
+      await tx.instructor.deleteMany({ where: { venueId } })
+      // Salon düzeyindeki kalan kayıtlar (bağımsız tablolar)
+      await tx.coupon.deleteMany({ where: { venueId } })
+      await tx.review.deleteMany({ where: { venueId } })
+      await tx.userBadge.deleteMany({ where: { venueId } })
+      await tx.venuePayout.deleteMany({ where: { venueId } })
+      await tx.commissionHistory.deleteMany({ where: { venueId } })
+      await tx.activityLog.deleteMany({ where: { venueId } })
+      await tx.favoriteVenue.deleteMany({ where: { venueId } })
+      await tx.venueSportCategory.deleteMany({ where: { venueId } })
+      await tx.venuePasswordResetToken.deleteMany({ where: { venueId } })
+      // Salon
+      await tx.venue.delete({ where: { id: venueId } })
+    }, { timeout: 30000 })
+
+    return res.json({ message: 'Salon ve tüm bağlı kayıtları silindi.' })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })

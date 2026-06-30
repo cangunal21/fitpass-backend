@@ -13,6 +13,9 @@ import crypto from 'crypto'
 // rezervasyonları siler. Etkilenen kullanıcıları (bildirim için) döndürür.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function purgeBookingsForSessions(tx: any, sessionIds: number[]) {
+  // Bekleme listesi kayıtları seansa GERÇEK FK ile bağlı → seans silinmeden önce temizlenmeli
+  // (rezervasyon olmasa bile bekleme listesi olabilir; erken return'dan ÖNCE silinir)
+  if (sessionIds.length) await tx.waitlist.deleteMany({ where: { sessionId: { in: sessionIds } } })
   const bookings = await tx.booking.findMany({
     where: { sessionId: { in: sessionIds } },
     select: { id: true, userId: true, pointsEarned: true, status: true },

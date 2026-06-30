@@ -50,10 +50,14 @@ export const createBooking = async (req: Request, res: Response) => {
 
         const session = await tx.class_Session.findUnique({
           where: { id: sessionId },
-          include: { class: true },
+          include: { class: { include: { venue: { select: { isActive: true, isApproved: true } } } } },
         })
 
         if (!session) throw new BookingError('Ders seansı bulunamadı.', 404)
+        // Donmuş/onaysız salonun seansına (eski linkle) rezervasyon yapılamaz
+        if (!session.class.venue || !session.class.venue.isActive || !session.class.venue.isApproved) {
+          throw new BookingError('Bu salon şu anda rezervasyona kapalı.', 400)
+        }
 
         // Kapasite = onaylı/bekleyen rezervasyonların groupSize TOPLAMI
         // (satır sayısı değil — bir rezervasyon birden çok kişilik olabilir, grup rezervasyonunda overbooking olmasın diye)
@@ -337,8 +341,14 @@ export const joinDropIn = async (req: Request, res: Response) => {
       participant = await prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT id FROM "DropInSlot" WHERE id = ${slotId} FOR UPDATE`
 
-        const slot = await tx.dropInSlot.findUnique({ where: { id: slotId } })
+        const slot = await tx.dropInSlot.findUnique({
+          where: { id: slotId },
+          include: { venue: { select: { isActive: true, isApproved: true } } },
+        })
         if (!slot) throw new BookingError('Slot bulunamadı.', 404)
+        if (!slot.venue || !slot.venue.isActive || !slot.venue.isApproved) {
+          throw new BookingError('Bu salon şu anda rezervasyona kapalı.', 400)
+        }
         if (slot.status !== 'open') throw new BookingError('Bu slot artık açık değil.', 400)
         if (slot.currentPlayers >= slot.totalPlayers) throw new BookingError('Slot dolu.', 400)
 

@@ -38,7 +38,8 @@ export const getSessions = async (req: Request, res: Response) => {
     const vId = parseIntSafe(venueId)
     if (vId) classWhere.venueId = vId
     const nId = parseIntSafe(neighborhoodId)
-    if (nId) classWhere.venue = { neighborhoodId: nId }
+    // Salon onaylı + aktif olmalı — askıya alınan/henüz onaylanmamış salonun dersleri listede çıkmasın
+    classWhere.venue = { isApproved: true, isActive: true, ...(nId ? { neighborhoodId: nId } : {}) }
     if (search) {
       classWhere.OR = [
         { title: { contains: search as string, mode: 'insensitive' } },
@@ -168,7 +169,7 @@ export const getForYouSessions = async (req: Request, res: Response) => {
       where: {
         status: 'open',
         startsAt: { gte: new Date() },
-        class: { isActive: true, OR: orClauses },
+        class: { isActive: true, venue: { isApproved: true, isActive: true }, OR: orClauses },
       },
       include: {
         class: { include: { sportCategory: true, venue: { include: { neighborhood: { select: { id: true, name: true } } } }, instructor: true } },
@@ -237,7 +238,10 @@ export const getSessionById = async (req: Request, res: Response) => {
       },
     })
 
-    if (!s) return res.status(404).json({ error: 'Seans bulunamadı.' })
+    // Donmuş/onaysız salonun seansı public detayda da görünmesin
+    if (!s || !s.class.venue?.isActive || !s.class.venue?.isApproved) {
+      return res.status(404).json({ error: 'Seans bulunamadı.' })
+    }
 
     return res.json({
       session: {
@@ -298,8 +302,9 @@ export const getVenueById = async (req: Request, res: Response) => {
     const id = parseInt(req.params.id as string)
     if (isNaN(id)) return res.status(404).json({ error: 'Salon bulunamadı.' })
 
-    const venue = await prisma.venue.findUnique({
-      where: { id },
+    // Sadece onaylı + aktif salon public detay sayfasında görünür (donmuş/onaysız → 404)
+    const venue = await prisma.venue.findFirst({
+      where: { id, isApproved: true, isActive: true },
       include: {
         neighborhood: true,
         sportCategories: { include: { sportCategory: true } },

@@ -58,6 +58,12 @@ async function seed() {
 }
 
 async function cleanup() {
+  // Salon yaşam-döngüsü testi kalıntıları (test ortada kalırsa) — bağlılıklar önce
+  await prisma.booking.deleteMany({ where: { OR: [{ userId: 990011 }, { sessionId: 990011 }] } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: 990011 } }).catch(() => {})
+  await prisma.class.deleteMany({ where: { id: 990011 } }).catch(() => {})
+  await prisma.venue.deleteMany({ where: { id: 990011 } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: 990011 } }).catch(() => {})
   await prisma.booking.deleteMany({ where: { OR: [{ userId: U }, { sessionId: S }] } }).catch(() => {})
   await prisma.class_Session.deleteMany({ where: { id: S } }).catch(() => {})
   await prisma.class.deleteMany({ where: { id: C } }).catch(() => {})
@@ -204,6 +210,38 @@ async function run() {
     await prisma.refreshToken.deleteMany({ where: { userId: tu!.id } }).catch(() => {})
     await prisma.emailVerificationToken.deleteMany({ where: { userId: tu!.id } }).catch(() => {})
     await prisma.user.delete({ where: { id: tu!.id } }).catch(() => {})
+  })
+
+  // ---- Salon yaşam döngüsü: donmuş salon her yerde gizlenir + dolu salon FK hatası vermeden silinir ----
+  const V2 = 990011, C2 = 990011, S2 = 990011, U2 = 990011
+  await check('Salon dondurma: donmuş salonun seansı liste/detay/rezervasyonda kapalı', async () => {
+    await prisma.venue.upsert({ where: { id: V2 }, update: { isApproved: true, isActive: true, isSuspended: false }, create: { id: V2, name: 'LC Venue', email: `lc${V2}@x.com`, passwordHash: 'x', address: 'Adres', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: C2 }, update: {}, create: { id: C2, venueId: V2, title: 'LC Class', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    await prisma.class_Session.upsert({ where: { id: S2 }, update: { status: 'open', availableSpots: 20 }, create: { id: S2, classId: C2, startsAt: new Date(Date.now() + 3 * 86400000), endsAt: new Date(Date.now() + 3 * 86400000 + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.user.upsert({ where: { id: U2 }, update: {}, create: { id: U2, username: `lc_${U2}`, email: `lc_${U2}@x.com`, passwordHash: 'x', fullName: 'LC User', tierSportCounts: {} } })
+    const u2tok = jwt.sign({ userId: U2, email: `lc_${U2}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    // Salon AKTİFKEN rezervasyon (silme testi için dolu salon hazırlar)
+    const b0 = await http('/api/bookings', { method: 'POST', token: u2tok, body: { sessionId: S2 } })
+    if (b0.status !== 201) throw new Error(`aktif salona rezervasyon başarısız: ${b0.status} ${b0.text.slice(0, 120)}`)
+    // Salonu dondur
+    await prisma.venue.update({ where: { id: V2 }, data: { isActive: false, isSuspended: true } })
+    // 1) Ders listesinde çıkmamalı
+    const ls = await expectOk('/api/public/sessions')
+    if (ls.json.sessions.find((s: any) => s.id === S2)) throw new Error('donmuş salonun seansı listede görünüyor')
+    // 2) Seans detayı 404
+    const det = await http(`/api/public/sessions/${S2}`)
+    if (det.status !== 404) throw new Error(`donmuş salon seans detayı ${det.status} (404 bekleniyor)`)
+    // 3) Eski linkle yeni rezervasyon engellenmeli
+    const b1 = await http('/api/bookings', { method: 'POST', token, body: { sessionId: S2 } })
+    if (b1.status === 201) throw new Error('donmuş salona rezervasyon yapılabildi')
+  })
+  await check('Salon silme: ders+seans+rezervasyonu olan salon 500 vermeden silinir', async () => {
+    const r = await http(`/api/admin/venues/${V2}`, { method: 'DELETE', admin: true })
+    if (r.status !== 200) throw new Error(`salon silme başarısız: ${r.status} ${r.text.slice(0, 160)}`)
+    if (await prisma.venue.findUnique({ where: { id: V2 } })) throw new Error('salon hâlâ DB\'de')
+    if ((await prisma.booking.count({ where: { sessionId: S2 } })) > 0) throw new Error('salonun rezervasyonu temizlenmedi (FK sızıntısı)')
+    if ((await prisma.class.count({ where: { venueId: V2 } })) > 0) throw new Error('salonun dersi temizlenmedi')
+    await prisma.user.deleteMany({ where: { id: U2 } }).catch(() => {})
   })
 
   // Hesap silme — EN SON (kullanıcıyı kaldırır). Yanlış parola reddedilmeli, doğru parola tüm veriyi temizlemeli.
