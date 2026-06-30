@@ -88,6 +88,7 @@ export const getUserLeaderboard = async (req: Request, res: Response) => {
       // activityPrivacy gizli olanları hariç tut
       const users = await prisma.user.findMany({
         where: {
+          banned: false,
           activityPrivacy: { not: 'private' },
           ...(neighborhoodId ? { neighborhoodId: parseInt(neighborhoodId as string) } : {}),
         },
@@ -134,6 +135,7 @@ export const getStreakLeaderboard = async (req: Request, res: Response) => {
     const ranked = await cached(`lb-streak:${branch || ''}:${neighborhoodId || ''}`, 45000, async () => {
     const users = await prisma.user.findMany({
       where: {
+        banned: false,
         activityPrivacy: { not: 'private' },
         ...(neighborhoodId ? { neighborhoodId: parseInt(neighborhoodId as string) } : {}),
       },
@@ -295,6 +297,7 @@ export const getSuggestions = async (req: Request, res: Response) => {
     const suggestions = await prisma.user.findMany({
       where: {
         id: { not: userId, notIn: followingIds },
+        banned: false,
         activityPrivacy: { not: 'private' },
         OR: [
           { neighborhoodId: me?.neighborhoodId || 0 },
@@ -338,7 +341,7 @@ export const getFeed = async (req: Request, res: Response) => {
         userId: { in: followingIds },
         status: 'confirmed',
         createdAt: { gte: since },
-        user: { activityPrivacy: { not: 'private' } }
+        user: { activityPrivacy: { not: 'private' }, banned: false }
       },
       include: {
         user: { select: { id: true, username: true, fullName: true, avatarUrl: true } },
@@ -376,7 +379,7 @@ export const getFeed = async (req: Request, res: Response) => {
         userId: { in: followingIds },
         status: 'confirmed',
         joinedAt: { gte: since },
-        user: { activityPrivacy: { not: 'private' } }
+        user: { activityPrivacy: { not: 'private' }, banned: false }
       },
       include: {
         user: { select: { id: true, username: true, fullName: true, avatarUrl: true } },
@@ -396,7 +399,7 @@ export const getFeed = async (req: Request, res: Response) => {
       where: {
         userId: { in: followingIds },
         earnedAt: { gte: since },
-        user: { activityPrivacy: { not: 'private' } },
+        user: { activityPrivacy: { not: 'private' }, banned: false },
       },
       include: {
         user: { select: { id: true, username: true, fullName: true, avatarUrl: true } },
