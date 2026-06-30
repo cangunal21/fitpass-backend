@@ -184,6 +184,7 @@ model User {
   activityComments      ActivityComment[]
   reportsMade           Report[]             @relation("ReportsMade")
   reportsAgainst        Report[]             @relation("ReportsAgainst")
+  refreshTokens         RefreshToken[]
 }
 
 // ─────────────────────────────────────────────
@@ -708,4 +709,18 @@ model ChatMessage {
   createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
+}
+
+// Uzun ömürlü yenileme jetonu — access token (kısa ömür) süresi dolunca
+// sessizce yenisini almak için. Kullanıcı hiç "tekrar giriş yap" görmez.
+model RefreshToken {
+  id        Int      @id @default(autoincrement())
+  token     String   @unique
+  user      User     @relation(fields: [userId], references: [id])
+  userId    Int
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }

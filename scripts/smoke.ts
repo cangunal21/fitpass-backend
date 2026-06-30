@@ -166,6 +166,28 @@ async function run() {
     if (r.status !== 400) throw new Error(`gerçekleşmemiş derse yorum yapılabildi: ${r.status}`)
   })
 
+  // Refresh token akışı: kayıt → refresh ile yeni access token → yeni token getMe'de çalışır → logout → refresh artık 401
+  await check('Refresh token: yenileme + logout iptali', async () => {
+    const uniq = Date.now()
+    const em = `reftest${uniq}@x.com`
+    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `reftest${uniq}`, email: em, password: 'RefTest1234', fullName: 'Ref Test' } })
+    const rtok = reg.json?.refreshToken
+    if (!rtok || !reg.json?.token) throw new Error('register refreshToken/token döndürmedi')
+    const r1 = await http('/api/auth/refresh', { method: 'POST', body: { refreshToken: rtok } })
+    if (r1.status !== 200 || !r1.json?.token) throw new Error(`refresh başarısız: ${r1.status}`)
+    const me = await http('/api/auth/me', { token: r1.json.token })
+    if (me.status !== 200) throw new Error(`yenilenen token getMe'de çalışmadı: ${me.status}`)
+    await http('/api/auth/logout', { method: 'POST', body: { refreshToken: rtok } })
+    const r2 = await http('/api/auth/refresh', { method: 'POST', body: { refreshToken: rtok } })
+    if (r2.status !== 401) throw new Error(`logout sonrası refresh hâlâ çalışıyor: ${r2.status}`)
+    const tu = await prisma.user.findUnique({ where: { email: em }, select: { id: true } })
+    if (tu) {
+      await prisma.refreshToken.deleteMany({ where: { userId: tu.id } }).catch(() => {})
+      await prisma.emailVerificationToken.deleteMany({ where: { userId: tu.id } }).catch(() => {})
+      await prisma.user.delete({ where: { id: tu.id } }).catch(() => {})
+    }
+  })
+
   // Hesap silme — EN SON (kullanıcıyı kaldırır). Yanlış parola reddedilmeli, doğru parola tüm veriyi temizlemeli.
   await check('Hesap silme: yanlış parola → 401', async () => {
     const r = await http('/api/auth/account', { method: 'DELETE', token, body: { password: 'yanlis-parola' } })

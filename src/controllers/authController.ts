@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs'
 import crypto from 'crypto'
 import prisma from '../utils/prisma'
 import { generateToken } from '../utils/jwt'
+import { issueRefreshToken, rotateAccessToken, revokeRefreshToken } from '../utils/refreshToken'
 import { sendWelcomeEmail, sendPasswordResetEmail, sendEmailVerificationEmail, sendBadgeEmail } from '../utils/email'
 import { applyReferralCode } from './referralController'
 import { syncUserTier, resetYearlyPointsIfNeeded } from '../utils/tier'
@@ -81,9 +82,11 @@ export const register = async (req: Request, res: Response) => {
       applyReferralCode(user.id, referralCode.trim().toUpperCase()).catch(() => {})
     }
 
+    const refreshToken = await issueRefreshToken(user.id)
     return res.status(201).json({
       message: 'Kayıt başarılı! Email adresinize doğrulama linki gönderildi.',
       token,
+      refreshToken,
       user,
       emailVerificationSent: true,
     })
@@ -122,10 +125,12 @@ export const login = async (req: Request, res: Response) => {
     }
 
     const token = generateToken({ userId: user.id, email: user.email })
+    const refreshToken = await issueRefreshToken(user.id)
 
     return res.json({
       message: 'Giriş başarılı!',
       token,
+      refreshToken,
       user: {
         id: user.id,
         username: user.username,
@@ -137,6 +142,30 @@ export const login = async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Login error:', error)
     return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// ACCESS TOKEN YENİLE — refresh token ile yeni access token (kullanıcı çıkış görmez)
+export const refreshAccessToken = async (req: Request, res: Response) => {
+  try {
+    const { refreshToken } = req.body
+    const newToken = await rotateAccessToken(String(refreshToken || ''))
+    if (!newToken) return res.status(401).json({ error: 'Oturum süresi doldu, tekrar giriş yapın.' })
+    return res.json({ token: newToken })
+  } catch (err) {
+    console.error('Refresh error:', err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// ÇIKIŞ — refresh token'ı iptal et (artık yenileme yapamaz)
+export const logout = async (req: Request, res: Response) => {
+  try {
+    const { refreshToken } = req.body
+    if (refreshToken) await revokeRefreshToken(String(refreshToken))
+    return res.json({ message: 'Çıkış yapıldı.' })
+  } catch {
+    return res.json({ message: 'Çıkış yapıldı.' })
   }
 }
 

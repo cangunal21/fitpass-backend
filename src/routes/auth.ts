@@ -1,6 +1,6 @@
 import { registerNumericParams } from '../middlewares/numericParams'
 import { Router } from 'express'
-import { register, login, getMe, changePassword, forgotPassword, resetPassword, updatePrivacy, updateProfile, updateNotificationSettings, verifyEmail, resendVerification, registerPushToken, deleteAccount } from '../controllers/authController'
+import { register, login, getMe, changePassword, forgotPassword, resetPassword, updatePrivacy, updateProfile, updateNotificationSettings, verifyEmail, resendVerification, registerPushToken, deleteAccount, refreshAccessToken, logout } from '../controllers/authController'
 import { authMiddleware } from '../middlewares/auth'
 
 const router = Router()
@@ -8,6 +8,8 @@ registerNumericParams(router)
 
 router.post('/register', register)
 router.post('/login', login)
+router.post('/refresh', refreshAccessToken)
+router.post('/logout', logout)
 router.get('/me', authMiddleware, getMe)
 router.put('/change-password', authMiddleware, changePassword)
 router.post('/forgot-password', forgotPassword)
