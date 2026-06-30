@@ -1,6 +1,7 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import { sendVenueApprovedEmail } from '../utils/email'
+import { invalidate } from '../utils/cache'
 
 // İstatistikler
 export const getStats = async (req: Request, res: Response) => {
@@ -145,6 +146,10 @@ export const banUser = async (req: Request, res: Response) => {
       where: { id: userId },
       data: { banned: !!ban },
     })
+    // Ban anında etki etsin: ban-cache'ini geçersiz kıl + tüm refresh token'ları iptal et
+    // (banlı kullanıcı ne yeni access token alabilir ne de mevcut oturumu sürdürebilir).
+    invalidate(`banned:${userId}`)
+    if (ban) await prisma.refreshToken.updateMany({ where: { userId }, data: { revoked: true } }).catch(() => {})
     const { passwordHash, ...safeUser } = user
     return res.json({ message: ban ? 'Kullanıcı banlandı.' : 'Kullanıcı aktif edildi.', user: safeUser })
   } catch (err) {

@@ -19,9 +19,10 @@ export async function rotateAccessToken(refreshToken: string): Promise<string | 
   if (!refreshToken) return null
   const rt = await prisma.refreshToken.findUnique({
     where: { token: refreshToken },
-    include: { user: { select: { id: true, email: true } } },
+    include: { user: { select: { id: true, email: true, banned: true } } },
   })
   if (!rt || rt.revoked || rt.expiresAt < new Date() || !rt.user) return null
+  if (rt.user.banned) return null // banlı kullanıcı yeni access token alamaz
   return generateToken({ userId: rt.user.id, email: rt.user.email })
 }
 

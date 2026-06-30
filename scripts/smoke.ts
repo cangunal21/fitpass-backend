@@ -188,6 +188,24 @@ async function run() {
     }
   })
 
+  // Banlanan kullanıcı: aktif oturum + refresh engellenmeli
+  await check('Ban: banlı kullanıcı getMe 403 + refresh 401', async () => {
+    const uniq = Date.now() + 1
+    const em = `bantest${uniq}@x.com`
+    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `bantest${uniq}`, email: em, password: 'BanTest1234', fullName: 'Ban Test' } })
+    const utok = reg.json?.token, rtok = reg.json?.refreshToken
+    if (!utok || !rtok) throw new Error('register token/refreshToken yok')
+    const tu = await prisma.user.findUnique({ where: { email: em }, select: { id: true } })
+    await prisma.user.update({ where: { id: tu!.id }, data: { banned: true } })
+    const me = await http('/api/auth/me', { token: utok })
+    if (me.status !== 403) throw new Error(`banlı getMe ${me.status} (403 bekleniyor)`)
+    const rf = await http('/api/auth/refresh', { method: 'POST', body: { refreshToken: rtok } })
+    if (rf.status !== 401) throw new Error(`banlı refresh ${rf.status} (401 bekleniyor)`)
+    await prisma.refreshToken.deleteMany({ where: { userId: tu!.id } }).catch(() => {})
+    await prisma.emailVerificationToken.deleteMany({ where: { userId: tu!.id } }).catch(() => {})
+    await prisma.user.delete({ where: { id: tu!.id } }).catch(() => {})
+  })
+
   // Hesap silme — EN SON (kullanıcıyı kaldırır). Yanlış parola reddedilmeli, doğru parola tüm veriyi temizlemeli.
   await check('Hesap silme: yanlış parola → 401', async () => {
     const r = await http('/api/auth/account', { method: 'DELETE', token, body: { password: 'yanlis-parola' } })
