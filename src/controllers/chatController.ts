@@ -53,7 +53,7 @@ PLATFORM BİLGİLERİ:
 TİER SİSTEMİ:
 - 5 seviye var: Aday (0 ders) → Sporcu (10 ders) → Profesyonel (35 ders) → Elit (70 ders) → Olimpik (120 ders)
 - Tamamladığın onaylı ders/etkinlik sayısına göre otomatik yükselirsin
-- Sporcu, Profesyonel, Elit ve Olimpik seviyelerinde her rezervasyonda ödediğin tutarın bir kısmı otomatik olarak cashback (kredi) olarak hesabına yüklenir: Sporcu %1, Profesyonel %2, Elit %3, Olimpik %4
+- Her seviyede her rezervasyonda ödediğin tutarın bir kısmı otomatik olarak cashback (kredi) olarak hesabına yüklenir: Aday %1, Sporcu %2, Profesyonel %3, Elit %4, Olimpik %5
 - Bu kredi bir sonraki rezervasyonlarında otomatik indirim olarak kullanılabilir
 - Tier'ını ve kredini profil sayfandan takip edebilirsin
 

@@ -60,8 +60,9 @@ async function seed() {
 async function cleanup() {
   // Yorumlar bookingId + venueId FK'sına bağlı → booking/venue silmeden ÖNCE temizlenmeli
   await prisma.review.deleteMany({ where: { OR: [{ reviewerUserId: 990021 }, { reviewerUserId: 990022 }, { reviewerUserId: U }, { venueId: V }, { venueId: 990011 }] } }).catch(() => {})
-  await prisma.booking.deleteMany({ where: { userId: { in: [990021, 990022] } } }).catch(() => {})
-  await prisma.user.deleteMany({ where: { id: { in: [990021, 990022] } } }).catch(() => {})
+  await prisma.coupon.deleteMany({ where: { venueId: V } }).catch(() => {})
+  await prisma.booking.deleteMany({ where: { userId: { in: [990021, 990022, 990023] } } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: { in: [990021, 990022, 990023] } } }).catch(() => {})
   // Salon yaşam-döngüsü testi kalıntıları (test ortada kalırsa) — bağlılıklar önce
   await prisma.booking.deleteMany({ where: { OR: [{ userId: 990011 }, { sessionId: 990011 }] } }).catch(() => {})
   await prisma.class_Session.deleteMany({ where: { id: 990011 } }).catch(() => {})
@@ -249,6 +250,26 @@ async function run() {
     if (v?.totalReviews !== 0) throw new Error(`salon puanı yeniden hesaplanmadı (totalReviews=${v?.totalReviews})`)
     await prisma.booking.deleteMany({ where: { id: bk.id } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: X } }).catch(() => {})
+  })
+
+  // Para: iptal edilen rezervasyon kuponun usedCount hakkını YAKMAMALI (geri verilmeli)
+  await check('Para: iptalde kupon usedCount geri verilir', async () => {
+    const Z = 990023, uniq = Date.now() + 3
+    const code = `SMKCPN${uniq}`
+    const cpn = await prisma.coupon.create({ data: { venueId: V, code, discountType: 'percent', discountValue: 10, isActive: true } })
+    await prisma.user.upsert({ where: { id: Z }, update: {}, create: { id: Z, username: `cpn_${Z}`, email: `cpn_${Z}@x.com`, passwordHash: 'x', fullName: 'Coupon User', tierSportCounts: {} } })
+    const ztok = jwt.sign({ userId: Z, email: `cpn_${Z}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const bk = await http('/api/bookings', { method: 'POST', token: ztok, body: { sessionId: S, couponCode: code } })
+    if (bk.status !== 201) throw new Error(`kuponlu rezervasyon başarısız: ${bk.status} ${bk.text.slice(0, 120)}`)
+    const c1 = await prisma.coupon.findUnique({ where: { code }, select: { usedCount: true } })
+    if (c1?.usedCount !== 1) throw new Error(`rezervasyon sonrası usedCount ${c1?.usedCount} (1 bekleniyor)`)
+    const cancel = await http(`/api/bookings/${bk.json?.booking?.id}/cancel`, { method: 'PUT', token: ztok })
+    if (cancel.status !== 200) throw new Error(`iptal başarısız: ${cancel.status} ${cancel.text.slice(0, 120)}`)
+    const c2 = await prisma.coupon.findUnique({ where: { code }, select: { usedCount: true } })
+    if (c2?.usedCount !== 0) throw new Error(`iptal sonrası usedCount ${c2?.usedCount} (0 bekleniyor — kupon hakkı yandı)`)
+    await prisma.booking.deleteMany({ where: { userId: Z } }).catch(() => {})
+    await prisma.coupon.deleteMany({ where: { id: cpn.id } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: Z } }).catch(() => {})
   })
 
   // ---- Salon yaşam döngüsü: donmuş salon her yerde gizlenir + dolu salon FK hatası vermeden silinir ----

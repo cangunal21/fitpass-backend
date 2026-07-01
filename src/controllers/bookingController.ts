@@ -448,6 +448,15 @@ export const cancelBooking = async (req: Request, res: Response) => {
         })
       }
 
+      // Kupon kullanımı iptalle geri verilir (aksi halde iptal edilen rezervasyon kuponun
+      // maxUses hakkını kalıcı yakar → kupon bir daha kullanılamaz). 0'ın altına inmesin.
+      if (booking.couponId) {
+        await tx.coupon.updateMany({
+          where: { id: booking.couponId, usedCount: { gt: 0 } },
+          data: { usedCount: { decrement: 1 } },
+        })
+      }
+
       return result
     })
 
