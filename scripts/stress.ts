@@ -180,6 +180,24 @@ async function run() {
     ok('T5 iptal: 5xx yok', cancelRes.status < 500, `status=${cancelRes.status}`)
   }
 
+  // ── TEST 10: Çift-iptal yarışı — aynı booking'e 8 paralel iptal → puan TEK geri alınır ──
+  {
+    const u = users[6]
+    const before = (await prisma.user.findUnique({ where: { id: u.id }, select: { rewardPoints: true } }))?.rewardPoints || 0
+    await http('/api/bookings', { method: 'POST', token: u.token, body: { sessionId: SESS_CANCEL } })
+    const booking = await prisma.booking.findFirst({ where: { userId: u.id, sessionId: SESS_CANCEL, status: 'confirmed' } })
+    const res = await Promise.all(Array.from({ length: 8 }).map(() => http(`/api/bookings/${booking?.id}/cancel`, { method: 'PUT', token: u.token })))
+    const ok200 = res.filter(r => r.status === 200).length
+    const server5xx = res.filter(r => r.status >= 500).length
+    const after = (await prisma.user.findUnique({ where: { id: u.id }, select: { rewardPoints: true } }))?.rewardPoints || 0
+    const negLogs = await prisma.rewardPoint.count({ where: { userId: u.id, source: 'booking_cancelled' } })
+    // CAS sayesinde: yalnızca 1 istek 200, puan tam bir kez geri alınır (bakiye başa döner), çift log yok
+    ok('T10 çift-iptal: yalnızca 1 istek 200 (CAS)', ok200 === 1, `200 sayısı=${ok200}`)
+    ok('T10 çift-iptal: puan TEK geri alındı (bakiye başa döndü)', after === before, `başa=${before}, son=${after}`)
+    ok('T10 çift-iptal: tek negatif puan kaydı (çift geri-alma yok)', negLogs === 1, `negatif log=${negLogs}`)
+    ok('T10 çift-iptal: 5xx yok', server5xx === 0, `5xx=${server5xx}`)
+  }
+
   // ── TEST 6: Karışık eşzamanlı yük (250 paralel okuma+yazma) ──
   {
     const reads = [

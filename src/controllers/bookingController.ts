@@ -429,15 +429,19 @@ export const cancelBooking = async (req: Request, res: Response) => {
     const refundAmount = refundType === 'full' ? booking.finalAmount : money((booking.finalAmount || 0) / 2)
 
     const updated = await prisma.$transaction(async (tx) => {
-      const result = await tx.booking.update({
-        where: { id: bookingId },
+      // Atomik durum geçişi (compare-and-swap): yalnızca HÂLÂ iptal edilmemiş kaydı iptal et.
+      // İki eşzamanlı iptal isteği yarışında yalnızca BİRİ count=1 alır → çift puan/kupon
+      // geri-alma önlenir (kilitsiz findUnique + tx-dışı status kontrolü yarışa açıktı).
+      const flip = await tx.booking.updateMany({
+        where: { id: bookingId, status: { not: 'cancelled' } },
         data: {
           status: 'cancelled',
-          notes: `${booking.notes ? booking.notes + ' | ' : ''}İptal: ${refundType === 'full' ? 'Tam iade' : 'Yarım iade'} (₺${refundAmount})`
+          notes: `${booking.notes ? booking.notes + ' | ' : ''}İptal: ${refundType === 'full' ? 'Tam iade' : 'Yarım iade'} (₺${refundAmount})`,
         },
       })
+      if (flip.count === 0) return null // başka bir istek zaten iptal etti → hiçbir geri-alma yapma
 
-      // Rezervasyon gerçekleşmediği için kazandığı puanı geri al
+      // Rezervasyon gerçekleşmediği için kazandığı puanı geri al (yalnızca iptali biz yaptıysak)
       if (booking.pointsEarned > 0) {
         await tx.user.update({
           where: { id: userId },
@@ -457,8 +461,13 @@ export const cancelBooking = async (req: Request, res: Response) => {
         })
       }
 
-      return result
+      return await tx.booking.findUnique({ where: { id: bookingId } })
     })
+
+    // Yarışı kaybettik (kayıt zaten iptal edilmişti) → çift işlem yapma
+    if (!updated) {
+      return res.status(400).json({ error: 'Rezervasyon zaten iptal edilmiş.' })
+    }
 
     // İptal email bildirimleri
     try {
@@ -655,8 +664,12 @@ export const transferBooking = async (req: Request, res: Response) => {
         const newFinalAmount = money(Math.max(0, newBase - couponDiscount))
         const priceRefund = money(Math.max(0, oldBase - newBase)) // daha ucuz derse geçişte iade edilecek fark (ödeme entegrasyonunda karta iade)
 
-        const updated = await tx.booking.update({
-          where: { id: bookingId },
+        // CAS: yalnızca booking HÂLÂ beklenen durumdaysa (confirmed, kaynak seansta, check-in yok)
+        // taşı. booking kilitten önce okundu; eşzamanlı iptal/transfer bu arada durumu değiştirdiyse
+        // (count=0) stale veriyle çift işlem yapmadan çakışma döndür (ödeme gelince priceRefund
+        // gerçek iadeye dönüşünce çift-iade de böyle önlenir).
+        const flip = await tx.booking.updateMany({
+          where: { id: bookingId, status: 'confirmed', sessionId: booking.sessionId, checkedIn: false },
           data: {
             sessionId: targetSessionId,
             baseAmount: newBase,
@@ -665,6 +678,10 @@ export const transferBooking = async (req: Request, res: Response) => {
             discountAmount: couponDiscount,
             notes: `${booking.notes ? booking.notes + ' | ' : ''}Transfer edildi${priceRefund > 0 ? ` (₺${priceRefund} iade)` : ''}`,
           },
+        })
+        if (flip.count === 0) throw new BookingError('Rezervasyon durumu değişti, transfer yapılamadı. Lütfen tekrar deneyin.', 409)
+        const updated = await tx.booking.findUnique({
+          where: { id: bookingId },
           include: { session: { include: { class: true } } },
         })
 
