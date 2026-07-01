@@ -68,6 +68,9 @@ async function cleanup() {
   // Durum-yayılımı kategori testi kalıntıları (class önce, sonra kategori)
   await prisma.class.deleteMany({ where: { title: 'KatTest' } }).catch(() => {})
   await prisma.sportCategory.deleteMany({ where: { name: { startsWith: 'SmokeKat' } } }).catch(() => {})
+  // Hoca testi kalıntıları — ders instructorId'sini boşalt, sonra hocaları sil (FK)
+  await prisma.class.updateMany({ where: { venueId: { in: [V, 990011] } }, data: { instructorId: null } }).catch(() => {})
+  await prisma.instructor.deleteMany({ where: { venueId: { in: [V, 990011] } } }).catch(() => {})
   // Salon yaşam-döngüsü testi kalıntıları (test ortada kalırsa) — bağlılıklar önce
   await prisma.booking.deleteMany({ where: { OR: [{ userId: 990011 }, { sessionId: 990011 }] } }).catch(() => {})
   await prisma.class_Session.deleteMany({ where: { id: 990011 } }).catch(() => {})
@@ -307,6 +310,23 @@ async function run() {
     if (b?.couponId !== null) throw new Error('booking couponId koparılmadı (FK sızıntısı)')
     await prisma.booking.deleteMany({ where: { userId: W } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: W } }).catch(() => {})
+  })
+
+  // Salon hoca silme: sahiplik + FK-güvenli (dersin instructorId'si boşalır, hoca gider)
+  await check('Salon: hoca silme dersin bağlantısını koparır (FK-güvenli)', async () => {
+    const venueToken = jwt.sign({ venueId: V, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const ins = await prisma.instructor.create({ data: { venueId: V, fullName: 'SilHoca', specialty: 'Yoga' } })
+    await prisma.class.update({ where: { id: C }, data: { instructorId: ins.id } })
+    // Başka salon silemez (sahiplik)
+    const otherTok = jwt.sign({ venueId: V + 5555, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const forbidden = await http(`/api/venue/instructors/${ins.id}`, { method: 'DELETE', token: otherTok })
+    if (forbidden.status === 200) throw new Error('başka salon hocayı silebildi (IDOR)')
+    // Kendi salonu siler
+    const del = await http(`/api/venue/instructors/${ins.id}`, { method: 'DELETE', token: venueToken })
+    if (del.status !== 200) throw new Error(`hoca silme: ${del.status} ${del.text.slice(0, 120)}`)
+    if (await prisma.instructor.findUnique({ where: { id: ins.id } })) throw new Error('hoca silinmedi')
+    const cls = await prisma.class.findUnique({ where: { id: C }, select: { instructorId: true } })
+    if (cls?.instructorId !== null) throw new Error('ders instructorId koparılmadı (FK sızıntısı)')
   })
 
   // ---- Salon yaşam döngüsü: donmuş salon her yerde gizlenir + dolu salon FK hatası vermeden silinir ----

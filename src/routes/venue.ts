@@ -9,7 +9,7 @@ import {
   createDropInSlot, getVenueDropInSlots, deleteDropInSlot,
   updateVenueImages
 } from '../controllers/venueController'
-import { createInstructor, getVenueInstructors, updateInstructor } from '../controllers/instructorController'
+import { createInstructor, getVenueInstructors, updateInstructor, deleteInstructor } from '../controllers/instructorController'
 import { submitSubMerchant, refreshSubMerchantStatus } from '../controllers/submerchantController'
 import { venueAuthMiddleware, venueApprovedMiddleware, venueVerifiedMiddleware } from '../middlewares/venueAuth'
 import { createCoupon, getVenueCoupons, deleteCoupon } from '../controllers/couponController'
@@ -34,6 +34,7 @@ router.post('/submerchant/refresh', venueAuthMiddleware, refreshSubMerchantStatu
 router.get('/instructors', venueAuthMiddleware, getVenueInstructors)
 router.post('/instructors', venueAuthMiddleware, venueApprovedMiddleware, createInstructor)
 router.put('/instructors/:id', venueAuthMiddleware, venueApprovedMiddleware, updateInstructor)
+router.delete('/instructors/:id', venueAuthMiddleware, venueApprovedMiddleware, deleteInstructor)
 router.get('/dropin', venueAuthMiddleware, getVenueDropInSlots)
 router.post('/dropin', venueAuthMiddleware, venueApprovedMiddleware, venueVerifiedMiddleware, createDropInSlot)
 router.delete('/classes/:id', venueAuthMiddleware, deleteClass)

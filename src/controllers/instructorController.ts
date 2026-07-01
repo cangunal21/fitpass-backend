@@ -88,3 +88,31 @@ export const updateInstructor = async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
+
+// Hoca sil — bu hocaya bağlı ders/komisyon/yorum kayıtlarının instructorId'sini boşaltır
+// (hepsi nullable FK), sonra hocayı siler. Dersler/kayıtlar DURUR, yalnızca hoca bağlantısı
+// kalkar (salon o dersi başka hocaya atayabilir). Sahiplik kontrollü.
+export const deleteInstructor = async (req: Request, res: Response) => {
+  try {
+    const venueId = (req as any).venueId
+    const instructorId = parseInt(req.params.id as string)
+    if (!instructorId || isNaN(instructorId)) return res.status(400).json({ error: 'Geçersiz hoca.' })
+
+    const existing = await prisma.instructor.findUnique({ where: { id: instructorId }, select: { venueId: true } })
+    if (!existing || existing.venueId !== venueId) {
+      return res.status(403).json({ error: 'Bu hocayı silme yetkiniz yok.' })
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.class.updateMany({ where: { instructorId }, data: { instructorId: null } })
+      await tx.commissionHistory.updateMany({ where: { instructorId }, data: { instructorId: null } })
+      await tx.review.updateMany({ where: { instructorId }, data: { instructorId: null } })
+      await tx.instructor.delete({ where: { id: instructorId } })
+    })
+
+    return res.json({ message: 'Hoca silindi.' })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
