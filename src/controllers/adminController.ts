@@ -310,11 +310,16 @@ export const getAllCoupons = async (req: Request, res: Response) => {
   }
 }
 
-// Kupon sil (admin)
+// Kupon sil (admin) — bu kuponu kullanan booking'lerin couponId'sini önce boşalt
+// (yoksa FK ihlali → 500). Booking'in finansal kaydı (discountAmount/finalAmount) korunur.
 export const adminDeleteCoupon = async (req: Request, res: Response) => {
   try {
     const couponId = parseInt(req.params.id as string)
-    await prisma.coupon.delete({ where: { id: couponId } })
+    if (!couponId || isNaN(couponId)) return res.status(400).json({ error: 'Geçersiz kupon.' })
+    await prisma.$transaction(async (tx) => {
+      await tx.booking.updateMany({ where: { couponId }, data: { couponId: null } })
+      await tx.coupon.delete({ where: { id: couponId } })
+    })
     return res.json({ message: 'Kupon silindi.' })
   } catch (err) {
     console.error(err)
@@ -346,13 +351,29 @@ export const createCategory = async (req: Request, res: Response) => {
   }
 }
 
-// Kategori sil (admin)
+// Kategori sil (admin) — kullanımdaysa ENGELLE (gerçek veriyi cascade-silmek yerine).
+// sportCategoryId çoğu modelde zorunlu FK; düz delete kullanımdaki kategoride 500 verirdi.
 export const deleteCategory = async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id as string)
+    if (!id || isNaN(id)) return res.status(400).json({ error: 'Geçersiz kategori.' })
+    const [classes, venues, dropins, logs, tierHist] = await Promise.all([
+      prisma.class.count({ where: { sportCategoryId: id } }),
+      prisma.venueSportCategory.count({ where: { sportCategoryId: id } }),
+      prisma.dropInSlot.count({ where: { sportCategoryId: id } }),
+      prisma.activityLog.count({ where: { sportCategoryId: id } }),
+      prisma.userTierHistory.count({ where: { sportCategoryId: id } }),
+    ])
+    const total = classes + venues + dropins + logs + tierHist
+    if (total > 0) {
+      return res.status(400).json({
+        error: `Bu kategori kullanımda (${classes} ders, ${venues} salon, ${dropins} drop-in) — silinemez. Önce bağlantıları kaldırın.`,
+      })
+    }
     await prisma.sportCategory.delete({ where: { id } })
     return res.json({ message: 'Kategori silindi.' })
   } catch (err) {
+    console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }

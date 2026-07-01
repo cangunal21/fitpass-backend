@@ -58,11 +58,16 @@ async function seed() {
 }
 
 async function cleanup() {
+  const testUserIds = [990021, 990022, 990023, 990024]
   // Yorumlar bookingId + venueId FK'sına bağlı → booking/venue silmeden ÖNCE temizlenmeli
-  await prisma.review.deleteMany({ where: { OR: [{ reviewerUserId: 990021 }, { reviewerUserId: 990022 }, { reviewerUserId: U }, { venueId: V }, { venueId: 990011 }] } }).catch(() => {})
+  await prisma.review.deleteMany({ where: { OR: [{ reviewerUserId: { in: testUserIds } }, { reviewerUserId: U }, { venueId: V }, { venueId: 990011 }] } }).catch(() => {})
+  // Test kullanıcı booking'leri kupon/kategori silmeden ÖNCE (couponId/sportCategoryId FK)
+  await prisma.booking.deleteMany({ where: { userId: { in: testUserIds } } }).catch(() => {})
   await prisma.coupon.deleteMany({ where: { venueId: V } }).catch(() => {})
-  await prisma.booking.deleteMany({ where: { userId: { in: [990021, 990022, 990023] } } }).catch(() => {})
-  await prisma.user.deleteMany({ where: { id: { in: [990021, 990022, 990023] } } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: { in: testUserIds } } }).catch(() => {})
+  // Durum-yayılımı kategori testi kalıntıları (class önce, sonra kategori)
+  await prisma.class.deleteMany({ where: { title: 'KatTest' } }).catch(() => {})
+  await prisma.sportCategory.deleteMany({ where: { name: { startsWith: 'SmokeKat' } } }).catch(() => {})
   // Salon yaşam-döngüsü testi kalıntıları (test ortada kalırsa) — bağlılıklar önce
   await prisma.booking.deleteMany({ where: { OR: [{ userId: 990011 }, { sessionId: 990011 }] } }).catch(() => {})
   await prisma.class_Session.deleteMany({ where: { id: 990011 } }).catch(() => {})
@@ -270,6 +275,38 @@ async function run() {
     await prisma.booking.deleteMany({ where: { userId: Z } }).catch(() => {})
     await prisma.coupon.deleteMany({ where: { id: cpn.id } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: Z } }).catch(() => {})
+  })
+
+  // Durum-yayılımı: kullanımdaki kategori silinemez (400, gerçek veri cascade-silinmez), boş silinir (200)
+  await check('Durum: kullanımdaki kategori silinemez, boş silinir', async () => {
+    const catName = `SmokeKat${Date.now()}`
+    const cat = await prisma.sportCategory.create({ data: { name: catName } })
+    const cls = await prisma.class.create({ data: { venueId: V, title: 'KatTest', category: catName, sportCategoryId: cat.id, basePrice: 50, durationMinutes: 60, capacity: 10, isActive: true } })
+    const blocked = await http(`/api/admin/categories/${cat.id}`, { method: 'DELETE', admin: true })
+    if (blocked.status !== 400) throw new Error(`kullanımdaki kategori ${blocked.status} (400 bekleniyor, 500 değil)`)
+    if (!(await prisma.sportCategory.findUnique({ where: { id: cat.id } }))) throw new Error('kategori yanlışlıkla silindi')
+    await prisma.class.delete({ where: { id: cls.id } })
+    const ok = await http(`/api/admin/categories/${cat.id}`, { method: 'DELETE', admin: true })
+    if (ok.status !== 200) throw new Error(`boş kategori silinemedi: ${ok.status}`)
+    await prisma.sportCategory.deleteMany({ where: { id: cat.id } }).catch(() => {})
+  })
+
+  // Durum-yayılımı: admin kupon silme, kuponu kullanan booking varken 500 vermez + couponId koparır
+  await check('Durum: admin kupon silme booking baglantisini koparir (500 yok)', async () => {
+    const W = 990024, uniq = Date.now() + 7
+    const code = `ADMCPN${uniq}`
+    const cpn = await prisma.coupon.create({ data: { venueId: V, code, discountType: 'percent', discountValue: 10, isActive: true } })
+    await prisma.user.upsert({ where: { id: W }, update: {}, create: { id: W, username: `adm_${W}`, email: `adm_${W}@x.com`, passwordHash: 'x', fullName: 'Adm', tierSportCounts: {} } })
+    const wtok = jwt.sign({ userId: W, email: `adm_${W}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const bk = await http('/api/bookings', { method: 'POST', token: wtok, body: { sessionId: S, couponCode: code } })
+    if (bk.status !== 201) throw new Error(`kuponlu booking başarısız: ${bk.status}`)
+    const del = await http(`/api/admin/coupons/${cpn.id}`, { method: 'DELETE', admin: true })
+    if (del.status !== 200) throw new Error(`admin kupon silme: ${del.status} ${del.text.slice(0, 120)}`)
+    if (await prisma.coupon.findUnique({ where: { id: cpn.id } })) throw new Error('kupon silinmedi')
+    const b = await prisma.booking.findUnique({ where: { id: bk.json?.booking?.id }, select: { couponId: true } })
+    if (b?.couponId !== null) throw new Error('booking couponId koparılmadı (FK sızıntısı)')
+    await prisma.booking.deleteMany({ where: { userId: W } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: W } }).catch(() => {})
   })
 
   // ---- Salon yaşam döngüsü: donmuş salon her yerde gizlenir + dolu salon FK hatası vermeden silinir ----
