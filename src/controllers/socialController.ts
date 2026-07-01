@@ -149,6 +149,7 @@ export const getStreakLeaderboard = async (req: Request, res: Response) => {
         bookings: {
           where: {
             status: 'confirmed',
+            checkedIn: true, // seri = GERÇEKTEN gidilmiş (kullanıcının kendi takvimiyle tutarlı)
             session: {
               startsAt: { lt: now },
               ...(branch ? { class: { category: branch as string } } : {}),
@@ -159,6 +160,7 @@ export const getStreakLeaderboard = async (req: Request, res: Response) => {
         dropInParticipants: {
           where: {
             status: 'confirmed',
+            checkedIn: true,
             slot: {
               startsAt: { lt: now },
               ...(branch ? { sportCategory: { name: branch as string } } : {}),

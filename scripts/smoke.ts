@@ -75,6 +75,11 @@ async function cleanup() {
   await prisma.notification.deleteMany({ where: { userId: { in: [...testUserIds, 990011] } } }).catch(() => {})
   // Şikayet testi kalıntısı
   await prisma.complaint.deleteMany({ where: { subject: { startsWith: 'SmokeSikayet' } } }).catch(() => {})
+  // Streak liderlik testi kalıntıları
+  await prisma.booking.deleteMany({ where: { userId: 990051 } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: { in: [990051, 990052, 990053] } } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: 990051 } }).catch(() => {})
+  await prisma.neighborhood.deleteMany({ where: { id: 990051 } }).catch(() => {})
   // Referral testi kalıntıları (ref_* kullanıcılar) — FK sırasıyla
   const refUsers = await prisma.user.findMany({ where: { email: { startsWith: 'ref_' } }, select: { id: true } }).catch(() => [] as { id: number }[])
   const refIds = refUsers.map(u => u.id)
@@ -437,6 +442,28 @@ async function run() {
     await prisma.emailVerificationToken.deleteMany({ where: { userId: { in: ids } } }).catch(() => {})
     await prisma.notification.deleteMany({ where: { userId: { in: ids } } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: { in: ids } } }).catch(() => {})
+  })
+
+  // ---- Streak (seri) liderliği: no-show günü seri SAYMAZ (kullanıcının check-in'li takvimiyle tutarlı) ----
+  await check('Streak liderliği: no-show günü seri saymaz (check-in tutarlı)', async () => {
+    const N = 990051, X = 990051
+    await prisma.neighborhood.upsert({ where: { id: N }, update: {}, create: { id: N, name: 'StreakMah', latitude: 41, longitude: 29, cityId: 1 } })
+    await prisma.user.upsert({ where: { id: X }, update: { neighborhoodId: N, activityPrivacy: 'public', banned: false }, create: { id: X, username: `strk_${X}`, email: `strk_${X}@x.com`, passwordHash: 'x', fullName: 'Streak User', tierSportCounts: {}, neighborhoodId: N, activityPrivacy: 'public' } })
+    const noon = (k: number) => { const d = new Date(); d.setUTCHours(9, 0, 0, 0); return new Date(d.getTime() - k * 86400000) } // 09:00 UTC = 12:00 İstanbul
+    const mkSess = async (id: number, k: number) => prisma.class_Session.upsert({ where: { id }, update: { startsAt: noon(k), endsAt: new Date(noon(k).getTime() + 3600000), status: 'open', availableSpots: 20 }, create: { id, classId: C, startsAt: noon(k), endsAt: new Date(noon(k).getTime() + 3600000), status: 'open', availableSpots: 20 } })
+    await mkSess(990051, 3); await mkSess(990052, 2); await mkSess(990053, 1)
+    const mkBk = async (id: number, sid: number, checked: boolean) => prisma.booking.upsert({ where: { id }, update: { checkedIn: checked }, create: { id, userId: X, sessionId: sid, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `STK-${id}`, checkedIn: checked, checkedInAt: checked ? new Date() : null } })
+    await mkBk(990051, 990051, false) // D-3: confirmed AMA check-in yok (no-show)
+    await mkBk(990052, 990052, true)  // D-2: check-in
+    await mkBk(990053, 990053, true)  // D-1: check-in
+    const r = await http(`/api/social/leaderboard/streaks?neighborhoodId=${N}`)
+    const me = (r.json?.leaderboard || []).find((u: any) => u.id === X)
+    if (!me) throw new Error('X streak liderliğinde yok (check-in serisi 2 olmalıydı)')
+    if (me.streak !== 2) throw new Error(`streak ${me.streak} (2 bekleniyor — D-3 no-show sayılmamalı; confirmed olsaydı 3 çıkardı)`)
+    await prisma.booking.deleteMany({ where: { userId: X } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: { in: [990051, 990052, 990053] } } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: X } }).catch(() => {})
+    await prisma.neighborhood.deleteMany({ where: { id: N } }).catch(() => {})
   })
 
   // ---- Bekleme listesi (waitlist) UÇTAN UCA ----

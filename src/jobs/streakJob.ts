@@ -19,11 +19,11 @@ export const sendStreakNudges = async () => {
     // Son 12 günde aktivitesi olan kullanıcılar (sadece onların aktif serisi olabilir)
     const since = new Date(now.getTime() - 12 * 86400000)
     const recentBookings = await prisma.booking.findMany({
-      where: { status: 'confirmed', session: { startsAt: { gte: since } } },
+      where: { status: 'confirmed', checkedIn: true, session: { startsAt: { gte: since } } },
       select: { userId: true },
     })
     const recentDropins = await prisma.dropInParticipant.findMany({
-      where: { status: 'confirmed', slot: { startsAt: { gte: since } } },
+      where: { status: 'confirmed', checkedIn: true, slot: { startsAt: { gte: since } } },
       select: { userId: true },
     })
     const candidateIds = Array.from(new Set([
@@ -47,11 +47,11 @@ export const sendStreakNudges = async () => {
         // Onaylı dersler + drop-in'ler (son 60 gün, gelecekteki bu hafta dahil)
         const [bookings, dropins] = await Promise.all([
           prisma.booking.findMany({
-            where: { userId, status: 'confirmed', session: { startsAt: { gte: lookback } } },
+            where: { userId, status: 'confirmed', checkedIn: true, session: { startsAt: { gte: lookback } } },
             select: { session: { select: { startsAt: true } } },
           }),
           prisma.dropInParticipant.findMany({
-            where: { userId, status: 'confirmed', slot: { startsAt: { gte: lookback } } },
+            where: { userId, status: 'confirmed', checkedIn: true, slot: { startsAt: { gte: lookback } } },
             select: { slot: { select: { startsAt: true } } },
           }),
         ])
