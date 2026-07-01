@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import { sendVenueApprovedEmail } from '../utils/email'
 import { invalidate } from '../utils/cache'
+import { purgeUserReviews, purgeUserComments } from '../utils/moderation'
 
 // İstatistikler
 export const getStats = async (req: Request, res: Response) => {
@@ -220,7 +221,15 @@ export const banUser = async (req: Request, res: Response) => {
     // Ban anında etki etsin: ban-cache'ini geçersiz kıl + tüm refresh token'ları iptal et
     // (banlı kullanıcı ne yeni access token alabilir ne de mevcut oturumu sürdürebilir).
     invalidate(`banned:${userId}`)
-    if (ban) await prisma.refreshToken.updateMany({ where: { userId }, data: { revoked: true } }).catch(() => {})
+    if (ban) {
+      await prisma.refreshToken.updateMany({ where: { userId }, data: { revoked: true } }).catch(() => {})
+      // Banlı kullanıcının yorumları (salon/eğitmen) + feed yorumları silinir; salon/eğitmen
+      // puan ortalamaları yeniden hesaplanır (banlı içerik public'te kalmasın).
+      await prisma.$transaction(async (tx) => {
+        await purgeUserReviews(tx, userId)
+        await purgeUserComments(tx, userId)
+      }).catch((e) => console.error('Ban içerik temizleme hatası:', e))
+    }
     const { passwordHash, ...safeUser } = user
     return res.json({ message: ban ? 'Kullanıcı banlandı.' : 'Kullanıcı aktif edildi.', user: safeUser })
   } catch (err) {

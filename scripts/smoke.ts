@@ -58,6 +58,9 @@ async function seed() {
 }
 
 async function cleanup() {
+  // Yorumlar bookingId + venueId FK'sına bağlı → booking/venue silmeden ÖNCE temizlenmeli
+  await prisma.review.deleteMany({ where: { OR: [{ reviewerUserId: 990021 }, { reviewerUserId: U }, { venueId: V }, { venueId: 990011 }] } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: 990021 } }).catch(() => {})
   // Salon yaşam-döngüsü testi kalıntıları (test ortada kalırsa) — bağlılıklar önce
   await prisma.booking.deleteMany({ where: { OR: [{ userId: 990011 }, { sessionId: 990011 }] } }).catch(() => {})
   await prisma.class_Session.deleteMany({ where: { id: 990011 } }).catch(() => {})
@@ -213,6 +216,22 @@ async function run() {
     await prisma.refreshToken.deleteMany({ where: { userId: tu!.id } }).catch(() => {})
     await prisma.emailVerificationToken.deleteMany({ where: { userId: tu!.id } }).catch(() => {})
     await prisma.user.delete({ where: { id: tu!.id } }).catch(() => {})
+  })
+
+  // Banlı kullanıcının yorumları silinir + salon puan ortalaması yeniden hesaplanır
+  await check('Ban: yorumlar silinir + salon puanı yeniden hesaplanır', async () => {
+    const X = 990021, uniq = Date.now() + 5
+    await prisma.user.upsert({ where: { id: X }, update: { banned: false }, create: { id: X, username: `revban_${X}`, email: `revban_${X}@x.com`, passwordHash: 'x', fullName: 'RevBan', tierSportCounts: {} } })
+    const bk = await prisma.booking.create({ data: { userId: X, sessionId: S, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `RVB-${uniq}` } })
+    await prisma.review.create({ data: { bookingId: bk.id, reviewerUserId: X, targetType: 'venue', venueId: V, rating: 2, comment: 'banlı yorum' } })
+    await prisma.venue.update({ where: { id: V }, data: { totalReviews: 1, avgRating: 2 } })
+    const r = await http(`/api/admin/users/${X}/ban`, { method: 'PUT', admin: true, body: { ban: true } })
+    if (r.status !== 200) throw new Error(`ban isteği başarısız: ${r.status} ${r.text.slice(0, 120)}`)
+    if ((await prisma.review.count({ where: { reviewerUserId: X } })) !== 0) throw new Error('banlı kullanıcının yorumu silinmedi')
+    const v = await prisma.venue.findUnique({ where: { id: V }, select: { totalReviews: true } })
+    if (v?.totalReviews !== 0) throw new Error(`salon puanı yeniden hesaplanmadı (totalReviews=${v?.totalReviews})`)
+    await prisma.booking.deleteMany({ where: { id: bk.id } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: X } }).catch(() => {})
   })
 
   // ---- Salon yaşam döngüsü: donmuş salon her yerde gizlenir + dolu salon FK hatası vermeden silinir ----

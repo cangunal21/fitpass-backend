@@ -8,6 +8,7 @@ import { sendWelcomeEmail, sendPasswordResetEmail, sendEmailVerificationEmail, s
 import { applyReferralCode } from './referralController'
 import { syncUserTier, resetYearlyPointsIfNeeded } from '../utils/tier'
 import { syncUserBadges } from '../utils/badges'
+import { purgeUserReviews, purgeUserComments } from '../utils/moderation'
 import { sendPushNotification } from '../utils/push'
 import { isValidEmail, MIN_PASSWORD, clampStr } from '../utils/validate'
 
@@ -385,16 +386,12 @@ export const deleteAccount = async (req: Request, res: Response) => {
         await tx.payment.deleteMany({ where: { bookingId: { in: bookingIds } } })
         await tx.commissionHistory.deleteMany({ where: { bookingId: { in: bookingIds } } })
       }
-      // Kullanıcının yazdığı yorumlar (kendi booking'lerine ait) — bookingId FK'sından önce
-      await tx.review.deleteMany({ where: { reviewerUserId: userId } })
+      // Kullanıcının yazdığı yorumlar (kendi booking'lerine ait) — bookingId FK'sından önce.
+      // Salon/eğitmen puan ortalamaları da yeniden hesaplanır (hayalet puan kalmasın).
+      await purgeUserReviews(tx, userId)
 
-      // Kullanıcının yorumlarına gelen cevapların parent'ını boşalt (self-FK kırılmasın), sonra sil
-      const myComments = await tx.activityComment.findMany({ where: { userId }, select: { id: true } })
-      const myCommentIds = myComments.map(c => c.id)
-      if (myCommentIds.length) {
-        await tx.activityComment.updateMany({ where: { parentId: { in: myCommentIds } }, data: { parentId: null } })
-      }
-      await tx.activityComment.deleteMany({ where: { userId } })
+      // Kullanıcının feed yorumları — yanıtların parent'ı boşaltılıp silinir
+      await purgeUserComments(tx, userId)
 
       // Doğrudan userId'ye bağlı tüm çocuklar (ActivityLog booking'lerden ÖNCE — bookingId FK'sı)
       await tx.activityLike.deleteMany({ where: { userId } })
