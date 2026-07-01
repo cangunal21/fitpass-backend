@@ -4,6 +4,7 @@ import { sendComplaintEmail } from '../utils/email'
 import { syncUserTier } from '../utils/tier'
 import { cached } from '../utils/cache'
 import { parseIntSafe, parseDateSafe } from '../utils/validate'
+import { sanitizeReview } from '../utils/reviews'
 
 // GET /api/public/sessions
 export const getSessions = async (req: Request, res: Response) => {
@@ -588,7 +589,7 @@ export const getInstructorById = async (req: Request, res: Response) => {
       ? instructor.reviews.reduce((s, r) => s + r.rating, 0) / instructor.reviews.length
       : 0
 
-    const safeReviews = instructor.reviews.map(r => r.isAnonymous ? { ...r, reviewer: null } : r)
+    const safeReviews = instructor.reviews.map(sanitizeReview)
 
     return res.json({
       instructor: {

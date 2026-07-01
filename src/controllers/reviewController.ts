@@ -1,6 +1,7 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import { clampStr } from '../utils/validate'
+import { sanitizeReview } from '../utils/reviews'
 
 // Yorum ekle (auth required)
 export const createReview = async (req: Request, res: Response) => {
@@ -132,7 +133,7 @@ export const getVenueReviews = async (req: Request, res: Response) => {
       take: 50,
     })
 
-    const safeReviews = reviews.map(r => r.isAnonymous ? { ...r, reviewer: null } : r)
+    const safeReviews = reviews.map(sanitizeReview)
 
     return res.json({ reviews: safeReviews })
   } catch (err) {

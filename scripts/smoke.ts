@@ -59,8 +59,9 @@ async function seed() {
 
 async function cleanup() {
   // Yorumlar bookingId + venueId FK'sına bağlı → booking/venue silmeden ÖNCE temizlenmeli
-  await prisma.review.deleteMany({ where: { OR: [{ reviewerUserId: 990021 }, { reviewerUserId: U }, { venueId: V }, { venueId: 990011 }] } }).catch(() => {})
-  await prisma.user.deleteMany({ where: { id: 990021 } }).catch(() => {})
+  await prisma.review.deleteMany({ where: { OR: [{ reviewerUserId: 990021 }, { reviewerUserId: 990022 }, { reviewerUserId: U }, { venueId: V }, { venueId: 990011 }] } }).catch(() => {})
+  await prisma.booking.deleteMany({ where: { userId: { in: [990021, 990022] } } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: { in: [990021, 990022] } } }).catch(() => {})
   // Salon yaşam-döngüsü testi kalıntıları (test ortada kalırsa) — bağlılıklar önce
   await prisma.booking.deleteMany({ where: { OR: [{ userId: 990011 }, { sessionId: 990011 }] } }).catch(() => {})
   await prisma.class_Session.deleteMany({ where: { id: 990011 } }).catch(() => {})
@@ -216,6 +217,22 @@ async function run() {
     await prisma.refreshToken.deleteMany({ where: { userId: tu!.id } }).catch(() => {})
     await prisma.emailVerificationToken.deleteMany({ where: { userId: tu!.id } }).catch(() => {})
     await prisma.user.delete({ where: { id: tu!.id } }).catch(() => {})
+  })
+
+  // Anonim yorum GERÇEKTEN anonim mi — reviewer objesi VE scalar reviewerUserId gizlenmeli
+  await check('Gizlilik: anonim yorumda reviewer + reviewerUserId sızmıyor', async () => {
+    const Y = 990022, uniq = Date.now() + 9
+    await prisma.user.upsert({ where: { id: Y }, update: {}, create: { id: Y, username: `anon_${Y}`, email: `anon_${Y}@x.com`, passwordHash: 'x', fullName: 'Anon User', tierSportCounts: {} } })
+    const bk = await prisma.booking.create({ data: { userId: Y, sessionId: S, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `ANN-${uniq}` } })
+    const rv = await prisma.review.create({ data: { bookingId: bk.id, reviewerUserId: Y, targetType: 'venue', venueId: V, rating: 4, comment: 'anon', isAnonymous: true } })
+    const res = await expectOk(`/api/reviews/venue/${V}`)
+    const found = (res.json?.reviews || []).find((r: any) => r.id === rv.id)
+    if (!found) throw new Error('anonim yorum listede yok')
+    if (found.reviewer !== null) throw new Error('anonim yorumda reviewer objesi sızıyor')
+    if ('reviewerUserId' in found) throw new Error('anonim yorumda reviewerUserId sızıyor (deşifre edilebilir)')
+    await prisma.review.deleteMany({ where: { id: rv.id } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { id: bk.id } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: Y } }).catch(() => {})
   })
 
   // Banlı kullanıcının yorumları silinir + salon puan ortalaması yeniden hesaplanır
