@@ -10,6 +10,7 @@ import helmet from 'helmet'
 import rateLimit from 'express-rate-limit'
 import { sendRemindersJob } from './jobs/reminderJob'
 import { sendStreakNudges } from './jobs/streakJob'
+import { ensureTiers } from './utils/ensureTiers'
 import authRoutes from './routes/auth'
 import bookingRoutes from './routes/bookings'
 import venueRoutes from './routes/venue'
@@ -166,6 +167,8 @@ process.on('uncaughtException', (err) => {
 
 app.listen(PORT, () => {
   console.log(`✅ Fitpass sunucusu http://localhost:${PORT} adresinde çalışıyor`)
+  // Seviye (Tier) yapılandırmasını kanonik değerlere hizala (Aday %1 → Olimpik %5)
+  ensureTiers()
   // Her 30 dakikada hatırlatma maili gönder
   sendRemindersJob()
   setInterval(sendRemindersJob, 30 * 60 * 1000)
