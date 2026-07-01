@@ -64,7 +64,15 @@ export const getWaitlistStatus = async (req: Request, res: Response) => {
     })
     const count = await prisma.waitlist.count({ where: { sessionId } })
 
-    return res.json({ onWaitlist: !!entry, position: entry ? count : null, totalWaiting: count })
+    // Sıradaki GERÇEK yer = kendinden önce (daha erken) katılanların sayısı + 1
+    // (önceden yanlışlıkla toplam sayı dönüyordu — 5 kişi varken 2. kişiye de "5" diyordu)
+    let position: number | null = null
+    if (entry) {
+      const ahead = await prisma.waitlist.count({ where: { sessionId, createdAt: { lt: entry.createdAt } } })
+      position = ahead + 1
+    }
+
+    return res.json({ onWaitlist: !!entry, position, totalWaiting: count })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })

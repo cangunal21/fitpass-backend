@@ -148,6 +148,10 @@ export const createBooking = async (req: Request, res: Response) => {
           })
         }
 
+        // Rezervasyon yapan kullanıcı bu seansın bekleme listesindeyse çıkar
+        // (aksi halde hem "kayıtlı" hem "bekliyor" kalır → şişik sayaç + onWaitlist:true)
+        await tx.waitlist.deleteMany({ where: { userId, sessionId } })
+
         return created
       })
     } catch (e: any) {

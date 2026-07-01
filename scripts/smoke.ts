@@ -71,6 +71,12 @@ async function cleanup() {
   // Hoca testi kalıntıları — ders instructorId'sini boşalt, sonra hocaları sil (FK)
   await prisma.class.updateMany({ where: { venueId: { in: [V, 990011] } }, data: { instructorId: null } }).catch(() => {})
   await prisma.instructor.deleteMany({ where: { venueId: { in: [V, 990011] } } }).catch(() => {})
+  // Waitlist testi kalıntıları (waitlist → booking → session → puan → user sırası)
+  await prisma.waitlist.deleteMany({ where: { sessionId: 990041 } }).catch(() => {})
+  await prisma.rewardPoint.deleteMany({ where: { userId: { in: [990041, 990042, 990043] } } }).catch(() => {})
+  await prisma.booking.deleteMany({ where: { sessionId: 990041 } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: 990041 } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: { in: [990041, 990042, 990043] } } }).catch(() => {})
   // Salon yaşam-döngüsü testi kalıntıları (test ortada kalırsa) — bağlılıklar önce
   await prisma.booking.deleteMany({ where: { OR: [{ userId: 990011 }, { sessionId: 990011 }] } }).catch(() => {})
   await prisma.class_Session.deleteMany({ where: { id: 990011 } }).catch(() => {})
@@ -343,6 +349,45 @@ async function run() {
     const det2 = await http(`/api/public/instructors/${ins.id}`)
     if (det2.json?.instructor?.verified !== false) throw new Error('doğrulama kaldırılamadı')
     await prisma.instructor.deleteMany({ where: { id: ins.id } }).catch(() => {})
+  })
+
+  // ---- Bekleme listesi (waitlist) UÇTAN UCA ----
+  await check('Waitlist: dolu seans → sıra → iptalde bildirim → rezervasyonda listeden çık', async () => {
+    const WS = 990041, UA = 990041, UB = 990042, UC = 990043
+    await prisma.class_Session.upsert({ where: { id: WS }, update: { availableSpots: 1, status: 'open' }, create: { id: WS, classId: C, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), availableSpots: 1, status: 'open' } })
+    for (const uid of [UA, UB, UC]) {
+      await prisma.user.upsert({ where: { id: uid }, update: {}, create: { id: uid, username: `wl_${uid}`, email: `wl_${uid}@x.com`, passwordHash: 'x', fullName: `WL ${uid}`, tierSportCounts: {} } })
+    }
+    const tok = (uid: number) => jwt.sign({ userId: uid, email: `wl_${uid}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    // A dersi doldurur (kapasite 1)
+    const bookA = await http('/api/bookings', { method: 'POST', token: tok(UA), body: { sessionId: WS } })
+    if (bookA.status !== 201) throw new Error(`A rezervasyon: ${bookA.status}`)
+    // B ve C bekleme listesine
+    if ((await http(`/api/waitlist/sessions/${WS}`, { method: 'POST', token: tok(UB) })).status !== 201) throw new Error('B waitlist katılamadı')
+    if ((await http(`/api/waitlist/sessions/${WS}`, { method: 'POST', token: tok(UC) })).status !== 201) throw new Error('C waitlist katılamadı')
+    // Sıra: B=1, C=2 (position bug düzeltmesi)
+    const stB = await http(`/api/waitlist/sessions/${WS}/status`, { token: tok(UB) })
+    if (stB.json?.position !== 1 || stB.json?.totalWaiting !== 2) throw new Error(`B sıra yanlış: pos=${stB.json?.position} total=${stB.json?.totalWaiting}`)
+    const stC = await http(`/api/waitlist/sessions/${WS}/status`, { token: tok(UC) })
+    if (stC.json?.position !== 2) throw new Error(`C sıra yanlış: pos=${stC.json?.position}`)
+    // A iptal → ilk bekleyene (B) bildirim (status 'notified')
+    const bkA = await prisma.booking.findFirst({ where: { userId: UA, sessionId: WS } })
+    if ((await http(`/api/bookings/${bkA?.id}/cancel`, { method: 'PUT', token: tok(UA) })).status !== 200) throw new Error('A iptal edemedi')
+    const wB = await prisma.waitlist.findFirst({ where: { userId: UB, sessionId: WS }, select: { status: true } })
+    if (wB?.status !== 'notified') throw new Error(`B bildirim durumu: ${wB?.status} (notified bekleniyor)`)
+    // B açılan yeri rezerve eder → waitlist'ten ÇIKAR (stale kalmasın)
+    const bookB = await http('/api/bookings', { method: 'POST', token: tok(UB), body: { sessionId: WS } })
+    if (bookB.status !== 201) throw new Error(`B rezervasyon: ${bookB.status} ${bookB.text.slice(0, 100)}`)
+    const stB2 = await http(`/api/waitlist/sessions/${WS}/status`, { token: tok(UB) })
+    if (stB2.json?.onWaitlist !== false) throw new Error('B rezervasyon sonrası hâlâ bekleme listesinde (stale kayıt)')
+    // C artık 1. sırada (B çıktı) — sıra kayması doğru
+    const stC2 = await http(`/api/waitlist/sessions/${WS}/status`, { token: tok(UC) })
+    if (stC2.json?.position !== 1 || stC2.json?.totalWaiting !== 1) throw new Error(`C güncel sıra yanlış: pos=${stC2.json?.position} total=${stC2.json?.totalWaiting}`)
+    await prisma.rewardPoint.deleteMany({ where: { userId: { in: [UA, UB, UC] } } }).catch(() => {})
+    await prisma.waitlist.deleteMany({ where: { sessionId: WS } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { sessionId: WS } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: WS } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: { in: [UA, UB, UC] } } }).catch(() => {})
   })
 
   // ---- Salon yaşam döngüsü: donmuş salon her yerde gizlenir + dolu salon FK hatası vermeden silinir ----
