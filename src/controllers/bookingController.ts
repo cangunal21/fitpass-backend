@@ -26,8 +26,13 @@ export const createBooking = async (req: Request, res: Response) => {
     const sessionId = parseInt(rawSessionId)
     const groupSize = Math.max(1, Math.min(parseInt(rawGroupSize) || 1, 10))
     const rawTags: string[] = Array.isArray(taggedUsernames) ? taggedUsernames.slice(0, groupSize - 1) : []
-    // normalize: strip @ prefix, lowercase
-    const cleanTags = rawTags.map((u: string) => u.replace(/^@/, '').toLowerCase().trim()).filter(Boolean)
+    // normalize: @ temizle + küçült + TEKİLLEŞTİR (aynı kişi 2 kez etiketlenip çift bildirim almasın)
+    let cleanTags = [...new Set(rawTags.map((u: string) => u.replace(/^@/, '').toLowerCase().trim()).filter(Boolean))]
+    // Kendini etiketleme: kişi kendini davet edemez (kendine "davet edildin" bildirimi gitmesin)
+    if (cleanTags.length) {
+      const me = await prisma.user.findUnique({ where: { id: userId }, select: { username: true } })
+      if (me?.username) cleanTags = cleanTags.filter(u => u !== me.username!.toLowerCase())
+    }
 
     if (!sessionId || isNaN(sessionId)) {
       return res.status(400).json({ error: 'Geçerli bir ders seansı gerekli.' })
@@ -241,7 +246,7 @@ export const createBooking = async (req: Request, res: Response) => {
 
         for (const username of cleanTags) {
           const taggedUser = await prisma.user.findFirst({
-            where: { username: { equals: username, mode: 'insensitive' } },
+            where: { username: { equals: username, mode: 'insensitive' }, banned: false },
             select: { id: true, email: true, fullName: true, emailReminders: true, pushToken: true }
           })
           if (!taggedUser) continue

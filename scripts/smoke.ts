@@ -75,6 +75,10 @@ async function cleanup() {
   await prisma.notification.deleteMany({ where: { userId: { in: [...testUserIds, 990011] } } }).catch(() => {})
   // Şikayet testi kalıntısı
   await prisma.complaint.deleteMany({ where: { subject: { startsWith: 'SmokeSikayet' } } }).catch(() => {})
+  // Grup etiketleme testi kalıntıları
+  await prisma.booking.deleteMany({ where: { userId: { in: [990061, 990062] } } }).catch(() => {})
+  await prisma.notification.deleteMany({ where: { userId: { in: [990061, 990062] } } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: { in: [990061, 990062] } } }).catch(() => {})
   // Streak liderlik testi kalıntıları
   await prisma.booking.deleteMany({ where: { userId: 990051 } }).catch(() => {})
   await prisma.class_Session.deleteMany({ where: { id: { in: [990051, 990052, 990053] } } }).catch(() => {})
@@ -442,6 +446,26 @@ async function run() {
     await prisma.emailVerificationToken.deleteMany({ where: { userId: { in: ids } } }).catch(() => {})
     await prisma.notification.deleteMany({ where: { userId: { in: ids } } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: { in: ids } } }).catch(() => {})
+  })
+
+  // ---- Grup etiketleme: self-tag + duplikat temizlenir, arkadaşa TAM 1 bildirim ----
+  await check('Grup etiketleme: self-tag + duplikat temizlenir, arkadaş 1 davet bildirimi', async () => {
+    const uq = Date.now(); const T = 990061, F = 990062
+    const tName = `tag_t_${uq}`, fName = `tag_f_${uq}`
+    await prisma.user.upsert({ where: { id: T }, update: { username: tName, email: `${tName}@x.com`, banned: false }, create: { id: T, username: tName, email: `${tName}@x.com`, passwordHash: 'x', fullName: 'Tagger', tierSportCounts: {} } })
+    await prisma.user.upsert({ where: { id: F }, update: { username: fName, email: `${fName}@x.com`, banned: false }, create: { id: F, username: fName, email: `${fName}@x.com`, passwordHash: 'x', fullName: 'Friend', tierSportCounts: {} } })
+    const tTok = jwt.sign({ userId: T, email: `${tName}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    // Kendini + arkadaşı 2 kez etiketle → dedup + self-exclusion sonrası sadece [fName] kalmalı
+    const bk = await http('/api/bookings', { method: 'POST', token: tTok, body: { sessionId: S, groupSize: 4, taggedUsernames: [tName, fName, fName] } })
+    if (bk.status !== 201) throw new Error(`grup rezervasyon: ${bk.status} ${bk.text.slice(0, 120)}`)
+    const b = await prisma.booking.findFirst({ where: { userId: T, sessionId: S }, select: { taggedFriends: true } })
+    const tags = (b?.taggedFriends as string[]) || []
+    if (tags.length !== 1 || tags[0] !== fName) throw new Error(`taggedFriends ${JSON.stringify(tags)} (sadece [${fName}] beklenir — self+duplikat temizlenmeli)`)
+    if ((await prisma.notification.count({ where: { userId: F, type: 'group_invite' } })) !== 1) throw new Error('arkadaş 1 davet bildirimi almalıydı (duplikat temizlenmeli)')
+    if ((await prisma.notification.count({ where: { userId: T, type: 'group_invite' } })) !== 0) throw new Error('tagger kendine davet bildirimi ALMAMALI (self-tag engeli)')
+    await prisma.booking.deleteMany({ where: { userId: T } }).catch(() => {})
+    await prisma.notification.deleteMany({ where: { userId: { in: [T, F] } } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: { in: [T, F] } } }).catch(() => {})
   })
 
   // ---- Streak (seri) liderliği: no-show günü seri SAYMAZ (kullanıcının check-in'li takvimiyle tutarlı) ----
