@@ -26,9 +26,14 @@ export const venueAuthMiddleware = (req: Request, res: Response, next: NextFunct
 export const venueApprovedMiddleware = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const venueId = (req as any).venueId
-    const venue = await prisma.venue.findUnique({ where: { id: venueId }, select: { isApproved: true } })
+    const venue = await prisma.venue.findUnique({ where: { id: venueId }, select: { isApproved: true, isActive: true } })
     if (!venue?.isApproved) {
       return res.status(403).json({ error: 'Salonunuz henüz onaylanmadı. Onay sonrası ders ekleyebilirsiniz.' })
+    }
+    // Donmuş (askıya alınmış) salon, login sonrası suspend edilse ve elinde geçerli token
+    // olsa bile YENİ ders/seans/dropin ekleyemez (venueLogin sadece yeni girişi engelliyordu).
+    if (venue.isActive === false) {
+      return res.status(403).json({ error: 'Salonunuz askıya alınmıştır. Destek için admin@sipsakspor.com ile iletişime geçin.' })
     }
     next()
   } catch {

@@ -75,6 +75,9 @@ async function cleanup() {
   await prisma.notification.deleteMany({ where: { userId: { in: [...testUserIds, 990011] } } }).catch(() => {})
   // Şikayet testi kalıntısı
   await prisma.complaint.deleteMany({ where: { subject: { startsWith: 'SmokeSikayet' } } }).catch(() => {})
+  // Salon gate testi kalıntısı
+  await prisma.class.deleteMany({ where: { venueId: 990071 } }).catch(() => {})
+  await prisma.venue.deleteMany({ where: { id: 990071 } }).catch(() => {})
   // Grup etiketleme testi kalıntıları
   await prisma.booking.deleteMany({ where: { userId: { in: [990061, 990062] } } }).catch(() => {})
   await prisma.notification.deleteMany({ where: { userId: { in: [990061, 990062] } } }).catch(() => {})
@@ -446,6 +449,25 @@ async function run() {
     await prisma.emailVerificationToken.deleteMany({ where: { userId: { in: ids } } }).catch(() => {})
     await prisma.notification.deleteMany({ where: { userId: { in: ids } } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: { in: ids } } }).catch(() => {})
+  })
+
+  // ---- Salon gate: onaysız + donmuş salon (mevcut token dahil) ders ekleyemez ----
+  await check('Salon: onaysız→403, onaylı→201, donmuş salon mevcut token ile→403', async () => {
+    const VV = 990071
+    await prisma.venue.upsert({ where: { id: VV }, update: { isApproved: false, isActive: true, isSuspended: false }, create: { id: VV, name: 'GateTest', email: `gate${VV}@x.com`, passwordHash: 'x', address: 'Adres', isApproved: false, isActive: true, neighborhoodId: V, cityId: 1 } })
+    const vTok = jwt.sign({ venueId: VV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const classBody = { title: 'Gate Ders', category: catName, basePrice: 100, duration: 60, capacity: 10 }
+    // Onaysız → 403
+    if ((await http('/api/venue/classes', { method: 'POST', token: vTok, body: classBody })).status !== 403) throw new Error('onaysız salon ders ekleyebildi (403 bekleniyor)')
+    // Onayla → 201
+    await prisma.venue.update({ where: { id: VV }, data: { isApproved: true } })
+    const ok = await http('/api/venue/classes', { method: 'POST', token: vTok, body: classBody })
+    if (ok.status !== 201) throw new Error(`onaylı+aktif salon ders ekleyemedi: ${ok.status} ${ok.text.slice(0, 120)}`)
+    // Dondur (mevcut token hâlâ geçerli) → 403 (venueLogin değil, middleware engellemeli)
+    await prisma.venue.update({ where: { id: VV }, data: { isActive: false, isSuspended: true } })
+    if ((await http('/api/venue/classes', { method: 'POST', token: vTok, body: classBody })).status !== 403) throw new Error('donmuş salon mevcut token ile ders ekleyebildi (403 bekleniyor)')
+    await prisma.class.deleteMany({ where: { venueId: VV } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: VV } }).catch(() => {})
   })
 
   // ---- Grup etiketleme: self-tag + duplikat temizlenir, arkadaşa TAM 1 bildirim ----
