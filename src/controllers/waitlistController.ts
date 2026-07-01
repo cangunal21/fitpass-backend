@@ -21,6 +21,17 @@ export const joinWaitlist = async (req: Request, res: Response) => {
     })
     if (existingBooking) return res.status(400).json({ error: 'Zaten bu derse kayıtlısınız.' })
 
+    // Bekleme listesi yalnızca DOLU seans için. Yer varsa doğrudan rezervasyon yapılmalı
+    // (aksi halde kullanıcı yer varken beklemeye takılır ve iptal olmadan bildirim alamaz).
+    const occupancy = await prisma.booking.aggregate({
+      where: { sessionId, status: { in: ['confirmed', 'pending'] } },
+      _sum: { groupSize: true },
+    })
+    const occupied = occupancy._sum.groupSize || 0
+    if (session.availableSpots != null && occupied < session.availableSpots) {
+      return res.status(400).json({ error: 'Bu seansta yer var, doğrudan rezervasyon yapabilirsiniz.' })
+    }
+
     // Zaten bekliyor mu?
     const existing = await prisma.waitlist.findUnique({
       where: { userId_sessionId: { userId, sessionId } }
