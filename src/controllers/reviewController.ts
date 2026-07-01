@@ -64,7 +64,10 @@ export const createReview = async (req: Request, res: Response) => {
     }
 
     return res.status(201).json({ message: 'Yorumunuz eklendi!', review })
-  } catch (err) {
+  } catch (err: any) {
+    // Çift-submit yarışı: existing kontrolü sıralı durumu yakalar, eşzamanlıda unique (bookingId)
+    // ihlali P2002 fırlatır → 500 yerine aynı zarif mesajı döndür
+    if (err?.code === 'P2002') return res.status(400).json({ error: 'Bu rezervasyon için zaten yorum yaptınız.' })
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
