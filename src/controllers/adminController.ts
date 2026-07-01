@@ -3,6 +3,7 @@ import prisma from '../utils/prisma'
 import { sendVenueApprovedEmail } from '../utils/email'
 import { invalidate } from '../utils/cache'
 import { purgeUserReviews, purgeUserComments } from '../utils/moderation'
+import { sendPushNotification } from '../utils/push'
 
 // İstatistikler
 export const getStats = async (req: Request, res: Response) => {
@@ -132,10 +133,11 @@ export const deleteVenue = async (req: Request, res: Response) => {
   try {
     const venueId = parseInt(req.params.id as string)
     if (!venueId || isNaN(venueId)) return res.status(400).json({ error: 'Geçersiz salon.' })
-    const venue = await prisma.venue.findUnique({ where: { id: venueId }, select: { id: true } })
+    const venue = await prisma.venue.findUnique({ where: { id: venueId }, select: { id: true, name: true } })
     if (!venue) return res.status(404).json({ error: 'Salon bulunamadı.' })
 
-    await prisma.$transaction(async (tx) => {
+    const affectedUserIds = await prisma.$transaction(async (tx) => {
+      const affected = new Set<number>()
       // Salonun dersleri → seansları
       const classes = await tx.class.findMany({ where: { venueId }, select: { id: true } })
       const classIds = classes.map((c) => c.id)
@@ -158,9 +160,12 @@ export const deleteVenue = async (req: Request, res: Response) => {
         })
         const bookingIds = bookings.map((b) => b.id)
         for (const b of bookings) {
-          if (b.pointsEarned > 0 && (b.status === 'confirmed' || b.status === 'pending')) {
-            await tx.user.update({ where: { id: b.userId }, data: { rewardPoints: { decrement: b.pointsEarned } } })
-            await tx.rewardPoint.create({ data: { userId: b.userId, points: -b.pointsEarned, source: 'venue_removed', bookingId: b.id } })
+          if (b.status === 'confirmed' || b.status === 'pending') {
+            affected.add(b.userId) // aktif rezervasyonu olan kullanıcı → bilgilendirilecek
+            if (b.pointsEarned > 0) {
+              await tx.user.update({ where: { id: b.userId }, data: { rewardPoints: { decrement: b.pointsEarned } } })
+              await tx.rewardPoint.create({ data: { userId: b.userId, points: -b.pointsEarned, source: 'venue_removed', bookingId: b.id } })
+            }
           }
         }
         if (bookingIds.length) {
@@ -199,7 +204,19 @@ export const deleteVenue = async (req: Request, res: Response) => {
       await tx.venuePasswordResetToken.deleteMany({ where: { venueId } })
       // Salon
       await tx.venue.delete({ where: { id: venueId } })
+      return [...affected]
     }, { timeout: 30000 })
+
+    // Aktif rezervasyonu olan kullanıcılara "salon kaldırıldı, rezervasyonun iptal edildi"
+    // bildirimi (in-app + push, best-effort). deleteClass/deleteSession ile tutarlı.
+    if (affectedUserIds.length) {
+      const msg = `${venue.name} kapatıldığı için ilgili rezervasyon(lar)ınız iptal edildi. Ödemeniz iade edilecektir.`
+      const users = await prisma.user.findMany({ where: { id: { in: affectedUserIds } }, select: { id: true, pushToken: true } }).catch(() => [])
+      for (const u of users) {
+        await prisma.notification.create({ data: { userId: u.id, type: 'booking_cancelled', message: msg } }).catch(() => {})
+        if (u.pushToken) sendPushNotification(u.pushToken, 'Rezervasyonun iptal edildi', msg).catch(() => {})
+      }
+    }
 
     return res.json({ message: 'Salon ve tüm bağlı kayıtları silindi.' })
   } catch (err) {

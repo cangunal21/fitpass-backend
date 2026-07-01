@@ -71,6 +71,8 @@ async function cleanup() {
   // Hoca testi kalıntıları — ders instructorId'sini boşalt, sonra hocaları sil (FK)
   await prisma.class.updateMany({ where: { venueId: { in: [V, 990011] } }, data: { instructorId: null } }).catch(() => {})
   await prisma.instructor.deleteMany({ where: { venueId: { in: [V, 990011] } } }).catch(() => {})
+  // Bildirimler userId FK'sına bağlı → test kullanıcıları silinmeden önce temizle
+  await prisma.notification.deleteMany({ where: { userId: { in: [...testUserIds, 990011] } } }).catch(() => {})
   // Waitlist testi kalıntıları (waitlist → booking → session → puan → user sırası)
   await prisma.waitlist.deleteMany({ where: { sessionId: 990041 } }).catch(() => {})
   await prisma.rewardPoint.deleteMany({ where: { userId: { in: [990041, 990042, 990043] } } }).catch(() => {})
@@ -424,6 +426,10 @@ async function run() {
     if (await prisma.venue.findUnique({ where: { id: V2 } })) throw new Error('salon hâlâ DB\'de')
     if ((await prisma.booking.count({ where: { sessionId: S2 } })) > 0) throw new Error('salonun rezervasyonu temizlenmedi (FK sızıntısı)')
     if ((await prisma.class.count({ where: { venueId: V2 } })) > 0) throw new Error('salonun dersi temizlenmedi')
+    // Aktif rezervasyonu olan kullanıcı (U2) "salon kaldırıldı" bildirimi almalı
+    const notif = await prisma.notification.findFirst({ where: { userId: U2, type: 'booking_cancelled' } })
+    if (!notif) throw new Error('salon silinince etkilenen kullanıcıya bildirim gitmedi')
+    await prisma.notification.deleteMany({ where: { userId: U2 } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: U2 } }).catch(() => {})
   })
 
