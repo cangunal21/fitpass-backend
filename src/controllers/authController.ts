@@ -407,10 +407,20 @@ export const deleteAccount = async (req: Request, res: Response) => {
       await tx.chatMessage.deleteMany({ where: { userId } })
       await tx.passwordResetToken.deleteMany({ where: { userId } })
       await tx.emailVerificationToken.deleteMany({ where: { userId } })
+      // Refresh token'lar userId FK'sıyla User'a bağlı → kullanıcı silinmeden ÖNCE temizlenmeli.
+      // (Aksi halde giriş/kayıt yapmış GERÇEK kullanıcı hesabını silerken FK ihlali → 500.
+      //  Ana test kullanıcısı upsert'le token'sız oluştuğundan bu boşluk gizli kalmıştı.)
+      await tx.refreshToken.deleteMany({ where: { userId } })
 
       // Çift yönlü ilişkiler
       await tx.follow.deleteMany({ where: { OR: [{ followerId: userId }, { followingId: userId }] } })
       await tx.notification.deleteMany({ where: { OR: [{ userId }, { relatedUserId: userId }] } })
+      // Bu kullanıcıyı DAVET EDEN kişilerin referralCount'unu geri düş (davet hakkı iade edilsin;
+      // aksi halde davet edilen hesabını silince davet eden kalıcı olarak davet slotu kaybederdi)
+      const invitedBy = await tx.referral.findMany({ where: { referredId: userId }, select: { referrerId: true } })
+      for (const rid of [...new Set(invitedBy.map(r => r.referrerId))]) {
+        await tx.user.updateMany({ where: { id: rid, referralCount: { gt: 0 } }, data: { referralCount: { decrement: 1 } } })
+      }
       await tx.referral.deleteMany({ where: { OR: [{ referrerId: userId }, { referredId: userId }] } })
       await tx.report.deleteMany({ where: { OR: [{ reporterUserId: userId }, { reportedUserId: userId }] } })
 

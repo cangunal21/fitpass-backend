@@ -75,6 +75,18 @@ async function cleanup() {
   await prisma.notification.deleteMany({ where: { userId: { in: [...testUserIds, 990011] } } }).catch(() => {})
   // Şikayet testi kalıntısı
   await prisma.complaint.deleteMany({ where: { subject: { startsWith: 'SmokeSikayet' } } }).catch(() => {})
+  // Referral testi kalıntıları (ref_* kullanıcılar) — FK sırasıyla
+  const refUsers = await prisma.user.findMany({ where: { email: { startsWith: 'ref_' } }, select: { id: true } }).catch(() => [] as { id: number }[])
+  const refIds = refUsers.map(u => u.id)
+  if (refIds.length) {
+    await prisma.booking.deleteMany({ where: { userId: { in: refIds } } }).catch(() => {})
+    await prisma.rewardPoint.deleteMany({ where: { userId: { in: refIds } } }).catch(() => {})
+    await prisma.referral.deleteMany({ where: { OR: [{ referrerId: { in: refIds } }, { referredId: { in: refIds } }] } }).catch(() => {})
+    await prisma.refreshToken.deleteMany({ where: { userId: { in: refIds } } }).catch(() => {})
+    await prisma.emailVerificationToken.deleteMany({ where: { userId: { in: refIds } } }).catch(() => {})
+    await prisma.notification.deleteMany({ where: { userId: { in: refIds } } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: { in: refIds } } }).catch(() => {})
+  }
   // Waitlist testi kalıntıları (waitlist → booking → session → puan → user sırası)
   await prisma.waitlist.deleteMany({ where: { sessionId: 990041 } }).catch(() => {})
   await prisma.rewardPoint.deleteMany({ where: { userId: { in: [990041, 990042, 990043] } } }).catch(() => {})
@@ -372,6 +384,61 @@ async function run() {
     await prisma.instructor.deleteMany({ where: { id: ins.id } }).catch(() => {})
   })
 
+  // ---- Referral (davet) UÇTAN UCA ----
+  await check('Referral: davet→ücretli ders→100+100, pending→completed, 3-limit, silme-decrement', async () => {
+    const uniq = Date.now()
+    const reg = async (tag: string, refCode?: string) => {
+      const email = `ref_${tag}_${uniq}@x.com`
+      const r = await http('/api/auth/register', { method: 'POST', body: { username: `ref_${tag}_${uniq}`, email, password: 'RefTest1234', fullName: `Ref ${tag}`, ...(refCode ? { referralCode: refCode } : {}) } })
+      const u = await prisma.user.findUnique({ where: { email }, select: { id: true } })
+      return { token: r.json?.token as string, id: u?.id as number }
+    }
+    const R = await reg('R')
+    if (!R.token || !R.id) throw new Error('R kaydı başarısız')
+    const code = (await http('/api/referral', { token: R.token })).json?.referralCode
+    if (!code) throw new Error('R referral kodu üretilmedi')
+    const B = await reg('B', code)
+    await new Promise(r => setTimeout(r, 400)) // applyReferralCode fire-and-forget
+    // Kayıt anında: referral PENDING, R.count=1, PUAN YOK (ilk ücretli derse kadar)
+    const refRow = await prisma.referral.findFirst({ where: { referrerId: R.id, referredId: B.id } })
+    if (refRow?.status !== 'pending') throw new Error(`referral ${refRow?.status} (pending bekleniyor)`)
+    let rs = await prisma.user.findUnique({ where: { id: R.id }, select: { rewardPoints: true, referralCount: true } })
+    if (rs?.referralCount !== 1) throw new Error(`R.referralCount ${rs?.referralCount} (1)`)
+    if (rs?.rewardPoints !== 0) throw new Error(`R puan ${rs?.rewardPoints} (0 — henüz ücretli ders yok)`)
+    // B ücretli ders alır → completeReferral: iki tarafa da 100
+    if ((await http('/api/bookings', { method: 'POST', token: B.token, body: { sessionId: S } })).status !== 201) throw new Error('B rezervasyon başarısız')
+    await new Promise(r => setTimeout(r, 400))
+    if ((await prisma.referral.findFirst({ where: { id: refRow.id } }))?.status !== 'completed') throw new Error('referral completed olmadı')
+    rs = await prisma.user.findUnique({ where: { id: R.id }, select: { rewardPoints: true, referralCount: true } })
+    if (rs?.rewardPoints !== 100) throw new Error(`R puan ${rs?.rewardPoints} (100 bekleniyor)`)
+    const bPts = (await prisma.user.findUnique({ where: { id: B.id }, select: { rewardPoints: true } }))?.rewardPoints || 0
+    if (bPts < 100) throw new Error(`B puan ${bPts} (>=100: davet 100 + ders cashback)`)
+    // Idempotent: artık pending referral yok → yeni booking tekrar tetiklemez
+    if (await prisma.referral.findFirst({ where: { referredId: B.id, status: 'pending' } })) throw new Error('idempotent değil (hâlâ pending)')
+    // 3-limit: C,D koduyla (count 2,3) → E reddedilir
+    const C = await reg('C', code); await reg('D', code)
+    await new Promise(r => setTimeout(r, 400))
+    rs = await prisma.user.findUnique({ where: { id: R.id }, select: { rewardPoints: true, referralCount: true } })
+    if (rs?.referralCount !== 3) throw new Error(`R.referralCount ${rs?.referralCount} (3: B,C,D)`)
+    const E = await reg('E', code)
+    await new Promise(r => setTimeout(r, 400))
+    if (await prisma.referral.findFirst({ where: { referrerId: R.id, referredId: E.id } })) throw new Error('4. davet (limit) engellenmedi')
+    // Silme-decrement: C (davet edilen) hesabını siler → R.count 3→2 (davet hakkı iade)
+    const delC = await http('/api/auth/account', { method: 'DELETE', token: C.token, body: { password: 'RefTest1234' } })
+    if (delC.status !== 200) throw new Error(`C silinemedi: ${delC.status} ${delC.text.slice(0, 160)}`)
+    rs = await prisma.user.findUnique({ where: { id: R.id }, select: { rewardPoints: true, referralCount: true } })
+    if (rs?.referralCount !== 2) throw new Error(`silme sonrası R.count ${rs?.referralCount} (2 bekleniyor)`)
+    // temizlik (C zaten silindi)
+    const ids = [R.id, B.id, E.id].filter(Boolean)
+    await prisma.booking.deleteMany({ where: { userId: { in: ids } } }).catch(() => {})
+    await prisma.rewardPoint.deleteMany({ where: { userId: { in: ids } } }).catch(() => {})
+    await prisma.referral.deleteMany({ where: { OR: [{ referrerId: { in: ids } }, { referredId: { in: ids } }] } }).catch(() => {})
+    await prisma.refreshToken.deleteMany({ where: { userId: { in: ids } } }).catch(() => {})
+    await prisma.emailVerificationToken.deleteMany({ where: { userId: { in: ids } } }).catch(() => {})
+    await prisma.notification.deleteMany({ where: { userId: { in: ids } } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: { in: ids } } }).catch(() => {})
+  })
+
   // ---- Bekleme listesi (waitlist) UÇTAN UCA ----
   await check('Waitlist: dolu seans → sıra → iptalde bildirim → rezervasyonda listeden çık', async () => {
     const WS = 990041, UA = 990041, UB = 990042, UC = 990043
@@ -460,6 +527,8 @@ async function run() {
   await check('Hesap silme: doğru parola → silinir + veriler (booking dahil) temizlenir', async () => {
     const hash = await bcrypt.hash('SilTest1234', 12)
     await prisma.user.update({ where: { id: U }, data: { passwordHash: hash } })
+    // Gerçek kullanıcı gibi bir refresh token ver → silme FK-güvenliği (refreshToken temizliği) test edilsin
+    await prisma.refreshToken.create({ data: { token: `smoke-rt-${U}-${Date.now()}`, userId: U, expiresAt: new Date(Date.now() + 86400000) } }).catch(() => {})
     const r = await http('/api/auth/account', { method: 'DELETE', token, body: { password: 'SilTest1234' } })
     if (r.status !== 200) throw new Error(`silme başarısız: ${r.status} ${r.text.slice(0, 160)}`)
     if (await prisma.user.findUnique({ where: { id: U } })) throw new Error('kullanıcı hâlâ DB\'de')
