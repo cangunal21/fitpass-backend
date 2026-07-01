@@ -73,6 +73,8 @@ async function cleanup() {
   await prisma.instructor.deleteMany({ where: { venueId: { in: [V, 990011] } } }).catch(() => {})
   // Bildirimler userId FK'sına bağlı → test kullanıcıları silinmeden önce temizle
   await prisma.notification.deleteMany({ where: { userId: { in: [...testUserIds, 990011] } } }).catch(() => {})
+  // Şikayet testi kalıntısı
+  await prisma.complaint.deleteMany({ where: { subject: { startsWith: 'SmokeSikayet' } } }).catch(() => {})
   // Waitlist testi kalıntıları (waitlist → booking → session → puan → user sırası)
   await prisma.waitlist.deleteMany({ where: { sessionId: 990041 } }).catch(() => {})
   await prisma.rewardPoint.deleteMany({ where: { userId: { in: [990041, 990042, 990043] } } }).catch(() => {})
@@ -335,6 +337,23 @@ async function run() {
     if (await prisma.instructor.findUnique({ where: { id: ins.id } })) throw new Error('hoca silinmedi')
     const cls = await prisma.class.findUnique({ where: { id: C }, select: { instructorId: true } })
     if (cls?.instructorId !== null) throw new Error('ders instructorId koparılmadı (FK sızıntısı)')
+  })
+
+  // Şikayet/iletişim: DB'ye kalıcı kaydedilir (e-posta ayrı) + admin görür + çözülür
+  await check('Şikayet: DB kaydı + admin listesi + çözme', async () => {
+    const uniq = Date.now()
+    const subj = `SmokeSikayet${uniq}`
+    const r = await http('/api/public/complaint', { method: 'POST', body: { name: 'Örnek', email: `sk${uniq}@x.com`, subject: subj, message: 'Test şikayet mesajı' } })
+    if (r.status !== 200) throw new Error(`şikayet gönderilemedi: ${r.status}`)
+    const c = await prisma.complaint.findFirst({ where: { subject: subj } })
+    if (!c) throw new Error('şikayet DB\'ye kaydedilmedi (e-posta gitmese bile durmalıydı)')
+    const list = await http('/api/admin/complaints', { admin: true })
+    if (!(list.json?.complaints || []).some((x: any) => x.id === c.id)) throw new Error('admin listesinde şikayet yok')
+    const res2 = await http(`/api/admin/complaints/${c.id}/resolve`, { method: 'PUT', admin: true })
+    if (res2.status !== 200) throw new Error(`çözme başarısız: ${res2.status}`)
+    const c2 = await prisma.complaint.findUnique({ where: { id: c.id } })
+    if (c2?.status !== 'resolved') throw new Error('şikayet çözüldü olarak işaretlenmedi')
+    await prisma.complaint.deleteMany({ where: { subject: subj } }).catch(() => {})
   })
 
   // Admin hoca doğrulama (verified tik): doğrula → public detay + admin liste yansır → kaldır

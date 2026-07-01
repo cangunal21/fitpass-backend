@@ -430,6 +430,33 @@ export const getAllInstructors = async (req: Request, res: Response) => {
   }
 }
 
+// İletişim/şikayet mesajları (admin) — açık olanlar üstte
+export const getComplaints = async (req: Request, res: Response) => {
+  try {
+    const complaints = await prisma.complaint.findMany({
+      orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
+      take: 200,
+    })
+    return res.json({ complaints })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// Şikayeti çözüldü olarak işaretle (admin)
+export const resolveComplaint = async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id as string)
+    if (!id || isNaN(id)) return res.status(400).json({ error: 'Geçersiz mesaj.' })
+    await prisma.complaint.update({ where: { id }, data: { status: 'resolved', resolvedAt: new Date() } })
+    return res.json({ message: 'Mesaj çözüldü olarak işaretlendi.' })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
 // Hocayı doğrula / doğrulamayı kaldır (admin) — "doğrulanmış hoca" mavi tiki
 export const verifyInstructor = async (req: Request, res: Response) => {
   try {

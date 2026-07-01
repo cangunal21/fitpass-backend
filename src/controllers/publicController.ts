@@ -524,7 +524,17 @@ export const submitComplaint = async (req: Request, res: Response) => {
     if (!emailRegex.test(email)) {
       return res.status(400).json({ error: 'Geçerli bir email adresi girin.' })
     }
-    await sendComplaintEmail(name, email, subject, message)
+    // 1. Kalıcı kayıt — e-posta gitmese/atlansa bile şikayet kaybolmaz (admin panelinden görülür)
+    await prisma.complaint.create({
+      data: {
+        name: String(name).slice(0, 200),
+        email: String(email).slice(0, 200),
+        subject: String(subject).slice(0, 200),
+        message: String(message).slice(0, 2000),
+      },
+    })
+    // 2. E-posta bildirimi best-effort (gönderim hatası şikayeti/isteği DÜŞÜRMEZ)
+    sendComplaintEmail(name, email, subject, message).catch(err => console.error('Complaint email error:', err))
     return res.json({ message: 'Şikayetiniz iletildi. En kısa sürede dönüş yapacağız.' })
   } catch (err) {
     console.error(err)

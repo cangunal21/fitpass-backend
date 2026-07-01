@@ -206,6 +206,21 @@ model Report {
   @@index([reportedUserId])
 }
 
+// İletişim / şikayet formu mesajları (public form; auth yok, userId yok).
+// E-posta bildirimine EK olarak kalıcı kayıt — e-posta gitmese bile şikayet kaybolmaz.
+model Complaint {
+  id         Int       @id @default(autoincrement())
+  name       String
+  email      String
+  subject    String
+  message    String
+  status     String    @default("open") // open | resolved
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  @@index([status])
+}
+
 // ─────────────────────────────────────────────
 // VENUE & HOCA
 // ─────────────────────────────────────────────
