@@ -329,6 +329,22 @@ async function run() {
     if (cls?.instructorId !== null) throw new Error('ders instructorId koparılmadı (FK sızıntısı)')
   })
 
+  // Admin hoca doğrulama (verified tik): doğrula → public detay + admin liste yansır → kaldır
+  await check('Admin: hoca doğrulama (verified) uçtan uca', async () => {
+    const ins = await prisma.instructor.create({ data: { venueId: V, fullName: 'VerifyHoca', specialty: 'Yoga' } })
+    const v = await http(`/api/admin/instructors/${ins.id}/verify`, { method: 'PUT', admin: true, body: { verified: true } })
+    if (v.status !== 200) throw new Error(`verify isteği: ${v.status}`)
+    const det = await http(`/api/public/instructors/${ins.id}`)
+    if (det.json?.instructor?.verified !== true) throw new Error('public detayda verified=true dönmedi')
+    const list = await http('/api/admin/instructors', { admin: true })
+    if (!(list.json?.instructors || []).some((i: any) => i.id === ins.id && i.verified === true)) throw new Error('admin listede verified görünmedi')
+    const un = await http(`/api/admin/instructors/${ins.id}/verify`, { method: 'PUT', admin: true, body: { verified: false } })
+    if (un.status !== 200) throw new Error(`doğrulama kaldırma: ${un.status}`)
+    const det2 = await http(`/api/public/instructors/${ins.id}`)
+    if (det2.json?.instructor?.verified !== false) throw new Error('doğrulama kaldırılamadı')
+    await prisma.instructor.deleteMany({ where: { id: ins.id } }).catch(() => {})
+  })
+
   // ---- Salon yaşam döngüsü: donmuş salon her yerde gizlenir + dolu salon FK hatası vermeden silinir ----
   const V2 = 990011, C2 = 990011, S2 = 990011, U2 = 990011
   await check('Salon dondurma: donmuş salonun seansı liste/detay/rezervasyonda kapalı', async () => {

@@ -256,6 +256,7 @@ export const getSessionById = async (req: Request, res: Response) => {
         venueAddress: s.class.venue.address,
         instructorId: s.class.instructorId ?? null,
         instructorName: s.class.instructor?.fullName ?? null,
+        instructorVerified: s.class.instructor?.verified ?? false,
         instructorBio: s.class.instructor?.bio ?? null,
         instructorAvatarUrl: s.class.instructor?.avatarUrl ?? null,
         category: s.class.sportCategory?.name ?? s.class.category ?? '',

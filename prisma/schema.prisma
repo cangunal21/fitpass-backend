@@ -293,6 +293,7 @@ model Instructor {
   avgRating    Float      @default(0)
   totalReviews Int        @default(0)
   isActive     Boolean    @default(true)
+  verified     Boolean    @default(false) // admin onaylı "doğrulanmış hoca" tiki
   createdAt    DateTime   @default(now())
 
   classes  Class[]

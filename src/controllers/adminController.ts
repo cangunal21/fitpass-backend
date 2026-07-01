@@ -393,3 +393,40 @@ export const updateCategory = async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
+
+// Tüm hocalar (admin) — doğrulama yönetimi için. Doğrulanmamışlar üstte.
+export const getAllInstructors = async (req: Request, res: Response) => {
+  try {
+    const instructors = await prisma.instructor.findMany({
+      select: {
+        id: true, fullName: true, specialty: true, avatarUrl: true,
+        verified: true, avgRating: true, totalReviews: true, createdAt: true,
+        venue: { select: { id: true, name: true } },
+        _count: { select: { classes: true } },
+      },
+      orderBy: [{ verified: 'asc' }, { createdAt: 'desc' }],
+    })
+    return res.json({ instructors })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// Hocayı doğrula / doğrulamayı kaldır (admin) — "doğrulanmış hoca" mavi tiki
+export const verifyInstructor = async (req: Request, res: Response) => {
+  try {
+    const instructorId = parseInt(req.params.id as string)
+    if (!instructorId || isNaN(instructorId)) return res.status(400).json({ error: 'Geçersiz hoca.' })
+    const { verified } = req.body
+    const instructor = await prisma.instructor.update({
+      where: { id: instructorId },
+      data: { verified: !!verified },
+      select: { id: true, fullName: true, verified: true },
+    })
+    return res.json({ message: verified ? 'Hoca doğrulandı.' : 'Doğrulama kaldırıldı.', instructor })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
