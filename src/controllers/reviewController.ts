@@ -41,27 +41,33 @@ export const createReview = async (req: Request, res: Response) => {
 
     const venueId = booking.session?.class?.venueId
 
-    const review = await prisma.review.create({
-      data: {
-        bookingId,
-        reviewerUserId: userId,
-        targetType: 'venue',
-        venueId: venueId || null,
-        rating,
-        comment: clampStr(comment, 1000) || null,
-        isAnonymous: isAnonymous ?? true,
-      }
-    })
-
-    // Venue avgRating güncelle
-    if (venueId) {
-      const reviews = await prisma.review.findMany({ where: { venueId }, select: { rating: true } })
-      const avg = reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length
-      await prisma.venue.update({
-        where: { id: venueId },
-        data: { avgRating: Math.round(avg * 10) / 10, totalReviews: reviews.length }
+    // Yorum oluşturma + salon puan ortalamasını yeniden hesaplama TEK transaction'da.
+    // Salon satırı FOR UPDATE ile kilitlenir → aynı salona eşzamanlı gelen yorumlar sıraya
+    // girer, her recompute tüm commit'li yorumları görür (yarışta totalReviews/avgRating
+    // sapması olmaz; önceden kilitsiz read-modify-write sapabiliyordu).
+    const review = await prisma.$transaction(async (tx) => {
+      if (venueId) await tx.$executeRaw`SELECT id FROM "Venue" WHERE id = ${venueId} FOR UPDATE`
+      const created = await tx.review.create({
+        data: {
+          bookingId,
+          reviewerUserId: userId,
+          targetType: 'venue',
+          venueId: venueId || null,
+          rating,
+          comment: clampStr(comment, 1000) || null,
+          isAnonymous: isAnonymous ?? true,
+        }
       })
-    }
+      if (venueId) {
+        const reviews = await tx.review.findMany({ where: { venueId }, select: { rating: true } })
+        const avg = reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length
+        await tx.venue.update({
+          where: { id: venueId },
+          data: { avgRating: Math.round(avg * 10) / 10, totalReviews: reviews.length }
+        })
+      }
+      return created
+    })
 
     return res.status(201).json({ message: 'Yorumunuz eklendi!', review })
   } catch (err: any) {
