@@ -273,8 +273,8 @@ export const resetPassword = async (req: Request, res: Response) => {
   try {
     const { token, password } = req.body
 
-    if (!password || password.length < 6) {
-      return res.status(400).json({ error: 'Şifre en az 6 karakter olmalı.' })
+    if (!password || password.length < MIN_PASSWORD) {
+      return res.status(400).json({ error: `Şifre en az ${MIN_PASSWORD} karakter olmalı.` })
     }
 
     const resetToken = await prisma.passwordResetToken.findFirst({
@@ -300,6 +300,10 @@ export const resetPassword = async (req: Request, res: Response) => {
       where: { id: resetToken.id },
       data: { used: true }
     })
+
+    // Şifre sıfırlandı → mevcut TÜM oturumları kapat (refresh token'ları iptal).
+    // Hesabı ele geçiren biri varsa, şifre sıfırlama onun 180-günlük oturumunu da öldürür.
+    await prisma.refreshToken.updateMany({ where: { userId: resetToken.userId, revoked: false }, data: { revoked: true } }).catch(() => {})
 
     return res.json({ message: 'Şifre güncellendi' })
   } catch (error) {
@@ -446,8 +450,8 @@ export const changePassword = async (req: Request & { userId?: number }, res: Re
       return res.status(400).json({ error: 'Mevcut ve yeni şifre gerekli.' })
     }
 
-    if (newPassword.length < 6) {
-      return res.status(400).json({ error: 'Yeni şifre en az 6 karakter olmalı.' })
+    if (newPassword.length < MIN_PASSWORD) {
+      return res.status(400).json({ error: `Yeni şifre en az ${MIN_PASSWORD} karakter olmalı.` })
     }
 
     const user = await prisma.user.findUnique({ where: { id: req.userId } })
@@ -458,6 +462,9 @@ export const changePassword = async (req: Request & { userId?: number }, res: Re
 
     const newHash = await bcrypt.hash(newPassword, 12)
     await prisma.user.update({ where: { id: req.userId }, data: { passwordHash: newHash } })
+
+    // Şifre değişti → diğer cihazlardaki oturumları kapat (refresh token'ları iptal)
+    await prisma.refreshToken.updateMany({ where: { userId: req.userId, revoked: false }, data: { revoked: true } }).catch(() => {})
 
     return res.json({ message: 'Şifre başarıyla değiştirildi.' })
   } catch (error) {

@@ -75,9 +75,12 @@ async function cleanup() {
   await prisma.notification.deleteMany({ where: { userId: { in: [...testUserIds, 990011] } } }).catch(() => {})
   // Şikayet testi kalıntısı
   await prisma.complaint.deleteMany({ where: { subject: { startsWith: 'SmokeSikayet' } } }).catch(() => {})
-  // Salon gate testi kalıntısı
+  // Salon gate + pagination testi kalıntıları
   await prisma.class.deleteMany({ where: { venueId: 990071 } }).catch(() => {})
   await prisma.venue.deleteMany({ where: { id: 990071 } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: { in: [990081, 990082, 990083, 990084, 990085] } } }).catch(() => {})
+  await prisma.class.deleteMany({ where: { id: 990081 } }).catch(() => {})
+  await prisma.venue.deleteMany({ where: { id: 990081 } }).catch(() => {})
   // Grup etiketleme testi kalıntıları
   await prisma.booking.deleteMany({ where: { userId: { in: [990061, 990062] } } }).catch(() => {})
   await prisma.notification.deleteMany({ where: { userId: { in: [990061, 990062] } } }).catch(() => {})
@@ -87,8 +90,8 @@ async function cleanup() {
   await prisma.class_Session.deleteMany({ where: { id: { in: [990051, 990052, 990053] } } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990051 } }).catch(() => {})
   await prisma.neighborhood.deleteMany({ where: { id: 990051 } }).catch(() => {})
-  // Referral testi kalıntıları (ref_* kullanıcılar) — FK sırasıyla
-  const refUsers = await prisma.user.findMany({ where: { email: { startsWith: 'ref_' } }, select: { id: true } }).catch(() => [] as { id: number }[])
+    // Referral + şifre-sıfırlama testi kalıntıları (ref_* / pwd_* kullanıcılar) — FK sırasıyla
+  const refUsers = await prisma.user.findMany({ where: { OR: [{ email: { startsWith: 'ref_' } }, { email: { startsWith: 'pwd_' } }] }, select: { id: true } }).catch(() => [] as { id: number }[])
   const refIds = refUsers.map(u => u.id)
   if (refIds.length) {
     await prisma.booking.deleteMany({ where: { userId: { in: refIds } } }).catch(() => {})
@@ -96,6 +99,7 @@ async function cleanup() {
     await prisma.referral.deleteMany({ where: { OR: [{ referrerId: { in: refIds } }, { referredId: { in: refIds } }] } }).catch(() => {})
     await prisma.refreshToken.deleteMany({ where: { userId: { in: refIds } } }).catch(() => {})
     await prisma.emailVerificationToken.deleteMany({ where: { userId: { in: refIds } } }).catch(() => {})
+    await prisma.passwordResetToken.deleteMany({ where: { userId: { in: refIds } } }).catch(() => {})
     await prisma.notification.deleteMany({ where: { userId: { in: refIds } } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: { in: refIds } } }).catch(() => {})
   }
@@ -449,6 +453,56 @@ async function run() {
     await prisma.emailVerificationToken.deleteMany({ where: { userId: { in: ids } } }).catch(() => {})
     await prisma.notification.deleteMany({ where: { userId: { in: ids } } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: { in: ids } } }).catch(() => {})
+  })
+
+  // ---- Şifre sıfırlama uçtan uca: token tek-kullanım + oturum iptal + hesap sızıntısı yok ----
+  await check('Şifre sıfırlama: token tek-kullanım + refresh iptal + enumeration yok', async () => {
+    const uq = Date.now(); const email = `pwd_${uq}@x.com`
+    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `pwd_${uq}`, email, password: 'OldPass1234', fullName: 'Pwd User' } })
+    if (!reg.json?.refreshToken) throw new Error('register refreshToken vermedi')
+    const uid = (await prisma.user.findUnique({ where: { email }, select: { id: true } }))?.id
+    await http('/api/auth/forgot-password', { method: 'POST', body: { email } })
+    const prt = await prisma.passwordResetToken.findFirst({ where: { userId: uid, used: false }, orderBy: { id: 'desc' } })
+    if (!prt) throw new Error('reset token oluşmadı')
+    if ((await http('/api/auth/reset-password', { method: 'POST', body: { token: prt.token, password: 'NewPass1234' } })).status !== 200) throw new Error('reset başarısız')
+    // Eski şifre login FAIL, yeni şifre OK
+    if ((await http('/api/auth/login', { method: 'POST', body: { email, password: 'OldPass1234' } })).status === 200) throw new Error('eski şifreyle giriş yapılabildi')
+    if ((await http('/api/auth/login', { method: 'POST', body: { email, password: 'NewPass1234' } })).status !== 200) throw new Error('yeni şifreyle giriş yapılamadı')
+    // Token tekrar kullanılamaz (tek-kullanımlık)
+    if ((await http('/api/auth/reset-password', { method: 'POST', body: { token: prt.token, password: 'Other12345' } })).status !== 400) throw new Error('kullanılmış token tekrar çalıştı')
+    // Sıfırlama eski refresh token'ı iptal etti
+    const rt = await prisma.refreshToken.findFirst({ where: { token: reg.json.refreshToken }, select: { revoked: true } })
+    if (rt && rt.revoked !== true) throw new Error('şifre sıfırlamada eski refresh token iptal edilmedi (oturum yaşıyor)')
+    // Enumeration yok: olmayan e-posta da 200
+    if ((await http('/api/auth/forgot-password', { method: 'POST', body: { email: `yok_${uq}@x.com` } })).status !== 200) throw new Error('olmayan e-posta farklı yanıt (hesap sızıntısı)')
+    await prisma.refreshToken.deleteMany({ where: { userId: uid } }).catch(() => {})
+    await prisma.passwordResetToken.deleteMany({ where: { userId: uid } }).catch(() => {})
+    await prisma.emailVerificationToken.deleteMany({ where: { userId: uid } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: uid } }).catch(() => {})
+  })
+
+  // ---- Arama/pagination: sayfalar tutarlı (total sabit, hasMore doğru, örtüşme yok) ----
+  await check('Pagination: 5 seans / 2\'şer sayfa — total/hasMore/örtüşme doğru', async () => {
+    const PV = 990081, PC = 990081
+    await prisma.venue.upsert({ where: { id: PV }, update: { isApproved: true, isActive: true, isSuspended: false }, create: { id: PV, name: 'PageVenue', email: `pv${PV}@x.com`, passwordHash: 'x', address: 'Adres', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: PC }, update: { isActive: true }, create: { id: PC, venueId: PV, title: 'Page Ders', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const sessIds: number[] = []
+    for (let i = 0; i < 5; i++) {
+      const id = 990081 + i; sessIds.push(id)
+      const st = new Date(Date.now() + (i + 1) * 86400000)
+      await prisma.class_Session.upsert({ where: { id }, update: { status: 'open', startsAt: st }, create: { id, classId: PC, startsAt: st, endsAt: new Date(st.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    }
+    const p1 = await expectOk(`/api/public/sessions?venueId=${PV}&limit=2&page=1`)
+    if (p1.json.total !== 5) throw new Error(`total ${p1.json.total} (5 bekleniyor)`)
+    if (p1.json.sessions.length !== 2 || p1.json.hasMore !== true) throw new Error(`sayfa1 len=${p1.json.sessions.length} hasMore=${p1.json.hasMore}`)
+    const p2 = await expectOk(`/api/public/sessions?venueId=${PV}&limit=2&page=2`)
+    const p3 = await expectOk(`/api/public/sessions?venueId=${PV}&limit=2&page=3`)
+    if (p3.json.sessions.length !== 1 || p3.json.hasMore !== false) throw new Error(`sayfa3 len=${p3.json.sessions.length} hasMore=${p3.json.hasMore}`)
+    const allIds = [...p1.json.sessions, ...p2.json.sessions, ...p3.json.sessions].map((s: any) => s.id)
+    if (new Set(allIds).size !== 5) throw new Error(`sayfalar örtüşüyor/eksik: ${allIds.length} kayıt ${new Set(allIds).size} tekil`)
+    await prisma.class_Session.deleteMany({ where: { id: { in: sessIds } } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: PC } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: PV } }).catch(() => {})
   })
 
   // ---- Salon gate: onaysız + donmuş salon (mevcut token dahil) ders ekleyemez ----
