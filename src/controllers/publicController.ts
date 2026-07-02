@@ -10,7 +10,7 @@ import { sanitizeReview } from '../utils/reviews'
 // vergi no, kimlik belgeleri, alt-üye anahtarı, ödeme telefonu...) + onay-öncesi pending görseller.
 // Blacklist yerine whitelist zor (ilişkili include'lar var); bu liste TÜM hassas alanları kapsar.
 const VENUE_SENSITIVE_FIELDS = [
-  'passwordHash', 'pendingImages', 'pendingCoverImageUrl', 'imagesPendingReview',
+  'passwordHash', 'email', 'pendingImages', 'pendingCoverImageUrl', 'imagesPendingReview',
   'iban', 'taxOffice', 'taxNumber', 'identityNumber', 'iyzicoSubMerchantKey',
   'subMerchantType', 'legalCompanyTitle', 'contactName', 'contactSurname', 'payoutGsm',
   'ibanMatchConsent', 'subMerchantStatus', 'subMerchantSubmittedAt', 'subMerchantApprovedAt',
