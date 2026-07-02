@@ -524,20 +524,25 @@ export const likeActivity = async (req: Request, res: Response) => {
 
     await prisma.activityLike.create({ data: { feedKey, userId } })
 
+    // Bildirim best-effort: hata like'ı 500'e çevirmesin (like zaten commit oldu)
     const ownerId = activity.ownerId
     if (ownerId && ownerId !== userId) {
-      const liker = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } })
-      await prisma.notification.create({
-        data: {
-          userId: ownerId,
-          type: 'like',
-          message: `${liker?.fullName || 'Bir kullanıcı'} aktiviteni beğendi.`,
-          relatedUserId: userId,
-        },
-      })
-      const owner = await prisma.user.findUnique({ where: { id: ownerId }, select: { pushToken: true } })
-      if (owner?.pushToken) {
-        sendPushNotification(owner.pushToken, 'Yeni beğeni ❤️', `${liker?.fullName || 'Bir kullanıcı'} aktiviteni beğendi.`).catch(() => {})
+      try {
+        const liker = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } })
+        await prisma.notification.create({
+          data: {
+            userId: ownerId,
+            type: 'like',
+            message: `${liker?.fullName || 'Bir kullanıcı'} aktiviteni beğendi.`,
+            relatedUserId: userId,
+          },
+        })
+        const owner = await prisma.user.findUnique({ where: { id: ownerId }, select: { pushToken: true } })
+        if (owner?.pushToken) {
+          sendPushNotification(owner.pushToken, 'Yeni beğeni ❤️', `${liker?.fullName || 'Bir kullanıcı'} aktiviteni beğendi.`).catch(() => {})
+        }
+      } catch (notifyErr) {
+        console.error('like notify error:', notifyErr)
       }
     }
 
@@ -616,6 +621,8 @@ export const addActivityComment = async (req: Request, res: Response) => {
       include: { user: { select: { username: true, fullName: true, avatarUrl: true } } },
     })
 
+    // Bildirim best-effort: hata yorumu 500'e çevirmesin (yorum zaten commit oldu)
+    try {
     const commenter = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } })
 
     if (parentComment && parentComment.userId !== userId) {
@@ -649,6 +656,9 @@ export const addActivityComment = async (req: Request, res: Response) => {
           sendPushNotification(owner.pushToken, 'Yeni yorum 💬', `${commenter?.fullName || 'Bir kullanıcı'} aktivitene yorum yaptı.`).catch(() => {})
         }
       }
+    }
+    } catch (notifyErr) {
+      console.error('comment notify error:', notifyErr)
     }
 
     return res.status(201).json({ comment })
