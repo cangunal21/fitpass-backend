@@ -25,7 +25,7 @@ function stripVenueSensitive<T extends Record<string, any>>(venue: T): Partial<T
 // GET /api/public/sessions
 export const getSessions = async (req: Request, res: Response) => {
   try {
-    const { category, date, dateFrom, dateTo, venueId, neighborhoodId, search, sort, userNeighborhoodId, page, limit } = req.query
+    const { category, date, dateFrom, dateTo, venueId, neighborhoodId, cityId, search, sort, userNeighborhoodId, page, limit } = req.query
     const pageNum = Math.max(1, parseIntSafe(page) || 1)
     const pageSize = Math.min(50, Math.max(1, parseIntSafe(limit) || 24))
 
@@ -56,8 +56,9 @@ export const getSessions = async (req: Request, res: Response) => {
     const vId = parseIntSafe(venueId)
     if (vId) classWhere.venueId = vId
     const nId = parseIntSafe(neighborhoodId)
+    const cId = parseIntSafe(cityId)
     // Salon onaylı + aktif olmalı — askıya alınan/henüz onaylanmamış salonun dersleri listede çıkmasın
-    classWhere.venue = { isApproved: true, isActive: true, ...(nId ? { neighborhoodId: nId } : {}) }
+    classWhere.venue = { isApproved: true, isActive: true, ...(nId ? { neighborhoodId: nId } : {}), ...(cId ? { cityId: cId } : {}) }
     if (search) {
       classWhere.OR = [
         { title: { contains: search as string, mode: 'insensitive' } },
