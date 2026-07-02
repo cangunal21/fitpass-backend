@@ -358,10 +358,12 @@ export const getCategories = async (req: Request, res: Response) => {
 export const createCategory = async (req: Request, res: Response) => {
   try {
     const { name, colorHex, iconUrl } = req.body
-    if (!name) return res.status(400).json({ error: 'Kategori adı zorunludur.' })
-    const existing = await prisma.sportCategory.findFirst({ where: { name: { equals: name, mode: 'insensitive' } } })
+    const trimmed = typeof name === 'string' ? name.trim() : ''
+    if (!trimmed) return res.status(400).json({ error: 'Kategori adı zorunludur.' })
+    const existing = await prisma.sportCategory.findFirst({ where: { name: { equals: trimmed, mode: 'insensitive' } } })
     if (existing) return res.status(400).json({ error: 'Bu kategori zaten mevcut.' })
-    const category = await prisma.sportCategory.create({ data: { name, colorHex, iconUrl } })
+    const category = await prisma.sportCategory.create({ data: { name: trimmed, colorHex, iconUrl } })
+    invalidate('categories')
     return res.json({ category })
   } catch (err) {
     return res.status(500).json({ error: 'Sunucu hatası.' })
@@ -388,6 +390,7 @@ export const deleteCategory = async (req: Request, res: Response) => {
       })
     }
     await prisma.sportCategory.delete({ where: { id } })
+    invalidate('categories')
     return res.json({ message: 'Kategori silindi.' })
   } catch (err) {
     console.error(err)
@@ -399,14 +402,33 @@ export const deleteCategory = async (req: Request, res: Response) => {
 export const updateCategory = async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id as string)
+    if (!id || isNaN(id)) return res.status(400).json({ error: 'Geçersiz kategori.' })
     const { name, colorHex } = req.body
-    if (!name) return res.status(400).json({ error: 'Kategori adı zorunludur.' })
-    const category = await prisma.sportCategory.update({
-      where: { id },
-      data: { name, colorHex: colorHex || null },
+    const trimmed = typeof name === 'string' ? name.trim() : ''
+    if (!trimmed) return res.status(400).json({ error: 'Kategori adı zorunludur.' })
+    // Başka bir kategori aynı ada sahip olmasın (büyük/küçük harf duyarsız)
+    const dup = await prisma.sportCategory.findFirst({
+      where: { name: { equals: trimmed, mode: 'insensitive' }, id: { not: id } },
     })
+    if (dup) return res.status(400).json({ error: 'Bu isimde başka bir kategori zaten var.' })
+    const category = await prisma.$transaction(async (tx) => {
+      const existing = await tx.sportCategory.findUnique({ where: { id }, select: { name: true } })
+      if (!existing) throw new Error('NOT_FOUND')
+      const updated = await tx.sportCategory.update({
+        where: { id },
+        data: { name: trimmed, colorHex: colorHex || null },
+      })
+      // Denormalize edilmiş Class.category string kopyalarını da senkronla — yoksa filtreler eski adda kalır
+      if (existing.name !== trimmed) {
+        await tx.class.updateMany({ where: { category: existing.name }, data: { category: trimmed } })
+      }
+      return updated
+    })
+    invalidate('categories')
     return res.json({ category })
   } catch (err) {
+    if (err instanceof Error && err.message === 'NOT_FOUND') return res.status(404).json({ error: 'Kategori bulunamadı.' })
+    console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
