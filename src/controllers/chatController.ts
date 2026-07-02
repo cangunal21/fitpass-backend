@@ -138,17 +138,11 @@ export const chat = async (req: Request, res: Response) => {
 
     const lastUserMsg = [...messages].reverse().find((m: any) => m.role === 'user')
 
-    if (userId && lastUserMsg) {
-      await prisma.chatMessage.create({
-        data: { userId, role: 'user', content: String(lastUserMsg.content).slice(0, 2000) },
-      }).catch(() => {})
-    }
+    // NOT: Sohbet platform DB'sinde SAKLANMAZ (KVKK özel-nitelikli/sağlık verisi riski).
+    // Geçmiş yalnızca istemcide tutulur; Groq zero-retention. Gizlilik metniyle uyumlu.
 
     // Son kullanıcı mesajını konu dışı kontrolünden geçir
     if (lastUserMsg && isOffTopic(String(lastUserMsg.content))) {
-      if (userId) {
-        await prisma.chatMessage.create({ data: { userId, role: 'assistant', content: OFF_TOPIC_REPLY } }).catch(() => {})
-      }
       return res.json({ reply: OFF_TOPIC_REPLY })
     }
 
@@ -171,10 +165,7 @@ export const chat = async (req: Request, res: Response) => {
     const disclaimer = '\n\n---\n⚠️ *Bu bilgiler genel bilgi amaçlıdır, tıbbi tavsiye niteliği taşımaz. Sağlık sorunlarınız için lütfen bir uzmana danışın.*'
     const fullReply = text + disclaimer
 
-    if (userId) {
-      await prisma.chatMessage.create({ data: { userId, role: 'assistant', content: fullReply } }).catch(() => {})
-    }
-
+    // Yanıt DB'ye YAZILMAZ (yukarıdaki nota bakın — sohbet saklanmaz)
     return res.json({ reply: fullReply })
   } catch (err) {
     console.error('Chat error:', err)
@@ -183,16 +174,7 @@ export const chat = async (req: Request, res: Response) => {
 }
 
 export const getChatHistory = async (req: Request, res: Response) => {
-  try {
-    const userId = (req as any).userId
-    const messages = await prisma.chatMessage.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'asc' },
-      take: 50,
-    })
-    return res.json({ messages })
-  } catch (err) {
-    console.error('Chat history error:', err)
-    return res.status(500).json({ error: 'Sunucu hatası.' })
-  }
+  // Sohbet artık platform DB'sinde saklanmıyor (KVKK özel-nitelikli veri) → geçmiş boş döner.
+  // Uç, istemci uyumluluğu için korunur (frankfurt-DB'de sohbet izi tutmayız).
+  return res.json({ messages: [] })
 }

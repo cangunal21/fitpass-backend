@@ -75,6 +75,9 @@ async function cleanup() {
   await prisma.notification.deleteMany({ where: { userId: { in: [...testUserIds, 990011] } } }).catch(() => {})
   // Şikayet testi kalıntısı
   await prisma.complaint.deleteMany({ where: { subject: { startsWith: 'SmokeSikayet' } } }).catch(() => {})
+  // Chat testi kalıntısı
+  await prisma.chatMessage.deleteMany({ where: { userId: 990111 } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: 990111 } }).catch(() => {})
   // Favori testi kalıntıları
   await prisma.favoriteVenue.deleteMany({ where: { userId: 990101 } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990101 } }).catch(() => {})
@@ -464,6 +467,19 @@ async function run() {
     await prisma.emailVerificationToken.deleteMany({ where: { userId: { in: ids } } }).catch(() => {})
     await prisma.notification.deleteMany({ where: { userId: { in: ids } } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: { in: ids } } }).catch(() => {})
+  })
+
+  // ---- Chat: sohbet DB'de saklanmaz — history legacy kayıt olsa bile boş döner ----
+  await check('Chat: geçmiş DB\'den okunmaz (KVKK — saklama kaldırıldı)', async () => {
+    const CU = 990111
+    await prisma.user.upsert({ where: { id: CU }, update: {}, create: { id: CU, username: `chat_${CU}`, email: `chat_${CU}@x.com`, passwordHash: 'x', fullName: 'Chat', tierSportCounts: {} } })
+    const cTok = jwt.sign({ userId: CU, email: `chat_${CU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    // Eski (legacy) bir sohbet kaydı olsa bile history OKUMAMALI → boş dönmeli
+    await prisma.chatMessage.create({ data: { userId: CU, role: 'user', content: 'eski mesaj' } }).catch(() => {})
+    const h = await expectOk('/api/chat/history', { token: cTok })
+    if (!Array.isArray(h.json?.messages) || h.json.messages.length !== 0) throw new Error(`chat history boş değil (${h.json?.messages?.length}) — saklama kaldırıldı, DB'den okunmamalı`)
+    await prisma.chatMessage.deleteMany({ where: { userId: CU } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: CU } }).catch(() => {})
   })
 
   // ---- Favoriler: donmuş salon listede görünmez ama favori kaydı korunur ----
