@@ -5,7 +5,7 @@ import { translateClassTitle } from '../utils/translate'
 import { generateToken } from '../utils/jwt'
 import { sendVenueRegistrationAdminEmail, sendVenuePasswordResetEmail } from '../utils/email'
 import { sendPushNotification } from '../utils/push'
-import { isValidEmail, MIN_PASSWORD, parseIntSafe } from '../utils/validate'
+import { isValidEmail, MIN_PASSWORD, parseIntSafe, clampStr } from '../utils/validate'
 import crypto from 'crypto'
 
 // Bir seans/ders silinirken aktif rezervasyonları GÜVENLİ kaldırır:
@@ -81,12 +81,12 @@ export const venueRegister = async (req: Request, res: Response) => {
 
     const venue = await prisma.venue.create({
       data: {
-        name,
+        name: clampStr(name, 120) || '',
         email,
         passwordHash,
-        phone,
-        address,
-        description: description || null,
+        phone: clampStr(phone, 30) || '',
+        address: clampStr(address, 250) || '',
+        description: clampStr(description, 2000) || null,
         cityId: cityId || null,
         neighborhoodId: neighborhoodId || null,
         isApproved: false,
@@ -241,11 +241,11 @@ export const updateVenueProfile = async (req: Request, res: Response) => {
     const { name, phone, address, description, website, neighborhoodId } = req.body
 
     const data: any = {}
-    if (name !== undefined) data.name = name
-    if (phone !== undefined) data.phone = phone
-    if (address !== undefined) data.address = address
-    if (description !== undefined) data.description = description
-    if (website !== undefined) data.website = website
+    if (name !== undefined) data.name = clampStr(name, 120)
+    if (phone !== undefined) data.phone = clampStr(phone, 30)
+    if (address !== undefined) data.address = clampStr(address, 250)
+    if (description !== undefined) data.description = clampStr(description, 2000)
+    if (website !== undefined) data.website = clampStr(website, 250)
     // Boş/geçersiz ilçe → NaN ile 500 olmasın; geçerliyse ata, boşsa null (ilçe kaldır)
     if (neighborhoodId !== undefined) {
       const nId = parseIntSafe(neighborhoodId)
@@ -311,13 +311,16 @@ export const createClass = async (req: Request, res: Response) => {
       select: { id: true },
     })
 
-    const titleEn = await translateClassTitle(title)
+    // Metinleri ÇEVİRİDEN ÖNCE sınırla — dev girdi AI token maliyetini patlatmasın + DB şişmesin
+    const safeTitle = clampStr(title, 120) || ''
+    const safeDesc = clampStr(description, 2000) || null
+    const titleEn = await translateClassTitle(safeTitle)
 
     const newClass = await prisma.class.create({
       data: {
-        title,
+        title: safeTitle,
         titleEn,
-        description: description || null,
+        description: safeDesc,
         category,
         sportCategoryId: sportCat?.id ?? null,
         basePrice: parseFloat(basePrice),

@@ -5,6 +5,7 @@ import { sendVenueBookingNotificationEmail, sendCancellationEmail, sendVenueCanc
 import { sendPushNotification } from '../utils/push'
 import { completeReferral } from './referralController'
 import { resetYearlyPointsIfNeeded } from '../utils/tier'
+import { clampStr } from '../utils/validate'
 
 class BookingError extends Error {
   status: number
@@ -118,7 +119,7 @@ export const createBooking = async (req: Request, res: Response) => {
             sessionId,
             bookingType: 'class',
             status: 'confirmed',
-            notes: notes || null,
+            notes: clampStr(notes, 500) || null,
             groupSize,
             baseAmount: basePrice,
             discountAmount: couponDiscount,

@@ -47,11 +47,11 @@ export const register = async (req: Request, res: Response) => {
 
     const user = await prisma.user.create({
       data: {
-        username,
+        username: clampStr(username, 30) || '',
         email,
-        phone: phone || null,
+        phone: clampStr(phone, 30) || null,
         passwordHash,
-        fullName,
+        fullName: clampStr(fullName, 80) || '',
         tierSportCounts: {},
         preferredSports: cleanSports,
         preferredNeighborhoods: cleanNeighborhoods,

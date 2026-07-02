@@ -1,6 +1,7 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import { translateInstructorBio, translateSpecialty } from '../utils/translate'
+import { clampStr } from '../utils/validate'
 
 // Hoca ekle
 export const createInstructor = async (req: Request, res: Response) => {
@@ -12,20 +13,23 @@ export const createInstructor = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Ad ve uzmanlık alanı zorunludur.' })
     }
 
-    // İngilizce kullanıcılar için otomatik AI çevirisi (best-effort; anahtar yoksa null)
-    const specialtyEn = await translateSpecialty(specialty)
-    const bioEn = bio ? await translateInstructorBio(bio) : null
+    // Metinleri çeviriden/kayıttan ÖNCE sınırla (AI maliyeti + DB şişmesi)
+    const sName = clampStr(fullName, 80) || ''
+    const sSpecialty = clampStr(specialty, 120) || ''
+    const sBio = clampStr(bio, 1000) || null
+    const specialtyEn = await translateSpecialty(sSpecialty)
+    const bioEn = sBio ? await translateInstructorBio(sBio) : null
 
     const instructor = await prisma.instructor.create({
       data: {
-        fullName,
-        specialty,
+        fullName: sName,
+        specialty: sSpecialty,
         specialtyEn,
-        bio: bio || null,
+        bio: sBio,
         bioEn,
-        avatarUrl: avatarUrl || null,
-        phone: phone || null,
-        email: email || null,
+        avatarUrl: clampStr(avatarUrl, 500) || null,
+        phone: clampStr(phone, 30) || null,
+        email: clampStr(email, 200) || null,
         venueId,
       }
     })
@@ -69,14 +73,22 @@ export const updateInstructor = async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Bu hocayı düzenleme yetkiniz yok.' })
     }
 
+    // Metinleri sınırla (AI maliyeti + DB şişmesi)
+    const sSpecialty = specialty !== undefined ? clampStr(specialty, 120) : undefined
+    const sBio = bio !== undefined ? clampStr(bio, 1000) : undefined
     // Değişen alanları yeniden çevir
-    const specialtyEn = (specialty && specialty !== existing.specialty) ? await translateSpecialty(specialty) : undefined
-    const bioEn = (bio && bio !== existing.bio) ? await translateInstructorBio(bio) : undefined
+    const specialtyEn = (sSpecialty && sSpecialty !== existing.specialty) ? await translateSpecialty(sSpecialty) : undefined
+    const bioEn = (sBio && sBio !== existing.bio) ? await translateInstructorBio(sBio) : undefined
 
     const updated = await prisma.instructor.update({
       where: { id: instructorId },
       data: {
-        fullName, specialty, bio, avatarUrl, phone, email,
+        fullName: fullName !== undefined ? clampStr(fullName, 80) : undefined,
+        specialty: sSpecialty,
+        bio: sBio,
+        avatarUrl: avatarUrl !== undefined ? clampStr(avatarUrl, 500) : undefined,
+        phone: phone !== undefined ? clampStr(phone, 30) : undefined,
+        email: email !== undefined ? clampStr(email, 200) : undefined,
         ...(specialtyEn !== undefined ? { specialtyEn } : {}),
         ...(bioEn !== undefined ? { bioEn } : {}),
       }

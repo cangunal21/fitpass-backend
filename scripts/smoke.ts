@@ -105,7 +105,7 @@ async function cleanup() {
   await prisma.user.deleteMany({ where: { id: 990051 } }).catch(() => {})
   await prisma.neighborhood.deleteMany({ where: { id: 990051 } }).catch(() => {})
     // Referral + şifre-sıfırlama testi kalıntıları (ref_* / pwd_* kullanıcılar) — FK sırasıyla
-  const refUsers = await prisma.user.findMany({ where: { OR: [{ email: { startsWith: 'ref_' } }, { email: { startsWith: 'pwd_' } }] }, select: { id: true } }).catch(() => [] as { id: number }[])
+  const refUsers = await prisma.user.findMany({ where: { OR: [{ email: { startsWith: 'ref_' } }, { email: { startsWith: 'pwd_' } }, { email: { startsWith: 'cap_' } }] }, select: { id: true } }).catch(() => [] as { id: number }[])
   const refIds = refUsers.map(u => u.id)
   if (refIds.length) {
     await prisma.booking.deleteMany({ where: { userId: { in: refIds } } }).catch(() => {})
@@ -467,6 +467,25 @@ async function run() {
     await prisma.emailVerificationToken.deleteMany({ where: { userId: { in: ids } } }).catch(() => {})
     await prisma.notification.deleteMany({ where: { userId: { in: ids } } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: { in: ids } } }).catch(() => {})
+  })
+
+  // ---- Girdi cap: aşırı uzun kullanıcı metni kırpılır (DB şişmesi/AI maliyeti önlenir) ----
+  await check('Girdi cap: uzun fullName (register) + notes (booking) kırpılır', async () => {
+    const uq = Date.now(); const email = `cap_${uq}@x.com`
+    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `cap_${uq}`, email, password: 'CapTest1234', fullName: 'A'.repeat(5000) } })
+    if (!reg.json?.token) throw new Error(`register başarısız: ${reg.status}`)
+    const u = await prisma.user.findUnique({ where: { email }, select: { id: true, fullName: true } })
+    if (!u || (u.fullName?.length || 0) > 80) throw new Error(`fullName kırpılmadı: ${u?.fullName?.length} (<=80 bekleniyor)`)
+    const uTok = jwt.sign({ userId: u.id, email }, JWT_SECRET, { expiresIn: '1h' })
+    const bk = await http('/api/bookings', { method: 'POST', token: uTok, body: { sessionId: S, notes: 'B'.repeat(5000) } })
+    if (bk.status !== 201) throw new Error(`booking: ${bk.status}`)
+    const b = await prisma.booking.findFirst({ where: { userId: u.id, sessionId: S }, select: { notes: true } })
+    if ((b?.notes?.length || 0) > 500) throw new Error(`notes kırpılmadı: ${b?.notes?.length} (<=500 bekleniyor)`)
+    await prisma.booking.deleteMany({ where: { userId: u.id } }).catch(() => {})
+    await prisma.rewardPoint.deleteMany({ where: { userId: u.id } }).catch(() => {})
+    await prisma.refreshToken.deleteMany({ where: { userId: u.id } }).catch(() => {})
+    await prisma.emailVerificationToken.deleteMany({ where: { userId: u.id } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: u.id } }).catch(() => {})
   })
 
   // ---- Chat: sohbet DB'de saklanmaz — history legacy kayıt olsa bile boş döner ----
