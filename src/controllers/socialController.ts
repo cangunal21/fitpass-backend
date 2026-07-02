@@ -482,17 +482,26 @@ export const getFeed = async (req: Request, res: Response) => {
   }
 }
 
-const resolveFeedOwner = async (feedKey: string): Promise<number | null> => {
-  const [prefix, idStr] = feedKey.split('-')
-  const id = parseInt(idStr, 10)
-  if (!id) return null
+// feedKey -> aktivite sahibi + gizlilik; aktivite yoksa null.
+// Var olmayan/gizli aktiviteye like/yorum yapılmasını (orphan satır, sahte sayaç, gizli kullanıcıya
+// istenmeyen bildirim/push) engellemek için kullanılır. 'bg' (rozet) dahil tüm feed türlerini tanır.
+const resolveFeedActivity = async (feedKey: string): Promise<{ ownerId: number; privacy: string } | null> => {
+  const dash = feedKey.indexOf('-')
+  if (dash < 0) return null
+  const prefix = feedKey.slice(0, dash)
+  const id = parseInt(feedKey.slice(dash + 1), 10)
+  if (!id || Number.isNaN(id)) return null
   if (prefix === 'b') {
-    const booking = await prisma.booking.findUnique({ where: { id }, select: { userId: true } })
-    return booking?.userId ?? null
+    const b = await prisma.booking.findUnique({ where: { id }, select: { user: { select: { id: true, activityPrivacy: true } } } })
+    return b?.user ? { ownerId: b.user.id, privacy: b.user.activityPrivacy } : null
   }
   if (prefix === 'd') {
-    const participant = await prisma.dropInParticipant.findUnique({ where: { id }, select: { userId: true } })
-    return participant?.userId ?? null
+    const d = await prisma.dropInParticipant.findUnique({ where: { id }, select: { user: { select: { id: true, activityPrivacy: true } } } })
+    return d?.user ? { ownerId: d.user.id, privacy: d.user.activityPrivacy } : null
+  }
+  if (prefix === 'bg') {
+    const bg = await prisma.userBadge.findUnique({ where: { id }, select: { user: { select: { id: true, activityPrivacy: true } } } })
+    return bg?.user ? { ownerId: bg.user.id, privacy: bg.user.activityPrivacy } : null
   }
   return null
 }
@@ -503,12 +512,19 @@ export const likeActivity = async (req: Request, res: Response) => {
     const userId = (req as any).userId
     const feedKey = String(req.params.feedKey)
 
+    // Aktivite gerçekten var mı + erişebilir miyim (gizli değilse/kendiminse)
+    const activity = await resolveFeedActivity(feedKey)
+    if (!activity) return res.status(404).json({ error: 'Aktivite bulunamadı.' })
+    if (activity.privacy === 'private' && activity.ownerId !== userId) {
+      return res.status(403).json({ error: 'Bu aktiviteye erişiminiz yok.' })
+    }
+
     const existing = await prisma.activityLike.findUnique({ where: { feedKey_userId: { feedKey, userId } } })
     if (existing) return res.status(400).json({ error: 'Zaten beğendiniz.' })
 
     await prisma.activityLike.create({ data: { feedKey, userId } })
 
-    const ownerId = await resolveFeedOwner(String(feedKey))
+    const ownerId = activity.ownerId
     if (ownerId && ownerId !== userId) {
       const liker = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } })
       await prisma.notification.create({
@@ -579,6 +595,13 @@ export const addActivityComment = async (req: Request, res: Response) => {
     const { content, parentId } = req.body
     if (!content || !String(content).trim()) return res.status(400).json({ error: 'Yorum boş olamaz.' })
 
+    // Aktivite gerçekten var mı + erişebilir miyim (gizli değilse/kendiminse)
+    const activity = await resolveFeedActivity(feedKey)
+    if (!activity) return res.status(404).json({ error: 'Aktivite bulunamadı.' })
+    if (activity.privacy === 'private' && activity.ownerId !== userId) {
+      return res.status(403).json({ error: 'Bu aktiviteye erişiminiz yok.' })
+    }
+
     let parentComment = null
     const pid = parseInt(parentId, 10)
     if (parentId && !Number.isNaN(pid)) {
@@ -611,7 +634,7 @@ export const addActivityComment = async (req: Request, res: Response) => {
       }
     } else if (!parentComment) {
       // Yeni üst seviye yorum — aktivite sahibine bildirim
-      const ownerId = await resolveFeedOwner(String(feedKey))
+      const ownerId = activity.ownerId
       if (ownerId && ownerId !== userId) {
         await prisma.notification.create({
           data: {

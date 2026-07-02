@@ -184,6 +184,23 @@ async function run() {
   await check('GET /api/social/leaderboard/streaks', async () => { await expectOk('/api/social/leaderboard/streaks') })
   await check('GET /api/social/leaderboard/venues', async () => { await expectOk('/api/social/leaderboard/venues') })
   await check('GET /api/social/feed (token)', async () => { await expectOk('/api/social/feed', { token }) })
+  // Feed like/comment guard: olmayan/erişilemez feedKey'e orphan satır + istenmeyen bildirim yazılamamalı
+  await check('POST feed/like olmayan aktivite → 404 (orphan yok)', async () => {
+    const r = await http('/api/social/feed/b-999999999/like', { method: 'POST', token })
+    if (r.status !== 404) throw new Error(`beklenen 404, gelen ${r.status}: ${r.text.slice(0, 100)}`)
+    const cnt = await prisma.activityLike.count({ where: { feedKey: 'b-999999999' } })
+    if (cnt !== 0) throw new Error('olmayan aktiviteye like satırı oluştu')
+  })
+  await check('POST feed/like bozuk feedKey → 404', async () => {
+    const r = await http('/api/social/feed/xyz/like', { method: 'POST', token })
+    if (r.status !== 404) throw new Error(`beklenen 404, gelen ${r.status}`)
+  })
+  await check('POST feed/comment olmayan aktivite → 404 (orphan yok)', async () => {
+    const r = await http('/api/social/feed/b-999999999/comments', { method: 'POST', token, body: { content: 'x' } })
+    if (r.status !== 404) throw new Error(`beklenen 404, gelen ${r.status}: ${r.text.slice(0, 100)}`)
+    const cnt = await prisma.activityComment.count({ where: { feedKey: 'b-999999999' } })
+    if (cnt !== 0) throw new Error('olmayan aktiviteye yorum satırı oluştu')
+  })
   await check('GET /api/referral (token)', async () => { await expectOk('/api/referral', { token }) })
   await check('GET /api/public/users/:username', async () => { await expectOk(`/api/public/users/smoke_${U}`) })
   await check('GET /api/admin/stats (admin)', async () => { await expectOk('/api/admin/stats', { admin: true }) })
