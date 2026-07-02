@@ -10,6 +10,7 @@ import {
   getDropInSlots,
   getDropInSlotById,
   getNeighborhoods,
+  getCities,
   getVenuesList,
   getUserActivities,
   submitComplaint,
@@ -32,6 +33,7 @@ router.get('/categories', getCategories)
 router.get('/dropin', getDropInSlots)
 router.get('/dropin/:id', getDropInSlotById)
 router.get('/neighborhoods', getNeighborhoods)
+router.get('/cities', getCities)
 router.get('/users/:username', getUserActivities)
 router.post('/complaint', submitComplaint)
 router.get('/users-search', searchUsers)

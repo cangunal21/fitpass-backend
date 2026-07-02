@@ -415,12 +415,29 @@ export const getCategories = async (req: Request, res: Response) => {
   }
 }
 
-// GET /api/public/neighborhoods
+// GET /api/public/cities — il listesi (alfabetik)
+export const getCities = async (req: Request, res: Response) => {
+  try {
+    const cities = await cached('cities', 300000, () => prisma.city.findMany({
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    }))
+    return res.json({ cities })
+  } catch (err) {
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// GET /api/public/neighborhoods?cityId=X — cityId verilirse o ilin ilçeleri, yoksa İstanbul (geriye uyum)
 export const getNeighborhoods = async (req: Request, res: Response) => {
   try {
-    const neighborhoods = await cached('neighborhoods', 300000, () => prisma.neighborhood.findMany({
-      where: { city: { name: 'İstanbul' } },
-      select: { id: true, name: true },
+    const cid = parseInt(String(req.query.cityId))
+    const hasCity = !!cid && !isNaN(cid)
+    const where = hasCity ? { cityId: cid } : { city: { name: 'İstanbul' } }
+    const key = hasCity ? `neighborhoods:${cid}` : 'neighborhoods:istanbul'
+    const neighborhoods = await cached(key, 300000, () => prisma.neighborhood.findMany({
+      where,
+      select: { id: true, name: true, cityId: true },
       orderBy: { name: 'asc' },
     }))
     return res.json({ neighborhoods })
