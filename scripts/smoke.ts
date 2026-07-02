@@ -75,6 +75,10 @@ async function cleanup() {
   await prisma.notification.deleteMany({ where: { userId: { in: [...testUserIds, 990011] } } }).catch(() => {})
   // Şikayet testi kalıntısı
   await prisma.complaint.deleteMany({ where: { subject: { startsWith: 'SmokeSikayet' } } }).catch(() => {})
+  // Favori testi kalıntıları
+  await prisma.favoriteVenue.deleteMany({ where: { userId: 990101 } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: 990101 } }).catch(() => {})
+  await prisma.venue.deleteMany({ where: { id: 990101 } }).catch(() => {})
   // Yorum yaşam-döngüsü testi kalıntıları (review → booking → session → class → user → venue)
   await prisma.review.deleteMany({ where: { venueId: 990091 } }).catch(() => {})
   await prisma.booking.deleteMany({ where: { userId: 990091 } }).catch(() => {})
@@ -460,6 +464,28 @@ async function run() {
     await prisma.emailVerificationToken.deleteMany({ where: { userId: { in: ids } } }).catch(() => {})
     await prisma.notification.deleteMany({ where: { userId: { in: ids } } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: { in: ids } } }).catch(() => {})
+  })
+
+  // ---- Favoriler: donmuş salon listede görünmez ama favori kaydı korunur ----
+  await check('Favoriler: donmuş salon listede yok, geri aktifleşince döner', async () => {
+    const FU = 990101, FV = 990101
+    await prisma.venue.upsert({ where: { id: FV }, update: { isApproved: true, isActive: true, isSuspended: false }, create: { id: FV, name: 'FavVenue', email: `fav${FV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.user.upsert({ where: { id: FU }, update: {}, create: { id: FU, username: `fav_${FU}`, email: `fav_${FU}@x.com`, passwordHash: 'x', fullName: 'Fav', tierSportCounts: {} } })
+    const fTok = jwt.sign({ userId: FU, email: `fav_${FU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    if ((await http(`/api/favorites/${FV}`, { method: 'POST', token: fTok })).status >= 400) throw new Error('favori eklenemedi')
+    const l1 = await expectOk('/api/favorites/my', { token: fTok })
+    if (!(l1.json?.favorites || []).some((v: any) => v.id === FV)) throw new Error('favori listede yok')
+    // Dondur → listede yok
+    await prisma.venue.update({ where: { id: FV }, data: { isActive: false, isSuspended: true } })
+    const l2 = await expectOk('/api/favorites/my', { token: fTok })
+    if ((l2.json?.favorites || []).some((v: any) => v.id === FV)) throw new Error('donmuş salon favori listesinde görünüyor')
+    // Geri aktifleştir → favori kaydı korunduğu için tekrar görünür
+    await prisma.venue.update({ where: { id: FV }, data: { isActive: true, isSuspended: false } })
+    const l3 = await expectOk('/api/favorites/my', { token: fTok })
+    if (!(l3.json?.favorites || []).some((v: any) => v.id === FV)) throw new Error('salon geri aktif olunca favori dönmedi (kayıt silinmiş)')
+    await prisma.favoriteVenue.deleteMany({ where: { userId: FU } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: FU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: FV } }).catch(() => {})
   })
 
   // ---- Yorum yaşam döngüsü: seans silinince silinen yorumlar salon puanından düşer ----

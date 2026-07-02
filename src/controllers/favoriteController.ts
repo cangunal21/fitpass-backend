@@ -56,7 +56,9 @@ export const getMyFavorites = async (req: Request, res: Response) => {
     const userId = (req as any).userId
 
     const favs = await prisma.favoriteVenue.findMany({
-      where: { userId },
+      // Sadece onaylı + aktif salonlar listelenir (donmuş/onaysız salon favoride görünüp
+      // tıklanınca 404 vermesin; favori kaydı DURUR, salon geri gelince yeniden görünür)
+      where: { userId, venue: { isApproved: true, isActive: true } },
       include: {
         venue: {
           select: {
@@ -89,7 +91,7 @@ export const getUserFavorites = async (req: Request, res: Response) => {
     }
 
     const favs = await prisma.favoriteVenue.findMany({
-      where: { userId: user.id },
+      where: { userId: user.id, venue: { isApproved: true, isActive: true } },
       include: {
         venue: {
           select: {
