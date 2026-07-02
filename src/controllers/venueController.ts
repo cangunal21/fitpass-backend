@@ -646,7 +646,9 @@ export const getVenueBookings = async (req: Request, res: Response) => {
     const bookings = await prisma.booking.findMany({
       where: { session: { class: { venueId } } },
       include: {
-        user: { select: { id: true, fullName: true, email: true, username: true } },
+        // Veri minimizasyonu (KVKK): salona müşteri e-postası verilmez — check-in kodla,
+        // roster isimle yapılır; e-posta panelde de gösterilmiyordu (gereksiz ifşa kaldırıldı).
+        user: { select: { id: true, fullName: true, username: true } },
         session: { include: { class: { select: { title: true, category: true } } } }
       },
       orderBy: { createdAt: 'desc' },
