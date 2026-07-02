@@ -469,6 +469,19 @@ async function run() {
     await prisma.user.deleteMany({ where: { id: { in: ids } } }).catch(() => {})
   })
 
+  // ---- KRİTİK gizlilik: public venue uçları IBAN/TCKN/KYC finansal veriyi SIZDIRMAZ ----
+  await check('Gizlilik: public venue uçları IBAN/TCKN/KYC sızdırmaz', async () => {
+    await prisma.venue.update({ where: { id: V }, data: { iban: 'TR000000000000000000000000', identityNumber: '11111111111', taxNumber: '1234567890', payoutGsm: '5551112233', contactName: 'Ad', contactSurname: 'Soyad', legalCompanyTitle: 'X AŞ', iyzicoSubMerchantKey: 'sk-test', subMerchantStatus: 'approved', kycDocs: { kimlik: 'url' } } })
+    const leakKeys = ['iban', 'identityNumber', 'taxNumber', 'payoutGsm', 'contactName', 'contactSurname', 'legalCompanyTitle', 'iyzicoSubMerchantKey', 'subMerchantStatus', 'kycDocs']
+    const det = await expectOk(`/api/public/venues/${V}`)
+    const vd = det.json?.venue || {}
+    for (const k of leakKeys) if (k in vd) throw new Error(`venue DETAY '${k}' sızdırıyor (KVKK/finansal veri!)`)
+    const list = await expectOk('/api/public/venues')
+    const inList = (list.json?.venues || []).find((x: any) => x.id === V)
+    if (inList) for (const k of leakKeys) if (k in inList) throw new Error(`venue LİSTE '${k}' sızdırıyor`)
+    await prisma.venue.update({ where: { id: V }, data: { iban: null, identityNumber: null, taxNumber: null, payoutGsm: null, contactName: null, contactSurname: null, legalCompanyTitle: null, iyzicoSubMerchantKey: null, subMerchantStatus: 'none', kycDocs: {} } }).catch(() => {})
+  })
+
   // ---- Girdi cap: aşırı uzun kullanıcı metni kırpılır (DB şişmesi/AI maliyeti önlenir) ----
   await check('Girdi cap: uzun fullName (register) + notes (booking) kırpılır', async () => {
     const uq = Date.now(); const email = `cap_${uq}@x.com`

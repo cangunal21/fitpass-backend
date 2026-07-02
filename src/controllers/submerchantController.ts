@@ -1,6 +1,7 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import { createSubMerchant, retrieveSubMerchant, isPaymentConfigured, SubMerchantType } from '../utils/payment'
+import { clampStr } from '../utils/validate'
 
 const TYPES: SubMerchantType[] = ['PERSONAL', 'PRIVATE_COMPANY', 'LIMITED_OR_JOINT_STOCK_COMPANY']
 
@@ -48,10 +49,10 @@ export const submitSubMerchant = async (req: Request, res: Response) => {
     await prisma.venue.update({
       where: { id: venueId },
       data: {
-        subMerchantType, legalCompanyTitle: legalCompanyTitle || null, iban,
-        taxOffice: taxOffice || null, taxNumber: taxNumber || null, identityNumber: identityNumber || null,
-        contactName: contactName || null, contactSurname: contactSurname || null,
-        payoutGsm, ibanMatchConsent: true, kycDocs: kycDocs || {},
+        subMerchantType, legalCompanyTitle: clampStr(legalCompanyTitle, 200) || null, iban: clampStr(iban, 34) || '',
+        taxOffice: clampStr(taxOffice, 120) || null, taxNumber: clampStr(taxNumber, 20) || null, identityNumber: clampStr(identityNumber, 20) || null,
+        contactName: clampStr(contactName, 80) || null, contactSurname: clampStr(contactSurname, 80) || null,
+        payoutGsm: clampStr(payoutGsm, 20) || '', ibanMatchConsent: true, kycDocs: kycDocs || {},
         subMerchantStatus: 'submitted', subMerchantSubmittedAt: new Date(), subMerchantRejection: null,
       },
     })

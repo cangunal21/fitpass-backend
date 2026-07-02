@@ -6,6 +6,22 @@ import { cached } from '../utils/cache'
 import { parseIntSafe, parseDateSafe } from '../utils/validate'
 import { sanitizeReview } from '../utils/reviews'
 
+// Venue'de public'e ASLA çıkmaması gereken hassas alanlar (şifre, ödeme/KYC: IBAN, TCKN,
+// vergi no, kimlik belgeleri, alt-üye anahtarı, ödeme telefonu...) + onay-öncesi pending görseller.
+// Blacklist yerine whitelist zor (ilişkili include'lar var); bu liste TÜM hassas alanları kapsar.
+const VENUE_SENSITIVE_FIELDS = [
+  'passwordHash', 'pendingImages', 'pendingCoverImageUrl', 'imagesPendingReview',
+  'iban', 'taxOffice', 'taxNumber', 'identityNumber', 'iyzicoSubMerchantKey',
+  'subMerchantType', 'legalCompanyTitle', 'contactName', 'contactSurname', 'payoutGsm',
+  'ibanMatchConsent', 'subMerchantStatus', 'subMerchantSubmittedAt', 'subMerchantApprovedAt',
+  'subMerchantRejection', 'kycDocs',
+] as const
+function stripVenueSensitive<T extends Record<string, any>>(venue: T): Partial<T> {
+  const v: any = { ...venue }
+  for (const k of VENUE_SENSITIVE_FIELDS) delete v[k]
+  return v
+}
+
 // GET /api/public/sessions
 export const getSessions = async (req: Request, res: Response) => {
   try {
@@ -292,7 +308,7 @@ export const getVenues = async (req: Request, res: Response) => {
       orderBy: { createdAt: 'desc' },
     })
 
-    return res.json({ venues: venues.map(({ passwordHash, pendingImages, pendingCoverImageUrl, imagesPendingReview, ...v }) => v) })
+    return res.json({ venues: venues.map(stripVenueSensitive) })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
@@ -333,8 +349,7 @@ export const getVenueById = async (req: Request, res: Response) => {
 
     if (!venue) return res.status(404).json({ error: 'Salon bulunamadı.' })
 
-    const { passwordHash, pendingImages, pendingCoverImageUrl, imagesPendingReview, ...safeVenue } = venue
-    return res.json({ venue: safeVenue })
+    return res.json({ venue: stripVenueSensitive(venue) })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
