@@ -37,6 +37,14 @@ async function purgeBookingsForSessions(tx: any, sessionIds: number[]) {
   return bookings as { id: number; userId: number; status: string }[]
 }
 
+// Salonun avgRating/totalReviews'ını kalan yorumlardan yeniden hesaplar.
+// Ders/seans silmede yorumlar da silindiği için puan hayalet kalmasın diye çağrılır.
+async function recomputeVenueRating(tx: any, venueId: number) {
+  const reviews = await tx.review.findMany({ where: { venueId }, select: { rating: true } })
+  const avg = reviews.length ? reviews.reduce((s: number, r: any) => s + r.rating, 0) / reviews.length : 0
+  await tx.venue.update({ where: { id: venueId }, data: { avgRating: Math.round(avg * 10) / 10, totalReviews: reviews.length } })
+}
+
 // Etkilenen kullanıcılara "rezervasyonun salon tarafından kaldırıldı" push'u (best-effort)
 async function notifyRemovedBookings(affected: { userId: number; status: string }[], classTitle: string) {
   const userIds = [...new Set(affected.filter(b => b.status === 'confirmed' || b.status === 'pending').map(b => b.userId))]
@@ -579,6 +587,7 @@ export const deleteClass = async (req: Request, res: Response) => {
       const a = sessIds.length ? await purgeBookingsForSessions(tx, sessIds) : []
       await tx.class_Session.deleteMany({ where: { classId } })
       await tx.class.delete({ where: { id: classId } })
+      await recomputeVenueRating(tx, cls.venueId) // yorumlar silindi → salon puanını güncelle
       return a
     })
     await notifyRemovedBookings(affected, cls.title).catch(() => {})
@@ -599,6 +608,7 @@ export const deleteSession = async (req: Request, res: Response) => {
     const affected = await prisma.$transaction(async (tx) => {
       const a = await purgeBookingsForSessions(tx, [sessionId])
       await tx.class_Session.delete({ where: { id: sessionId } })
+      await recomputeVenueRating(tx, session.class.venueId) // yorumlar silindi → salon puanını güncelle
       return a
     })
     await notifyRemovedBookings(affected, session.class.title).catch(() => {})

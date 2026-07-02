@@ -75,6 +75,13 @@ async function cleanup() {
   await prisma.notification.deleteMany({ where: { userId: { in: [...testUserIds, 990011] } } }).catch(() => {})
   // Şikayet testi kalıntısı
   await prisma.complaint.deleteMany({ where: { subject: { startsWith: 'SmokeSikayet' } } }).catch(() => {})
+  // Yorum yaşam-döngüsü testi kalıntıları (review → booking → session → class → user → venue)
+  await prisma.review.deleteMany({ where: { venueId: 990091 } }).catch(() => {})
+  await prisma.booking.deleteMany({ where: { userId: 990091 } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: { in: [990091, 990092] } } }).catch(() => {})
+  await prisma.class.deleteMany({ where: { id: 990091 } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: 990091 } }).catch(() => {})
+  await prisma.venue.deleteMany({ where: { id: 990091 } }).catch(() => {})
   // Salon gate + pagination testi kalıntıları
   await prisma.class.deleteMany({ where: { venueId: 990071 } }).catch(() => {})
   await prisma.venue.deleteMany({ where: { id: 990071 } }).catch(() => {})
@@ -453,6 +460,34 @@ async function run() {
     await prisma.emailVerificationToken.deleteMany({ where: { userId: { in: ids } } }).catch(() => {})
     await prisma.notification.deleteMany({ where: { userId: { in: ids } } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: { in: ids } } }).catch(() => {})
+  })
+
+  // ---- Yorum yaşam döngüsü: seans silinince silinen yorumlar salon puanından düşer ----
+  await check('Yorum: seans silinince salon avgRating/totalReviews yeniden hesaplanır', async () => {
+    const RV = 990091, RC = 990091, RS1 = 990091, RS2 = 990092, RU = 990091
+    await prisma.venue.upsert({ where: { id: RV }, update: { isApproved: true, isActive: true }, create: { id: RV, name: 'RevVenue', email: `rv${RV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: RC }, update: {}, create: { id: RC, venueId: RV, title: 'RevDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    await prisma.user.upsert({ where: { id: RU }, update: {}, create: { id: RU, username: `rev_${RU}`, email: `rev_${RU}@x.com`, passwordHash: 'x', fullName: 'Rev', tierSportCounts: {} } })
+    const past = (k: number) => new Date(Date.now() - k * 86400000)
+    await prisma.class_Session.upsert({ where: { id: RS1 }, update: {}, create: { id: RS1, classId: RC, startsAt: past(2), endsAt: past(2), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: RS2 }, update: {}, create: { id: RS2, classId: RC, startsAt: past(1), endsAt: past(1), availableSpots: 20, status: 'open' } })
+    const bk1 = await prisma.booking.create({ data: { userId: RU, sessionId: RS1, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `RV1-${Date.now()}` } })
+    const bk2 = await prisma.booking.create({ data: { userId: RU, sessionId: RS2, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `RV2-${Date.now()}` } })
+    await prisma.review.create({ data: { bookingId: bk1.id, reviewerUserId: RU, targetType: 'venue', venueId: RV, rating: 2 } })
+    await prisma.review.create({ data: { bookingId: bk2.id, reviewerUserId: RU, targetType: 'venue', venueId: RV, rating: 4 } })
+    await prisma.venue.update({ where: { id: RV }, data: { avgRating: 3, totalReviews: 2 } })
+    // RS1 seansını sil → rating-2 yorum da silinir → recompute: sadece rating-4 kalır
+    const vTok = jwt.sign({ venueId: RV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const del = await http(`/api/venue/classes/${RC}/sessions/${RS1}`, { method: 'DELETE', token: vTok })
+    if (del.status !== 200) throw new Error(`seans silme: ${del.status} ${del.text.slice(0, 120)}`)
+    const v = await prisma.venue.findUnique({ where: { id: RV }, select: { avgRating: true, totalReviews: true } })
+    if (v?.totalReviews !== 1 || v?.avgRating !== 4) throw new Error(`salon puanı güncellenmedi: avg=${v?.avgRating} total=${v?.totalReviews} (4/1 bekleniyor)`)
+    await prisma.review.deleteMany({ where: { venueId: RV } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { userId: RU } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { classId: RC } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: RC } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: RU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: RV } }).catch(() => {})
   })
 
   // ---- Şifre sıfırlama uçtan uca: token tek-kullanım + oturum iptal + hesap sızıntısı yok ----
