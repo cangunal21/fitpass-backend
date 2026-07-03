@@ -78,6 +78,13 @@ async function cleanup() {
   // Chat testi kalıntısı
   await prisma.chatMessage.deleteMany({ where: { userId: 990111 } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990111 } }).catch(() => {})
+  // Transfer testi kalıntısı (990141)
+  await prisma.rewardPoint.deleteMany({ where: { userId: 990141 } }).catch(() => {})
+  await prisma.booking.deleteMany({ where: { userId: 990141 } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: { in: [990141, 990142] } } }).catch(() => {})
+  await prisma.class.deleteMany({ where: { id: { in: [990141, 990142] } } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: 990141 } }).catch(() => {})
+  await prisma.venue.deleteMany({ where: { id: 990141 } }).catch(() => {})
   // Favori testi kalıntıları
   await prisma.favoriteVenue.deleteMany({ where: { userId: 990101 } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990101 } }).catch(() => {})
@@ -770,6 +777,27 @@ async function run() {
     if (!notif) throw new Error('salon silinince etkilenen kullanıcıya bildirim gitmedi')
     await prisma.notification.deleteMany({ where: { userId: U2 } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: U2 } }).catch(() => {})
+  })
+
+  await check('Transfer: ucuz derse geçişte puan yeniden hesaplanır + bakiye eşitlenir', async () => {
+    const TV = 990141, TU = 990141
+    const scat = await prisma.sportCategory.findFirst({})
+    await prisma.venue.upsert({ where: { id: TV }, update: { isApproved: true, isActive: true }, create: { id: TV, name: 'Transfer Salon', email: `trf${TV}@x.com`, passwordHash: 'x', address: 'Adres', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: TV }, update: {}, create: { id: TV, venueId: TV, title: 'Pahalı', category: catName, sportCategoryId: scat?.id ?? null, basePrice: 200, durationMinutes: 60, capacity: 20, isActive: true } })
+    await prisma.class.upsert({ where: { id: TV + 1 }, update: {}, create: { id: TV + 1, venueId: TV, title: 'Ucuz', category: catName, sportCategoryId: scat?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const se = await prisma.class_Session.upsert({ where: { id: TV }, update: { startsAt: new Date(Date.now() + 2 * 86400000) }, create: { id: TV, classId: TV, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), availableSpots: 20, status: 'open' } })
+    const sc = await prisma.class_Session.upsert({ where: { id: TV + 1 }, update: { startsAt: new Date(Date.now() + 2 * 86400000) }, create: { id: TV + 1, classId: TV + 1, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.user.upsert({ where: { id: TU }, update: { rewardPoints: 2, tierId: 1 }, create: { id: TU, username: `trf_${TU}`, email: `trf_${TU}@x.com`, passwordHash: 'x', fullName: 'Transfer User', tierId: 1, rewardPoints: 2, tierSportCounts: {} } })
+    await prisma.booking.deleteMany({ where: { userId: TU } })
+    const bk = await prisma.booking.create({ data: { userId: TU, sessionId: se.id, status: 'confirmed', bookingType: 'class', groupSize: 1, baseAmount: 200, commissionAmount: 0, venueCommission: 0, finalAmount: 200, venuePayout: 200, pointsEarned: 2, checkedIn: false, bookingNumber: `TRF-${Date.now()}` } })
+    const tok = jwt.sign({ userId: TU, email: `trf_${TU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http(`/api/bookings/${bk.id}/transfer`, { method: 'PUT', token: tok, body: { targetSessionId: sc.id } })
+    if (r.status !== 200) throw new Error(`transfer başarısız: ${r.status} ${r.text.slice(0, 120)}`)
+    const after = await prisma.booking.findUnique({ where: { id: bk.id }, select: { pointsEarned: true, finalAmount: true } })
+    if (after?.pointsEarned !== 1) throw new Error(`pointsEarned ${after?.pointsEarned} (1 bekleniyor — ucuz derse göre)`)
+    if (after?.finalAmount !== 100) throw new Error(`finalAmount ${after?.finalAmount} (100 bekleniyor)`)
+    const up = await prisma.user.findUnique({ where: { id: TU }, select: { rewardPoints: true } })
+    if (up?.rewardPoints !== 1) throw new Error(`rewardPoints ${up?.rewardPoints} (1 bekleniyor — fazla puan geri alındı)`)
   })
 
   // Hesap silme — EN SON (kullanıcıyı kaldırır). Yanlış parola reddedilmeli, doğru parola tüm veriyi temizlemeli.

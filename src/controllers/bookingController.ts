@@ -674,6 +674,13 @@ export const transferBooking = async (req: Request, res: Response) => {
         const newFinalAmount = money(Math.max(0, newBase - couponDiscount))
         const priceRefund = money(Math.max(0, oldBase - newBase)) // daha ucuz derse geçişte iade edilecek fark (ödeme entegrasyonunda karta iade)
 
+        // Puanı yeni (daha ucuz olabilen) tutara göre yeniden hesapla. Aksi halde pahalı ders
+        // bookla → ucuza transfer et → fazla puanı tut (redemption gelince istismar) + pointsEarned
+        // bayat kalır. rewardPoints bakiyesi de farkla eşitlenir.
+        const uTier = await tx.user.findUnique({ where: { id: userId }, select: { tier: { select: { pointRate: true } } } })
+        const newPoints = newFinalAmount > 0 ? Math.round(newFinalAmount * ((uTier?.tier?.pointRate || 0) / 100)) : 0
+        const pointsDelta = newPoints - booking.pointsEarned
+
         // CAS: yalnızca booking HÂLÂ beklenen durumdaysa (confirmed, kaynak seansta, check-in yok)
         // taşı. booking kilitten önce okundu; eşzamanlı iptal/transfer bu arada durumu değiştirdiyse
         // (count=0) stale veriyle çift işlem yapmadan çakışma döndür (ödeme gelince priceRefund
@@ -686,10 +693,17 @@ export const transferBooking = async (req: Request, res: Response) => {
             venuePayout: newVenuePayout,
             finalAmount: newFinalAmount,
             discountAmount: couponDiscount,
+            pointsEarned: newPoints,
             notes: `${booking.notes ? booking.notes + ' | ' : ''}Transfer edildi${priceRefund > 0 ? ` (₺${priceRefund} iade)` : ''}`,
           },
         })
         if (flip.count === 0) throw new BookingError('Rezervasyon durumu değişti, transfer yapılamadı. Lütfen tekrar deneyin.', 409)
+
+        // Puan farkını bakiyeye yansıt (ucuz derse geçişte fazla puan geri alınır) + audit satırı
+        if (pointsDelta !== 0) {
+          await tx.user.update({ where: { id: userId }, data: { rewardPoints: { increment: pointsDelta } } })
+          await tx.rewardPoint.create({ data: { userId, points: pointsDelta, source: 'booking_transfer', bookingId } })
+        }
         const updated = await tx.booking.findUnique({
           where: { id: bookingId },
           include: { session: { include: { class: true } } },
