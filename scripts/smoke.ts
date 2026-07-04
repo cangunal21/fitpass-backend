@@ -8,6 +8,7 @@
 import { spawn, ChildProcess } from 'child_process'
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
+import { generateToken } from '../src/utils/jwt'
 import prisma from '../src/utils/prisma'
 
 const PORT = 3199
@@ -782,6 +783,16 @@ async function run() {
     if (!notif) throw new Error('salon silinince etkilenen kullanıcıya bildirim gitmedi')
     await prisma.notification.deleteMany({ where: { userId: U2 } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: U2 } }).catch(() => {})
+  })
+
+  await check('Token ömrü: kullanıcı 1s (kısa+refresh), venue 7g (uzun)', async () => {
+    const dec = (t: string) => JSON.parse(Buffer.from(t.split('.')[1], 'base64').toString())
+    const uTok = generateToken({ userId: 1, email: 'x@x.com' })
+    const vTok = generateToken({ venueId: 1, email: 'x@x.com', role: 'venue' })
+    const uLife = dec(uTok).exp - dec(uTok).iat
+    const vLife = dec(vTok).exp - dec(vTok).iat
+    if (uLife !== 3600) throw new Error(`kullanıcı token ömrü ${uLife}s (3600=1s bekleniyor)`)
+    if (vLife !== 604800) throw new Error(`venue token ömrü ${vLife}s (604800=7g bekleniyor)`)
   })
 
   await check('Transfer: ucuz derse geçişte puan yeniden hesaplanır + bakiye eşitlenir', async () => {
