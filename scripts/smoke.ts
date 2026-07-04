@@ -85,6 +85,11 @@ async function cleanup() {
   await prisma.class.deleteMany({ where: { id: { in: [990141, 990142] } } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990141 } }).catch(() => {})
   await prisma.venue.deleteMany({ where: { id: 990141 } }).catch(() => {})
+  // Kupon kişi-başı limit testi kalıntısı (990151)
+  await prisma.booking.deleteMany({ where: { session: { classId: 990151 } } }).catch(() => {})
+  await prisma.coupon.deleteMany({ where: { code: 'PERUSER1' } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: { in: [990151, 990152] } } }).catch(() => {})
+  await prisma.class.deleteMany({ where: { id: 990151 } }).catch(() => {})
   // Favori testi kalıntıları
   await prisma.favoriteVenue.deleteMany({ where: { userId: 990101 } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990101 } }).catch(() => {})
@@ -798,6 +803,20 @@ async function run() {
     if (after?.finalAmount !== 100) throw new Error(`finalAmount ${after?.finalAmount} (100 bekleniyor)`)
     const up = await prisma.user.findUnique({ where: { id: TU }, select: { rewardPoints: true } })
     if (up?.rewardPoints !== 1) throw new Error(`rewardPoints ${up?.rewardPoints} (1 bekleniyor — fazla puan geri alındı)`)
+  })
+
+  await check('Kupon: kişi başı limit ikinci kullanımı engeller (400)', async () => {
+    const cScat = await prisma.sportCategory.findFirst({})
+    await prisma.class.upsert({ where: { id: 990151 }, update: {}, create: { id: 990151, venueId: V, title: 'KuponDers', category: catName, sportCategoryId: cScat?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    await prisma.class_Session.upsert({ where: { id: 990151 }, update: { startsAt: new Date(Date.now() + 2 * 86400000), status: 'open' }, create: { id: 990151, classId: 990151, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: 990152 }, update: { startsAt: new Date(Date.now() + 2 * 86400000), status: 'open' }, create: { id: 990152, classId: 990151, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.booking.deleteMany({ where: { session: { classId: 990151 } } })
+    await prisma.coupon.deleteMany({ where: { code: 'PERUSER1' } })
+    await prisma.coupon.create({ data: { venueId: V, code: 'PERUSER1', discountType: 'fixed', discountValue: 100, perUserLimit: 1, isActive: true } })
+    const b1 = await http('/api/bookings', { method: 'POST', token, body: { sessionId: 990151, couponCode: 'PERUSER1' } })
+    if (b1.status !== 201) throw new Error(`1. kullanım başarısız: ${b1.status} ${b1.text.slice(0, 120)}`)
+    const b2 = await http('/api/bookings', { method: 'POST', token, body: { sessionId: 990152, couponCode: 'PERUSER1' } })
+    if (b2.status !== 400) throw new Error(`2. kullanım engellenmeli (400), gelen: ${b2.status} ${b2.text.slice(0, 120)}`)
   })
 
   // Hesap silme — EN SON (kullanıcıyı kaldırır). Yanlış parola reddedilmeli, doğru parola tüm veriyi temizlemeli.

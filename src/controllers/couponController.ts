@@ -5,7 +5,7 @@ import prisma from '../utils/prisma'
 export const createCoupon = async (req: Request, res: Response) => {
   try {
     const venueId = (req as any).venueId
-    const { code, discountType, discountValue, maxUses, expiresAt } = req.body
+    const { code, discountType, discountValue, maxUses, perUserLimit, expiresAt } = req.body
 
     if (!code || !discountType || !discountValue) {
       return res.status(400).json({ error: 'Kod, indirim tipi ve değeri zorunludur.' })
@@ -27,6 +27,7 @@ export const createCoupon = async (req: Request, res: Response) => {
         discountType,
         discountValue: parseFloat(discountValue),
         maxUses: maxUses ? parseInt(maxUses) : null,
+        perUserLimit: perUserLimit != null && perUserLimit !== '' && parseInt(perUserLimit) > 0 ? parseInt(perUserLimit) : null,
         expiresAt: expiresAt ? new Date(expiresAt) : null,
         isActive: true,
       }

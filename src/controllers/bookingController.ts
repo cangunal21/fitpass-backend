@@ -93,6 +93,12 @@ export const createBooking = async (req: Request, res: Response) => {
           if (found.venueId !== session.class!.venueId) throw new BookingError('Bu kupon bu salona ait değil.', 400)
           if (found.expiresAt && found.expiresAt < new Date()) throw new BookingError('Kupon süresi dolmuş.', 400)
           if (found.maxUses && found.usedCount >= found.maxUses) throw new BookingError('Kupon kullanım limiti dolmuş.', 400)
+          // Kişi başı limit: bu kullanıcının bu kuponu kaç aktif (iptal edilmemiş) rezervasyonda kullandığını say.
+          // Kupon satırı FOR UPDATE ile kilitli → eşzamanlı ikinci kullanım da bu kontrolde yakalanır.
+          if (found.perUserLimit != null) {
+            const myUses = await tx.booking.count({ where: { couponId: found.id, userId, status: { not: 'cancelled' } } })
+            if (myUses >= found.perUserLimit) throw new BookingError('Bu kuponu daha fazla kullanamazsınız (kişi başı limit doldu).', 400)
+          }
           coupon = found
           couponDiscount = found.discountType === 'percent'
             ? money(basePrice * (found.discountValue / 100))

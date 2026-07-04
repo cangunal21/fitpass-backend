@@ -694,6 +694,7 @@ model Coupon {
   discountType  String    // "percent" | "fixed"
   discountValue Float
   maxUses       Int?
+  perUserLimit  Int?      // kişi başı kullanım limiti (null = sınırsız); createBooking'de uygulanır
   usedCount     Int       @default(0)
   expiresAt     DateTime?
   isActive      Boolean   @default(true)
