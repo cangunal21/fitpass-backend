@@ -795,6 +795,19 @@ async function run() {
     if (vLife !== 604800) throw new Error(`venue token ömrü ${vLife}s (604800=7g bekleniyor)`)
   })
 
+  await check('Görsel: sadece geçerli http(s) URL kabul, kötü/bozuk girdi temizlenir', async () => {
+    const vt = jwt.sign({ venueId: V, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http('/api/venue/images', { method: 'PUT', token: vt, body: { images: ['javascript:alert(1)', 'https://res.cloudinary.com/x/a.jpg', 'not-a-url', 123, 'https://res.cloudinary.com/x/b.jpg'], coverImageUrl: 'javascript:evil' } })
+    if (r.status !== 200) throw new Error(`beklenen 200, gelen ${r.status}: ${r.text.slice(0, 100)}`)
+    const v = await prisma.venue.findUnique({ where: { id: V }, select: { pendingImages: true, pendingCoverImageUrl: true } })
+    const imgs = v?.pendingImages as any[]
+    if (!Array.isArray(imgs) || imgs.length !== 2) throw new Error(`pendingImages ${JSON.stringify(imgs)} (2 geçerli URL bekleniyor)`)
+    if (imgs.some((u: string) => !/^https/.test(u))) throw new Error('geçersiz URL sızdı')
+    if (v?.pendingCoverImageUrl !== null) throw new Error(`cover ${v?.pendingCoverImageUrl} (null bekleniyor — javascript: reddedilmeli)`)
+    // İz bırakma: bekleyeni temizle
+    await prisma.venue.update({ where: { id: V }, data: { pendingImages: [], pendingCoverImageUrl: null, imagesPendingReview: false } })
+  })
+
   await check('Transfer: ucuz derse geçişte puan yeniden hesaplanır + bakiye eşitlenir', async () => {
     const TV = 990141, TU = 990141
     const scat = await prisma.sportCategory.findFirst({})

@@ -699,12 +699,18 @@ export const updateVenueImages = async (req: Request, res: Response) => {
   try {
     const venueId = (req as any).venueId
     const { images, coverImageUrl } = req.body
+    // Girdi doğrulama: yalnızca http(s) URL, en fazla 10 görsel, her biri makul uzunlukta.
+    // (Client Cloudinary URL gönderir.) Aksi halde bozuk/dizi-olmayan girdi onaydan sonra canlı
+    // alana geçip venue sayfasının .map'ini çökertebilir + sınırsız girdi DB'yi şişirir.
+    const isUrl = (u: unknown): u is string => typeof u === 'string' && u.length <= 500 && /^https?:\/\//i.test(u)
+    const cleanImages = (Array.isArray(images) ? images : []).filter(isUrl).slice(0, 10)
+    const cleanCover = isUrl(coverImageUrl) ? coverImageUrl : null
     const updated = await prisma.venue.update({
       where: { id: venueId },
       data: {
         // Canlı (images/coverImageUrl) alanlara DOKUNULMAZ; yeni set onaya gider
-        pendingImages: images || [],
-        pendingCoverImageUrl: coverImageUrl || null,
+        pendingImages: cleanImages,
+        pendingCoverImageUrl: cleanCover,
         imagesPendingReview: true,
       },
       select: { id: true, images: true, coverImageUrl: true, pendingImages: true, pendingCoverImageUrl: true, imagesPendingReview: true }
