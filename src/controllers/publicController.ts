@@ -28,6 +28,10 @@ export const getSessions = async (req: Request, res: Response) => {
     const { category, date, dateFrom, dateTo, venueId, neighborhoodId, cityId, search, sort, userNeighborhoodId, page, limit } = req.query
     const pageNum = Math.max(1, parseIntSafe(page) || 1)
     const pageSize = Math.min(50, Math.max(1, parseIntSafe(limit) || 24))
+    // "Bana yakın": mesafe bellekte hesaplanır. DB startsAt'a göre sayfalarsa yalnızca sayfa-içi
+    // sıralanır (en yakın salon geç seansdaysa 1. sayfada çıkmaz). Bu yüzden nearby'de tüm eşleşen
+    // seansları (üst sınırla) çekip GLOBAL mesafeye göre sıralayıp SONRA sayfalıyoruz.
+    const isNearby = sort === 'nearby' && !!parseIntSafe(userNeighborhoodId)
 
     const where: any = {
       status: 'open',
@@ -89,8 +93,8 @@ export const getSessions = async (req: Request, res: Response) => {
           },
         },
         orderBy,
-        skip: (pageNum - 1) * pageSize,
-        take: pageSize,
+        skip: isNearby ? 0 : (pageNum - 1) * pageSize,
+        take: isNearby ? 500 : pageSize,
       }),
       prisma.class_Session.count({ where }),
     ])
@@ -152,6 +156,9 @@ export const getSessions = async (req: Request, res: Response) => {
         })
       }
     }
+
+    // Nearby: global mesafe sıralamasından sonra istenen sayfayı dilimle
+    if (isNearby) formattedSessions = formattedSessions.slice((pageNum - 1) * pageSize, pageNum * pageSize)
 
     return res.json({
       sessions: formattedSessions,

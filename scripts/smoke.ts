@@ -91,6 +91,11 @@ async function cleanup() {
   await prisma.coupon.deleteMany({ where: { code: 'PERUSER1' } }).catch(() => {})
   await prisma.class_Session.deleteMany({ where: { id: { in: [990151, 990152] } } }).catch(() => {})
   await prisma.class.deleteMany({ where: { id: 990151 } }).catch(() => {})
+  // Nearby global-sort testi kalıntısı (990161-990163)
+  await prisma.class_Session.deleteMany({ where: { id: { in: [990161, 990162] } } }).catch(() => {})
+  await prisma.class.deleteMany({ where: { id: { in: [990161, 990162] } } }).catch(() => {})
+  await prisma.venue.deleteMany({ where: { id: { in: [990161, 990162] } } }).catch(() => {})
+  await prisma.neighborhood.deleteMany({ where: { id: { in: [990161, 990162, 990163] } } }).catch(() => {})
   // Favori testi kalıntıları
   await prisma.favoriteVenue.deleteMany({ where: { userId: 990101 } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990101 } }).catch(() => {})
@@ -806,6 +811,25 @@ async function run() {
     if (v?.pendingCoverImageUrl !== null) throw new Error(`cover ${v?.pendingCoverImageUrl} (null bekleniyor — javascript: reddedilmeli)`)
     // İz bırakma: bekleyeni temizle
     await prisma.venue.update({ where: { id: V }, data: { pendingImages: [], pendingCoverImageUrl: null, imagesPendingReview: false } })
+  })
+
+  await check('Arama nearby: en yakın salon geç seansda olsa 1. sayfada (global sort)', async () => {
+    // Kullanıcı + YAKIN salon aynı konumda (mesafe ~0); UZAK salon uzakta ama seansı daha ERKEN.
+    await prisma.neighborhood.upsert({ where: { id: 990161 }, update: {}, create: { id: 990161, name: 'NbUser', latitude: 41.5, longitude: 29.5, cityId: 1 } })
+    await prisma.neighborhood.upsert({ where: { id: 990162 }, update: {}, create: { id: 990162, name: 'NbNear', latitude: 41.5, longitude: 29.5, cityId: 1 } })
+    await prisma.neighborhood.upsert({ where: { id: 990163 }, update: {}, create: { id: 990163, name: 'NbFar', latitude: 40.0, longitude: 28.0, cityId: 1 } })
+    await prisma.venue.upsert({ where: { id: 990161 }, update: { isApproved: true, isActive: true }, create: { id: 990161, name: 'YakinSalon', email: 'nvn@x.com', passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: 990162, cityId: 1 } })
+    await prisma.venue.upsert({ where: { id: 990162 }, update: { isApproved: true, isActive: true }, create: { id: 990162, name: 'UzakSalon', email: 'nvf@x.com', passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: 990163, cityId: 1 } })
+    const scat2 = await prisma.sportCategory.findFirst({})
+    await prisma.class.upsert({ where: { id: 990161 }, update: {}, create: { id: 990161, venueId: 990161, title: 'NEARBYTEST Yakin', category: catName, sportCategoryId: scat2?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    await prisma.class.upsert({ where: { id: 990162 }, update: {}, create: { id: 990162, venueId: 990162, title: 'NEARBYTEST Uzak', category: catName, sportCategoryId: scat2?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    await prisma.class_Session.upsert({ where: { id: 990161 }, update: { startsAt: new Date(Date.now() + 5 * 86400000), status: 'open' }, create: { id: 990161, classId: 990161, startsAt: new Date(Date.now() + 5 * 86400000), endsAt: new Date(Date.now() + 5 * 86400000 + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: 990162 }, update: { startsAt: new Date(Date.now() + 1 * 86400000), status: 'open' }, create: { id: 990162, classId: 990162, startsAt: new Date(Date.now() + 1 * 86400000), endsAt: new Date(Date.now() + 1 * 86400000 + 3600000), availableSpots: 20, status: 'open' } })
+    const r = await http(`/api/public/sessions?search=NEARBYTEST&sort=nearby&userNeighborhoodId=990161&limit=1`)
+    if (r.status !== 200) throw new Error(`beklenen 200, gelen ${r.status}`)
+    const first = r.json?.sessions?.[0]
+    if (!first) throw new Error('sonuç boş')
+    if (first.id !== 990161) throw new Error(`1. sonuç seans ${first.id} (990161=yakın bekleniyor; eski kod uzak/erken döndürürdü)`)
   })
 
   await check('Transfer: ucuz derse geçişte puan yeniden hesaplanır + bakiye eşitlenir', async () => {
