@@ -200,6 +200,8 @@ export const getForYouSessions = async (req: Request, res: Response) => {
       include: {
         class: { include: { sportCategory: true, venue: { include: { neighborhood: { select: { id: true, name: true } } } }, instructor: true } },
       },
+      // Ders başına yalnızca EN YAKIN seans — aynı dersin çok seansı "Senin İçin"i domine etmesin
+      distinct: ['classId'],
       orderBy: { startsAt: 'asc' },
       take: 40,
     })

@@ -91,6 +91,8 @@ async function cleanup() {
   await prisma.coupon.deleteMany({ where: { code: 'PERUSER1' } }).catch(() => {})
   await prisma.class_Session.deleteMany({ where: { id: { in: [990151, 990152] } } }).catch(() => {})
   await prisma.class.deleteMany({ where: { id: 990151 } }).catch(() => {})
+  // For You distinct testi kalıntısı
+  await prisma.class_Session.deleteMany({ where: { id: 990171 } }).catch(() => {})
   // Nearby global-sort testi kalıntısı (990161-990163)
   await prisma.class_Session.deleteMany({ where: { id: { in: [990161, 990162] } } }).catch(() => {})
   await prisma.class.deleteMany({ where: { id: { in: [990161, 990162] } } }).catch(() => {})
@@ -830,6 +832,18 @@ async function run() {
     const first = r.json?.sessions?.[0]
     if (!first) throw new Error('sonuç boş')
     if (first.id !== 990161) throw new Error(`1. sonuç seans ${first.id} (990161=yakın bekleniyor; eski kod uzak/erken döndürürdü)`)
+  })
+
+  await check('For You: aynı ders çoklu seansla domine etmez (distinct classId)', async () => {
+    // U catName'i tercih ediyor; C dersi (title "Smoke Class") catName kategorisinde + seed seansı var.
+    // İkinci bir gelecek seans ekle → distinct olmasa 2 kez dönerdi.
+    await prisma.class_Session.upsert({ where: { id: 990171 }, update: { startsAt: new Date(Date.now() + 3 * 86400000), status: 'open' }, create: { id: 990171, classId: C, startsAt: new Date(Date.now() + 3 * 86400000), endsAt: new Date(Date.now() + 3 * 86400000 + 3600000), availableSpots: 20, status: 'open' } })
+    const r = await http('/api/public/for-you', { token })
+    if (r.status !== 200) throw new Error(`beklenen 200, gelen ${r.status}`)
+    const ss = r.json?.sessions || []
+    const cnt = ss.filter((x: any) => x.title === 'Smoke Class' && x.venueId === V).length
+    if (cnt > 1) throw new Error(`aynı ders ${cnt} kez döndü (distinct ile 1 bekleniyor)`)
+    await prisma.class_Session.deleteMany({ where: { id: 990171 } })
   })
 
   await check('Transfer: ucuz derse geçişte puan yeniden hesaplanır + bakiye eşitlenir', async () => {
