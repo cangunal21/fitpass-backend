@@ -93,21 +93,29 @@ export const getWaitlistStatus = async (req: Request, res: Response) => {
 // İptal olunca waitlist'teki ilk kişiye bildir (bookingController'dan çağrılacak)
 export const notifyFirstWaitlistUser = async (sessionId: number) => {
   try {
-    const first = await prisma.waitlist.findFirst({
-      where: { sessionId, status: 'waiting' },
-      orderBy: { createdAt: 'asc' },
-      include: {
-        user: { select: { email: true, fullName: true, pushToken: true } },
-        session: { include: { class: true } }
-      }
+    // Eşzamanlı iki iptal (2 yer boşalır) yarışında her iptal FARKLI bir bekleyeni bildirmeli.
+    // Kilitsiz findFirst+update, ikisinin de aynı ilk bekleyeni bulup 2 kez bildirmesine + 2. yeri
+    // hak edene hiç bildirim gitmemesine yol açıyordu. En eski 'waiting' satırı FOR UPDATE SKIP LOCKED
+    // ile atomik "sahiplenilir" → ikinci çağrı kilitli satırı atlayıp SIRADAKİ bekleyeni alır.
+    const first = await prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "Waitlist"
+        WHERE "sessionId" = ${sessionId} AND status = 'waiting'
+        ORDER BY "createdAt" ASC
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED`
+      if (!rows.length) return null
+      return tx.waitlist.update({
+        where: { id: rows[0].id },
+        data: { status: 'notified', notifiedAt: new Date() },
+        include: {
+          user: { select: { email: true, fullName: true, pushToken: true } },
+          session: { include: { class: true } },
+        },
+      })
     })
 
     if (!first) return
-
-    await prisma.waitlist.update({
-      where: { id: first.id },
-      data: { status: 'notified', notifiedAt: new Date() }
-    })
 
     const startsAt = new Date(first.session.startsAt)
     const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
