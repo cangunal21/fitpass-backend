@@ -10,6 +10,8 @@ import jwt from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
 import { generateToken } from '../src/utils/jwt'
 import { seasonInfo } from '../src/utils/season'
+import { ensureBadges } from '../src/utils/ensureBadges'
+import { awardSeasonChampions } from '../src/jobs/championJob'
 import prisma from '../src/utils/prisma'
 
 const PORT = 3199
@@ -94,6 +96,13 @@ async function cleanup() {
   await prisma.class.deleteMany({ where: { id: 990151 } }).catch(() => {})
   // For You distinct testi kalıntısı
   await prisma.class_Session.deleteMany({ where: { id: 990171 } }).catch(() => {})
+  // Rekor seri + sezon şampiyonu testi kalıntıları (990221-990233)
+  await prisma.userBadge.deleteMany({ where: { OR: [{ userId: { in: [990221, 990222, 990231] } }, { scopeId: 990221 }] } }).catch(() => {})
+  await prisma.booking.deleteMany({ where: { userId: { in: [990221, 990222, 990231] } } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: { in: [990221, 990222, 990231, 990232, 990233] } } }).catch(() => {})
+  await prisma.class.deleteMany({ where: { id: 990221 } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: { in: [990221, 990222, 990231] } } }).catch(() => {})
+  await prisma.neighborhood.deleteMany({ where: { id: 990221 } }).catch(() => {})
   // Sezonluk liderlik testi kalıntısı (990211/990212)
   await prisma.booking.deleteMany({ where: { userId: 990211 } }).catch(() => {})
   await prisma.class_Session.deleteMany({ where: { id: { in: [990211, 990212] } } }).catch(() => {})
@@ -941,6 +950,62 @@ async function run() {
     if (!up) throw new Error('StatDers upcoming listesinde yok')
     if (up.booked !== 3) throw new Error(`booked ${up.booked} (3 bekleniyor — groupSize, kayıt sayısı değil)`)
     if (up.fillRate !== 30) throw new Error(`fillRate ${up.fillRate} (30 bekleniyor: 3/10 koltuk)`)
+  })
+
+  await check('Rekor seri: 3 gün üst üste check-in → getMe recordStreak 3', async () => {
+    const RU = 990231
+    await prisma.user.upsert({ where: { id: RU }, update: { recordStreak: 0 }, create: { id: RU, username: `rec_${RU}`, email: `rec_${RU}@x.com`, passwordHash: 'x', fullName: 'Rekor User', tierId: 1, tierSportCounts: {} } })
+    const noon = (k: number) => { const d = new Date(); d.setUTCHours(9, 0, 0, 0); return new Date(d.getTime() - k * 86400000) }
+    const mkS = (id: number, k: number) => prisma.class_Session.upsert({ where: { id }, update: { startsAt: noon(k) }, create: { id, classId: C, startsAt: noon(k), endsAt: new Date(noon(k).getTime() + 3600000), status: 'open', availableSpots: 20 } })
+    await mkS(990231, 1); await mkS(990232, 2); await mkS(990233, 3)
+    await prisma.booking.deleteMany({ where: { userId: RU } })
+    const mkB = (id: number, sid: number) => prisma.booking.create({ data: { id, userId: RU, sessionId: sid, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `REC-${id}-${Date.now()}`, checkedIn: true, checkedInAt: new Date() } })
+    await mkB(990231, 990231); await mkB(990232, 990232); await mkB(990233, 990233)
+    const tok = jwt.sign({ userId: RU, email: `rec_${RU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http('/api/auth/me', { token: tok })
+    if (r.status !== 200) throw new Error(`me başarısız: ${r.status}`)
+    if (r.json?.user?.recordStreak !== 3) throw new Error(`recordStreak ${r.json?.user?.recordStreak} (3 bekleniyor)`)
+    await prisma.booking.deleteMany({ where: { userId: RU } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: { in: [990231, 990232, 990233] } } }).catch(() => {})
+    await prisma.userBadge.deleteMany({ where: { userId: RU } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: RU } }).catch(() => {})
+  })
+
+  await check('Sezon şampiyonu: biten sezonda ilçe+spor ilk 3 rozet + getMe kapsam/sezon', async () => {
+    const cur = seasonInfo()
+    const prev = seasonInfo(new Date(cur.start.getTime() - 86400000))
+    const scat = await prisma.sportCategory.findFirst({})
+    await ensureBadges()
+    const champB = await prisma.badge.findUnique({ where: { key: 'season_champion' }, select: { id: true } })
+    if (!champB) throw new Error('season_champion rozeti yok (ensureBadges)')
+    const N = 990221
+    await prisma.neighborhood.upsert({ where: { id: N }, update: {}, create: { id: N, name: 'ŞampMah', latitude: 41, longitude: 29, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: N }, update: { sportCategoryId: scat?.id ?? null }, create: { id: N, venueId: V, title: 'ŞampDers', category: catName, sportCategoryId: scat?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const inPrev = (off: number) => new Date(prev.start.getTime() + off * 86400000)
+    await prisma.class_Session.upsert({ where: { id: 990221 }, update: { startsAt: inPrev(5) }, create: { id: 990221, classId: N, startsAt: inPrev(5), endsAt: new Date(inPrev(5).getTime() + 3600000), status: 'open', availableSpots: 20 } })
+    await prisma.class_Session.upsert({ where: { id: 990222 }, update: { startsAt: inPrev(6) }, create: { id: 990222, classId: N, startsAt: inPrev(6), endsAt: new Date(inPrev(6).getTime() + 3600000), status: 'open', availableSpots: 20 } })
+    const mkU = (id: number) => prisma.user.upsert({ where: { id }, update: { neighborhoodId: N, activityPrivacy: 'public', banned: false }, create: { id, username: `smp_${id}`, email: `smp_${id}@x.com`, passwordHash: 'x', fullName: 'Şamp', tierId: 1, tierSportCounts: {}, neighborhoodId: N, activityPrivacy: 'public' } })
+    await mkU(990221); await mkU(990222)
+    await prisma.booking.deleteMany({ where: { userId: { in: [990221, 990222] } } })
+    const bk = (id: number, uid: number, sid: number) => prisma.booking.create({ data: { id, userId: uid, sessionId: sid, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `SMP-${id}-${Date.now()}`, checkedIn: false } })
+    await bk(990223, 990221, 990221); await bk(990224, 990221, 990222); await bk(990225, 990222, 990221) // 990221→2 ders, 990222→1 ders
+    await prisma.userBadge.deleteMany({ where: { badgeId: champB.id, seasonKey: prev.key } }) // dedupe temizle
+    await awardSeasonChampions()
+    const a = await prisma.userBadge.findMany({ where: { userId: 990221, badgeId: champB.id, seasonKey: prev.key, scopeType: 'district', scopeId: N } })
+    if (!a.some(x => x.rank === 1)) throw new Error('990221 ilçe 1.liği alamadı')
+    const b = await prisma.userBadge.findMany({ where: { userId: 990222, badgeId: champB.id, seasonKey: prev.key, scopeType: 'district', scopeId: N } })
+    if (!b.some(x => x.rank === 2)) throw new Error('990222 ilçe 2.liği alamadı')
+    const tok = jwt.sign({ userId: 990221, email: 'smp_990221@x.com' }, JWT_SECRET, { expiresIn: '1h' })
+    const me = await http('/api/auth/me', { token: tok })
+    const cb = (me.json?.user?.badges || []).find((x: any) => x.badge?.key === 'season_champion')
+    if (!cb?.scopeName) throw new Error('getMe şampiyon rozetinde scopeName yok')
+    if (!cb?.seasonLabel) throw new Error('getMe şampiyon rozetinde seasonLabel yok')
+    await prisma.userBadge.deleteMany({ where: { badgeId: champB.id, seasonKey: prev.key } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { userId: { in: [990221, 990222] } } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: { in: [990221, 990222] } } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: N } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: { in: [990221, 990222] } } }).catch(() => {})
+    await prisma.neighborhood.deleteMany({ where: { id: N } }).catch(() => {})
   })
 
   await check('Cron hatırlatma: eşzamanlı 2 tetikte tek mail (atomik reminderSent claim)', async () => {

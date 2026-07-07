@@ -105,6 +105,11 @@ model UserBadge {
   sportCategoryId Int?
   venue           Venue?         @relation(fields: [venueId], references: [id])
   venueId         Int?
+  // Sezon şampiyonu rozetleri için (season_champion): kapsam + derece + sezon
+  rank            Int?           // 1=altın, 2=gümüş, 3=bronz
+  seasonKey       String?        // örn "yaz-2026" — sezon başına tek kez ödül (çift-vermez)
+  scopeType       String?        // 'city' | 'district'
+  scopeId         Int?           // scopeType'a göre cityId veya neighborhoodId
   earnedAt        DateTime       @default(now())
 }
 
@@ -150,6 +155,7 @@ model User {
   totalLessonsCompleted Int                  @default(0)
   rewardPoints          Int                  @default(0)
   rewardPointsYear      Int?                 // puanların ait olduğu yıl (yıllık reset için)
+  recordStreak          Int                  @default(0)  // kullanıcının EN UZUN (rekor) günlük serisi — profilde tek rozet, yeni rekorda güncellenir
   lastStreakNudgeAt     DateTime?            // son streak teşvik e-postası (spam önleme)
   preferredSports       Json                 @default("[]") // kayıtta seçilen spor tercihleri (isim dizisi)
   preferredNeighborhoods Json                @default("[]") // kayıtta seçilen mahalle tercihleri (id dizisi)

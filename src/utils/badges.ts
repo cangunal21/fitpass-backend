@@ -21,7 +21,7 @@ export async function syncUserBadges(userId: number): Promise<string[]> {
     }),
     prisma.badge.findMany(),
     prisma.userBadge.findMany({ where: { userId }, select: { badgeId: true, sportCategoryId: true } }),
-    prisma.user.findUnique({ where: { id: userId }, select: { tier: { select: { name: true } } } }),
+    prisma.user.findUnique({ where: { id: userId }, select: { tier: { select: { name: true } }, recordStreak: true } }),
   ])
 
   const totalLessons = bookings.length + dropins.length
@@ -31,6 +31,13 @@ export async function syncUserBadges(userId: number): Promise<string[]> {
     ...dropins.filter(d => d.checkedIn).map(d => d.slot?.startsAt),
   ].filter(Boolean) as Date[]
   const streak = longestDailyStreak(dates)
+
+  // Rekor seri: kullanıcının EN UZUN serisi profilde tek rozet olarak gösterilir.
+  // Yeni rekor kırılınca güncellenir (7 olunca eski 3 gider, 7 yazar). Kademeli streak
+  // rozeti YOK — tek evrilen rekor. (Serinin altına düşmek rekoru silmez, rekor kalıcı.)
+  if (streak > (user?.recordStreak || 0)) {
+    await prisma.user.update({ where: { id: userId }, data: { recordStreak: streak } }).catch(() => {})
+  }
 
   // Spor adları (ders kategorisi metni + drop-in spor adı)
   const sportNames = [
@@ -76,7 +83,7 @@ export async function syncUserBadges(userId: number): Promise<string[]> {
     switch (badge.criteriaType) {
       case 'first_lesson': ok = totalLessons >= 1; break
       case 'lessons': ok = totalLessons >= (badge.criteriaValue || 0); break
-      case 'streak': ok = streak >= (badge.criteriaValue || 0); break
+      // 'streak' kademeli rozeti kaldırıldı → tek "rekor seri" (User.recordStreak) modeli
       case 'variety': ok = distinctSports >= (badge.criteriaValue || 0); break
       case 'loyalty': ok = maxVenue >= (badge.criteriaValue || 0); break
       case 'team': ok = teamCount >= (badge.criteriaValue || 0); break

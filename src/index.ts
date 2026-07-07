@@ -12,6 +12,8 @@ import { sendRemindersJob } from './jobs/reminderJob'
 import { sendStreakNudges } from './jobs/streakJob'
 import { ensureTiers } from './utils/ensureTiers'
 import { ensureGeo } from './utils/ensureGeo'
+import { ensureBadges } from './utils/ensureBadges'
+import { awardSeasonChampions } from './jobs/championJob'
 import authRoutes from './routes/auth'
 import bookingRoutes from './routes/bookings'
 import venueRoutes from './routes/venue'
@@ -172,6 +174,10 @@ app.listen(PORT, () => {
   ensureTiers()
   // İl + ilçe verisini garanti et (İstanbul seed'li; 4 yeni il + tüm ilçeleri idempotent ekle)
   ensureGeo()
+  // Kanonik rozetleri (sezon şampiyonu) garanti et, sonra biten sezon şampiyonlarını ödüllendir
+  ensureBadges().then(() => awardSeasonChampions())
+  // Sezon dönümünü yakalamak için 12 saatte bir kontrol (sezon başına tek kez ödül verir)
+  setInterval(() => { awardSeasonChampions() }, 12 * 60 * 60 * 1000)
   // Her 30 dakikada hatırlatma maili gönder
   sendRemindersJob()
   setInterval(sendRemindersJob, 30 * 60 * 1000)

@@ -8,6 +8,7 @@ import { sendWelcomeEmail, sendPasswordResetEmail, sendEmailVerificationEmail, s
 import { applyReferralCode } from './referralController'
 import { syncUserTier, resetYearlyPointsIfNeeded } from '../utils/tier'
 import { syncUserBadges } from '../utils/badges'
+import { seasonLabelsFromKey } from '../utils/season'
 import { purgeUserReviews, purgeUserComments } from '../utils/moderation'
 import { sendPushNotification } from '../utils/push'
 import { isValidEmail, MIN_PASSWORD, clampStr } from '../utils/validate'
@@ -205,6 +206,7 @@ export const getMe = async (req: Request & { userId?: number }, res: Response) =
         phone: true,
         totalLessonsCompleted: true,
         rewardPoints: true,
+        recordStreak: true,
         profilePrivacy: true,
         activityPrivacy: true,
         emailReminders: true,
@@ -220,6 +222,10 @@ export const getMe = async (req: Request & { userId?: number }, res: Response) =
           select: {
             id: true,
             earnedAt: true,
+            rank: true,
+            seasonKey: true,
+            scopeType: true,
+            scopeId: true,
             badge: { select: { key: true, name: true, description: true, iconUrl: true } },
             sportCategory: { select: { name: true } },
           },
@@ -230,6 +236,25 @@ export const getMe = async (req: Request & { userId?: number }, res: Response) =
 
     if (!user) {
       return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
+    }
+
+    // Sezon şampiyonu rozetlerine kapsam adı (il/ilçe) + sezon etiketi (TR/EN) ekle
+    const champs = (user.badges as any[]).filter(b => b.badge?.key === 'season_champion')
+    if (champs.length) {
+      const nbIds = [...new Set(champs.filter(c => c.scopeType === 'district').map(c => c.scopeId))] as number[]
+      const cityIds = [...new Set(champs.filter(c => c.scopeType === 'city').map(c => c.scopeId))] as number[]
+      const [nbs, cities] = await Promise.all([
+        nbIds.length ? prisma.neighborhood.findMany({ where: { id: { in: nbIds } }, select: { id: true, name: true } }) : Promise.resolve([]),
+        cityIds.length ? prisma.city.findMany({ where: { id: { in: cityIds } }, select: { id: true, name: true } }) : Promise.resolve([]),
+      ])
+      const nbMap = new Map(nbs.map(n => [n.id, n.name]))
+      const cityMap = new Map(cities.map(c => [c.id, c.name]))
+      for (const c of champs) {
+        c.scopeName = c.scopeType === 'district' ? (nbMap.get(c.scopeId) || '') : (cityMap.get(c.scopeId) || '')
+        const s = seasonLabelsFromKey(c.seasonKey)
+        c.seasonLabel = s.label
+        c.seasonLabelEn = s.labelEn
+      }
     }
 
     return res.json({ user })
