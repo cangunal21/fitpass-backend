@@ -96,6 +96,12 @@ async function cleanup() {
   await prisma.class.deleteMany({ where: { id: 990151 } }).catch(() => {})
   // For You distinct testi kalıntısı
   await prisma.class_Session.deleteMany({ where: { id: 990171 } }).catch(() => {})
+  // Kurucu/Elçi testi kalıntıları (990241-990244)
+  await prisma.referral.deleteMany({ where: { referrerId: 990241 } }).catch(() => {})
+  await prisma.userBadge.deleteMany({ where: { userId: 990241 } }).catch(() => {})
+  await prisma.booking.deleteMany({ where: { userId: 990241 } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: 990241 } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: { in: [990241, 990242, 990243, 990244] } } }).catch(() => {})
   // Rekor seri + sezon şampiyonu testi kalıntıları (990221-990233)
   await prisma.userBadge.deleteMany({ where: { OR: [{ userId: { in: [990221, 990222, 990231] } }, { scopeId: 990221 }] } }).catch(() => {})
   await prisma.booking.deleteMany({ where: { userId: { in: [990221, 990222, 990231] } } }).catch(() => {})
@@ -1007,6 +1013,47 @@ async function run() {
     await prisma.class.deleteMany({ where: { id: N } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: { in: [990221, 990222] } } }).catch(() => {})
     await prisma.neighborhood.deleteMany({ where: { id: N } }).catch(() => {})
+  })
+
+  await check('Rozet kataloğu: streak rozetleri silinir, değerler düzeltilir, founder/referral var', async () => {
+    await ensureBadges()
+    const streak = await prisma.badge.count({ where: { criteriaType: 'streak' } })
+    if (streak !== 0) throw new Error(`streak rozeti kaldı: ${streak}`)
+    const v = await prisma.badge.findUnique({ where: { key: 'variety_5' }, select: { criteriaValue: true } })
+    if (v?.criteriaValue !== 3) throw new Error(`variety ${v?.criteriaValue} (3 bekleniyor)`)
+    const l = await prisma.badge.findUnique({ where: { key: 'loyalty_10' }, select: { criteriaValue: true } })
+    if (l?.criteriaValue !== 5) throw new Error(`loyalty ${l?.criteriaValue} (5 bekleniyor)`)
+    const tm = await prisma.badge.findUnique({ where: { key: 'team_5' }, select: { criteriaValue: true } })
+    if (tm?.criteriaValue !== 3) throw new Error(`team ${tm?.criteriaValue} (3 bekleniyor)`)
+    if (!(await prisma.badge.findUnique({ where: { key: 'founder' } }))) throw new Error('founder rozeti yok')
+    if (!(await prisma.badge.findUnique({ where: { key: 'referral' } }))) throw new Error('referral rozeti yok')
+  })
+
+  await check('Rozet: Kurucu (ilk 500 + ilk ders) + Elçi (3 tamamlanan davet)', async () => {
+    await ensureBadges()
+    const KU = 990241, RIDS = [990242, 990243, 990244]
+    await prisma.referral.deleteMany({ where: { referrerId: KU } })
+    await prisma.userBadge.deleteMany({ where: { userId: KU } })
+    await prisma.booking.deleteMany({ where: { userId: KU } })
+    // createdAt'ı erkene sabitle → kayıt sırası ≤500 garanti (DB boyutundan bağımsız)
+    await prisma.user.upsert({ where: { id: KU }, update: { createdAt: new Date('2020-01-01T00:00:00Z') }, create: { id: KU, username: `ku_${KU}`, email: `ku_${KU}@x.com`, passwordHash: 'x', fullName: 'Kurucu User', tierId: 1, tierSportCounts: {}, createdAt: new Date('2020-01-01T00:00:00Z') } })
+    const past = new Date(Date.now() - 2 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: 990241 }, update: { startsAt: past }, create: { id: 990241, classId: C, startsAt: past, endsAt: new Date(past.getTime() + 3600000), status: 'open', availableSpots: 20 } })
+    await prisma.booking.create({ data: { id: 990241, userId: KU, sessionId: 990241, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `KU-${Date.now()}`, checkedIn: false } })
+    for (const rid of RIDS) {
+      await prisma.user.upsert({ where: { id: rid }, update: {}, create: { id: rid, username: `kr_${rid}`, email: `kr_${rid}@x.com`, passwordHash: 'x', fullName: 'Ref', tierId: 1, tierSportCounts: {} } })
+      await prisma.referral.create({ data: { referrerId: KU, referredId: rid, status: 'completed', completedAt: new Date() } })
+    }
+    const tok = jwt.sign({ userId: KU, email: `ku_${KU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http('/api/auth/me', { token: tok })
+    const keys = (r.json?.user?.badges || []).map((b: any) => b.badge?.key)
+    if (!keys.includes('founder')) throw new Error('Kurucu verilmedi')
+    if (!keys.includes('referral')) throw new Error('Elçi verilmedi')
+    await prisma.referral.deleteMany({ where: { referrerId: KU } }).catch(() => {})
+    await prisma.userBadge.deleteMany({ where: { userId: KU } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { userId: KU } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: 990241 } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: { in: [KU, ...RIDS] } } }).catch(() => {})
   })
 
   await check('Cron hatırlatma: eşzamanlı 2 tetikte tek mail (atomik reminderSent claim)', async () => {
