@@ -93,6 +93,12 @@ async function cleanup() {
   await prisma.class.deleteMany({ where: { id: 990151 } }).catch(() => {})
   // For You distinct testi kalıntısı
   await prisma.class_Session.deleteMany({ where: { id: 990171 } }).catch(() => {})
+  // Salon istatistik groupSize testi kalıntısı (990181)
+  await prisma.booking.deleteMany({ where: { sessionId: 990181 } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: 990181 } }).catch(() => {})
+  await prisma.class.deleteMany({ where: { id: 990181 } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: 990181 } }).catch(() => {})
+  await prisma.venue.deleteMany({ where: { id: 990181 } }).catch(() => {})
   // Nearby global-sort testi kalıntısı (990161-990163)
   await prisma.class_Session.deleteMany({ where: { id: { in: [990161, 990162] } } }).catch(() => {})
   await prisma.class.deleteMany({ where: { id: { in: [990161, 990162] } } }).catch(() => {})
@@ -879,6 +885,26 @@ async function run() {
     if (b1.status !== 201) throw new Error(`1. kullanım başarısız: ${b1.status} ${b1.text.slice(0, 120)}`)
     const b2 = await http('/api/bookings', { method: 'POST', token, body: { sessionId: 990152, couponCode: 'PERUSER1' } })
     if (b2.status !== 400) throw new Error(`2. kullanım engellenmeli (400), gelen: ${b2.status} ${b2.text.slice(0, 120)}`)
+  })
+
+  await check('Salon istatistik: doluluk groupSize (koltuk) sayar, kayıt değil', async () => {
+    const SV = 990181, SU = 990181
+    const sScat = await prisma.sportCategory.findFirst({})
+    await prisma.venue.upsert({ where: { id: SV }, update: { isApproved: true, isActive: true }, create: { id: SV, name: 'Stat Salon', email: `stat${SV}@x.com`, passwordHash: 'x', address: 'Adres', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: SV }, update: {}, create: { id: SV, venueId: SV, title: 'StatDers', category: catName, sportCategoryId: sScat?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 10, isActive: true } })
+    // 2 gün sonra → 'upcoming' (7 gün) penceresine düşer; availableSpots: 10
+    await prisma.class_Session.upsert({ where: { id: SV }, update: { startsAt: new Date(Date.now() + 2 * 86400000) }, create: { id: SV, classId: SV, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), availableSpots: 10, status: 'open' } })
+    await prisma.user.upsert({ where: { id: SU }, update: {}, create: { id: SU, username: `stat_${SU}`, email: `stat_${SU}@x.com`, passwordHash: 'x', fullName: 'Stat User', tierId: 1, tierSportCounts: {} } })
+    await prisma.booking.deleteMany({ where: { sessionId: SV } })
+    // TEK rezervasyon kaydı ama groupSize: 3 → 3 koltuk dolu olmalı
+    await prisma.booking.create({ data: { userId: SU, sessionId: SV, status: 'confirmed', bookingType: 'class', groupSize: 3, baseAmount: 300, commissionAmount: 0, venueCommission: 0, finalAmount: 300, venuePayout: 300, pointsEarned: 0, checkedIn: false, bookingNumber: `STAT-${Date.now()}` } })
+    const vtok = jwt.sign({ venueId: SV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http('/api/venue/stats', { token: vtok })
+    if (r.status !== 200) throw new Error(`stats başarısız: ${r.status} ${r.text.slice(0, 120)}`)
+    const up = (r.json?.upcoming || []).find((x: any) => x.title === 'StatDers')
+    if (!up) throw new Error('StatDers upcoming listesinde yok')
+    if (up.booked !== 3) throw new Error(`booked ${up.booked} (3 bekleniyor — groupSize, kayıt sayısı değil)`)
+    if (up.fillRate !== 30) throw new Error(`fillRate ${up.fillRate} (30 bekleniyor: 3/10 koltuk)`)
   })
 
   // Hesap silme — EN SON (kullanıcıyı kaldırır). Yanlış parola reddedilmeli, doğru parola tüm veriyi temizlemeli.

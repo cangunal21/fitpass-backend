@@ -16,17 +16,22 @@ export const getVenueStats = async (req: Request, res: Response) => {
       },
       include: {
         class: { select: { title: true, basePrice: true } },
-        bookings: { where: { status: 'confirmed' }, select: { id: true, finalAmount: true } }
+        bookings: { where: { status: 'confirmed' }, select: { id: true, finalAmount: true, groupSize: true } }
       },
       orderBy: { startsAt: 'asc' }
     })
+
+    // Doluluk = KOLTUK sayısı: grup rezervasyonu tek kayıt ama groupSize kadar koltuk doldurur.
+    // Tüm booking/waitlist doluluk mantığı groupSize topluyor — istatistik de tutarlı olmalı
+    // (aksi halde grup rezervasyonu olan dolu seans yarı-boş görünür).
+    const occ = (s: (typeof sessions)[number]) => s.bookings.reduce((a, b) => a + (b.groupSize || 1), 0)
 
     // Toplam istatistikler
     const totalSessions = sessions.length
     const totalBookings = sessions.reduce((acc, s) => acc + s.bookings.length, 0)
     const totalRevenue = sessions.reduce((acc, s) => acc + s.bookings.reduce((a, b) => a + b.finalAmount, 0), 0)
     const avgFillRate = sessions.length > 0
-      ? sessions.reduce((acc, s) => acc + (s.availableSpots > 0 ? s.bookings.length / s.availableSpots : 0), 0) / sessions.length
+      ? sessions.reduce((acc, s) => acc + (s.availableSpots > 0 ? occ(s) / s.availableSpots : 0), 0) / sessions.length
       : 0
 
     // Günlere göre doluluk (0=Paz, 1=Pzt...)
@@ -38,7 +43,7 @@ export const getVenueStats = async (req: Request, res: Response) => {
       const day = new Date(s.startsAt).getDay()
       byDay[day].count++
       byDay[day].total += s.availableSpots
-      byDay[day].booked += s.bookings.length
+      byDay[day].booked += occ(s)
     })
 
     const dayStats = Object.entries(byDay).map(([day, data]) => ({
@@ -50,13 +55,13 @@ export const getVenueStats = async (req: Request, res: Response) => {
     // En popüler seanslar
     const topSessions = [...sessions]
       .filter(s => s.availableSpots > 0)
-      .sort((a, b) => (b.bookings.length / b.availableSpots) - (a.bookings.length / a.availableSpots))
+      .sort((a, b) => (occ(b) / b.availableSpots) - (occ(a) / a.availableSpots))
       .slice(0, 5)
       .map(s => ({
         title: s.class.title,
         date: s.startsAt,
-        fillRate: Math.round((s.bookings.length / s.availableSpots) * 100),
-        booked: s.bookings.length,
+        fillRate: Math.round((occ(s) / s.availableSpots) * 100),
+        booked: occ(s),
         capacity: s.availableSpots,
       }))
 
@@ -66,9 +71,9 @@ export const getVenueStats = async (req: Request, res: Response) => {
       .map(s => ({
         title: s.class.title,
         date: s.startsAt,
-        booked: s.bookings.length,
+        booked: occ(s),
         capacity: s.availableSpots,
-        fillRate: s.availableSpots > 0 ? Math.round((s.bookings.length / s.availableSpots) * 100) : 0,
+        fillRate: s.availableSpots > 0 ? Math.round((occ(s) / s.availableSpots) * 100) : 0,
       }))
 
     return res.json({
