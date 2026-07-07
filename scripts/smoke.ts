@@ -972,7 +972,8 @@ async function run() {
   })
 
   await check('Sezon şampiyonu: biten sezonda ilçe+spor ilk 3 rozet + getMe kapsam/sezon', async () => {
-    const cur = seasonInfo()
+    const testNow = new Date(2026, 11, 15) // 15 Ara 2026 → biten sezon Güz 2026 (lansman zemini geçer)
+    const cur = seasonInfo(testNow)
     const prev = seasonInfo(new Date(cur.start.getTime() - 86400000))
     const scat = await prisma.sportCategory.findFirst({})
     await ensureBadges()
@@ -990,7 +991,7 @@ async function run() {
     const bk = (id: number, uid: number, sid: number) => prisma.booking.create({ data: { id, userId: uid, sessionId: sid, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `SMP-${id}-${Date.now()}`, checkedIn: false } })
     await bk(990223, 990221, 990221); await bk(990224, 990221, 990222); await bk(990225, 990222, 990221) // 990221→2 ders, 990222→1 ders
     await prisma.userBadge.deleteMany({ where: { badgeId: champB.id, seasonKey: prev.key } }) // dedupe temizle
-    await awardSeasonChampions()
+    await awardSeasonChampions(testNow)
     const a = await prisma.userBadge.findMany({ where: { userId: 990221, badgeId: champB.id, seasonKey: prev.key, scopeType: 'district', scopeId: N } })
     if (!a.some(x => x.rank === 1)) throw new Error('990221 ilçe 1.liği alamadı')
     const b = await prisma.userBadge.findMany({ where: { userId: 990222, badgeId: champB.id, seasonKey: prev.key, scopeType: 'district', scopeId: N } })

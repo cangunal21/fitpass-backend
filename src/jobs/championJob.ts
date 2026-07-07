@@ -7,12 +7,17 @@ import { sendPushNotification } from '../utils/push'
 // 'season_champion' rozeti verir. Sezon başına TEK kez (seasonKey ile çift-vermez).
 // Sıralama liderlikle aynı kuralla: kullanıcının EV konumu (neighborhoodId → cityId),
 // biten sezondaki onaylı ders sayısı; banlı/gizli hariç.
-export async function awardSeasonChampions() {
+// Lansman sezonu = Güz 2026 (1 Eyl–1 Ara 2026). İlk şampiyon ödülleri bu sezon bitince
+// (1 Aralık 2026) düşer; lansman öncesi sezonlara (Bahar/Yaz 2026) ödül verilmez.
+const LAUNCH_SEASON_START = new Date(2026, 8, 1) // 1 Eylül 2026 = Güz 2026 başlangıcı
+
+export async function awardSeasonChampions(now: Date = new Date()) {
   try {
-    const now = new Date()
     const cur = seasonInfo(now)
     // En son tamamlanmış sezon = güncel sezon başlangıcından 1 gün öncesi
     const prev = seasonInfo(new Date(cur.start.getTime() - 86400000))
+    // Lansman zemini: Güz 2026'dan önceki sezonları ödüllendirme
+    if (prev.start < LAUNCH_SEASON_START) return
     const windowStart = prev.start
     const windowEnd = cur.start // [prev.start, cur.start)
 
