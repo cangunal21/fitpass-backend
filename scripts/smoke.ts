@@ -9,6 +9,7 @@ import { spawn, ChildProcess } from 'child_process'
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
 import { generateToken } from '../src/utils/jwt'
+import { seasonInfo } from '../src/utils/season'
 import prisma from '../src/utils/prisma'
 
 const PORT = 3199
@@ -93,6 +94,11 @@ async function cleanup() {
   await prisma.class.deleteMany({ where: { id: 990151 } }).catch(() => {})
   // For You distinct testi kalıntısı
   await prisma.class_Session.deleteMany({ where: { id: 990171 } }).catch(() => {})
+  // Sezonluk liderlik testi kalıntısı (990211/990212)
+  await prisma.booking.deleteMany({ where: { userId: 990211 } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: { in: [990211, 990212] } } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: 990211 } }).catch(() => {})
+  await prisma.neighborhood.deleteMany({ where: { id: 990211 } }).catch(() => {})
   // Cron hatırlatma idempot-lik testi kalıntısı (990191)
   await prisma.booking.deleteMany({ where: { sessionId: 990191 } }).catch(() => {})
   await prisma.class_Session.deleteMany({ where: { id: 990191 } }).catch(() => {})
@@ -719,6 +725,31 @@ async function run() {
     if (me.streak !== 2) throw new Error(`streak ${me.streak} (2 bekleniyor — D-3 no-show sayılmamalı; confirmed olsaydı 3 çıkardı)`)
     await prisma.booking.deleteMany({ where: { userId: X } }).catch(() => {})
     await prisma.class_Session.deleteMany({ where: { id: { in: [990051, 990052, 990053] } } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: X } }).catch(() => {})
+    await prisma.neighborhood.deleteMany({ where: { id: N } }).catch(() => {})
+  })
+
+  // ---- Sezonluk liderlik: geçen sezonun dersi bu sezon tablosunda sayılmaz ----
+  await check('Sezonluk liderlik: geçen sezon dersi sayılmaz + yanıtta sezon bilgisi var', async () => {
+    const season = seasonInfo()
+    const N = 990211, X = 990211
+    await prisma.neighborhood.upsert({ where: { id: N }, update: {}, create: { id: N, name: 'SezonMah', latitude: 41, longitude: 29, cityId: 1 } })
+    await prisma.user.upsert({ where: { id: X }, update: { neighborhoodId: N, activityPrivacy: 'public', banned: false }, create: { id: X, username: `szn_${X}`, email: `szn_${X}@x.com`, passwordHash: 'x', fullName: 'Sezon User', tierSportCounts: {}, neighborhoodId: N, activityPrivacy: 'public' } })
+    const inSeason = new Date(season.start.getTime() + 5 * 86400000)   // sezon içi
+    const preSeason = new Date(season.start.getTime() - 10 * 86400000) // geçen sezon
+    await prisma.class_Session.upsert({ where: { id: 990211 }, update: { startsAt: inSeason }, create: { id: 990211, classId: C, startsAt: inSeason, endsAt: new Date(inSeason.getTime() + 3600000), status: 'open', availableSpots: 20 } })
+    await prisma.class_Session.upsert({ where: { id: 990212 }, update: { startsAt: preSeason }, create: { id: 990212, classId: C, startsAt: preSeason, endsAt: new Date(preSeason.getTime() + 3600000), status: 'open', availableSpots: 20 } })
+    await prisma.booking.deleteMany({ where: { userId: X } })
+    const mk = (id: number, sid: number) => prisma.booking.create({ data: { id, userId: X, sessionId: sid, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `SZN-${id}-${Date.now()}`, checkedIn: false } })
+    await mk(990211, 990211) // sezon içi → sayılmalı
+    await mk(990212, 990212) // geçen sezon → sayılmamalı
+    const r = await http(`/api/social/leaderboard/users?neighborhoodId=${N}`)
+    const me = (r.json?.leaderboard || []).find((u: any) => u.id === X)
+    if (!me) throw new Error('X sezon liderliğinde yok (sezon içi 1 ders olmalıydı)')
+    if (me.lessonCount !== 1) throw new Error(`lessonCount ${me.lessonCount} (1 bekleniyor — geçen sezon dersi sayılmamalı)`)
+    if (!r.json?.season?.label) throw new Error('yanıtta season.label yok')
+    await prisma.booking.deleteMany({ where: { userId: X } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: { in: [990211, 990212] } } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: X } }).catch(() => {})
     await prisma.neighborhood.deleteMany({ where: { id: N } }).catch(() => {})
   })

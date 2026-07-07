@@ -3,6 +3,7 @@ import prisma from '../utils/prisma'
 import { sendPushNotification } from '../utils/push'
 import { longestDailyStreak, currentDailyStreak, currentWeeklyStreak } from '../utils/streak'
 import { cached } from '../utils/cache'
+import { seasonInfo } from '../utils/season'
 
 export const followUser = async (req: Request, res: Response) => {
   try {
@@ -81,10 +82,11 @@ export const getFollowing = async (req: Request, res: Response) => {
 export const getUserLeaderboard = async (req: Request, res: Response) => {
   try {
     const { branch, neighborhoodId } = req.query
+    const season = seasonInfo()
 
-    const ranked = await cached(`lb-users:${branch || ''}:${neighborhoodId || ''}`, 45000, async () => {
-      // Liderlik her yıl sıfırlanır: sadece bu takvim yılındaki dersler sayılır
-      const startOfYear = new Date(new Date().getFullYear(), 0, 1)
+    const ranked = await cached(`lb-users:${season.key}:${branch || ''}:${neighborhoodId || ''}`, 45000, async () => {
+      // Liderlik her MEVSİM sıfırlanır: sadece bu sezondaki (mevsim başından beri) dersler sayılır
+      const seasonStart = season.start
       // activityPrivacy gizli olanları hariç tut
       const users = await prisma.user.findMany({
         where: {
@@ -103,7 +105,7 @@ export const getUserLeaderboard = async (req: Request, res: Response) => {
             where: {
               status: 'confirmed',
               session: {
-                startsAt: { gte: startOfYear },
+                startsAt: { gte: seasonStart },
                 ...(branch ? { class: { category: branch as string } } : {}),
               },
             },
@@ -118,7 +120,7 @@ export const getUserLeaderboard = async (req: Request, res: Response) => {
         .slice(0, 50)
     })
 
-    return res.json({ leaderboard: ranked })
+    return res.json({ leaderboard: ranked, season: { name: season.name, nameEn: season.nameEn, label: season.label, labelEn: season.labelEn, startsAt: season.start } })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
@@ -131,8 +133,9 @@ export const getStreakLeaderboard = async (req: Request, res: Response) => {
   try {
     const { branch, neighborhoodId } = req.query
     const now = new Date()
+    const season = seasonInfo(now)
 
-    const ranked = await cached(`lb-streak:${branch || ''}:${neighborhoodId || ''}`, 45000, async () => {
+    const ranked = await cached(`lb-streak:${season.key}:${branch || ''}:${neighborhoodId || ''}`, 45000, async () => {
     const users = await prisma.user.findMany({
       where: {
         banned: false,
@@ -151,7 +154,7 @@ export const getStreakLeaderboard = async (req: Request, res: Response) => {
             status: 'confirmed',
             checkedIn: true, // seri = GERÇEKTEN gidilmiş (kullanıcının kendi takvimiyle tutarlı)
             session: {
-              startsAt: { lt: now },
+              startsAt: { gte: season.start, lt: now }, // seri de her mevsim sıfırlanır
               ...(branch ? { class: { category: branch as string } } : {}),
             },
           },
@@ -162,7 +165,7 @@ export const getStreakLeaderboard = async (req: Request, res: Response) => {
             status: 'confirmed',
             checkedIn: true,
             slot: {
-              startsAt: { lt: now },
+              startsAt: { gte: season.start, lt: now },
               ...(branch ? { sportCategory: { name: branch as string } } : {}),
             },
           },
@@ -193,7 +196,7 @@ export const getStreakLeaderboard = async (req: Request, res: Response) => {
       .slice(0, 50)
     })
 
-    return res.json({ leaderboard: ranked })
+    return res.json({ leaderboard: ranked, season: { name: season.name, nameEn: season.nameEn, label: season.label, labelEn: season.labelEn, startsAt: season.start } })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
