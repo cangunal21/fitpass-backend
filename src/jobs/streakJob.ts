@@ -72,20 +72,26 @@ export const sendStreakNudges = async () => {
         const dailyStreak = currentDailyStreak(pastDates, now)
         const weeklyStreak = currentWeeklyStreak(pastDates, now)
 
-        let sent = false
         // Günlük seri önceliği (daha acil): 2+ gün ve bugün henüz gitmemiş
-        if (dailyStreak >= 2 && !wentToday) {
+        const wantDaily = dailyStreak >= 2 && !wentToday
+        const wantWeekly = !wantDaily && weeklyStreak >= 2 && !wentThisWeek
+        if (!wantDaily && !wantWeekly) continue
+
+        // Atomik sahiplen: guard penceresinde başka çalışma göndermediyse lastStreakNudgeAt'i
+        // GÖNDERMEDEN önce ilerlet → sadece sahiplenen çalışma gönderir (çoklu instance / eşzamanlı
+        // tetiklemede aynı kullanıcıya çift streak bildirimi gitmez). count===0 ise başka çalışma aldı.
+        const claim = await prisma.user.updateMany({
+          where: { id: userId, OR: [{ lastStreakNudgeAt: null }, { lastStreakNudgeAt: { lte: guardWindow } }] },
+          data: { lastStreakNudgeAt: now },
+        })
+        if (claim.count === 0) continue
+
+        if (wantDaily) {
           await sendStreakNudgeEmail(user.email, user.fullName, 'daily', dailyStreak)
           if (user.pushToken) sendPushNotification(user.pushToken, `🔥 ${dailyStreak} günlük serini bozma!`, `Bugün de bir derse katıl, serini ${dailyStreak + 1} güne çıkar!`).catch(() => {})
-          sent = true
-        } else if (weeklyStreak >= 2 && !wentThisWeek) {
+        } else {
           await sendStreakNudgeEmail(user.email, user.fullName, 'weekly', weeklyStreak)
           if (user.pushToken) sendPushNotification(user.pushToken, `🔥 ${weeklyStreak} haftalık serini sürdür!`, `Bu hafta da bir derse katıl, serini ${weeklyStreak + 1} haftaya taşı!`).catch(() => {})
-          sent = true
-        }
-
-        if (sent) {
-          await prisma.user.update({ where: { id: userId }, data: { lastStreakNudgeAt: now } })
         }
       } catch (uErr) {
         console.error('Streak nudge (user) error:', userId, uErr)

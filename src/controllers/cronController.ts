@@ -45,6 +45,14 @@ export const sendReminders = async (req: Request, res: Response) => {
     for (const booking of bookings) {
       try {
         if (!booking.user?.email) continue
+        // Atomik sahiplen: reminderSent'i false→true çevirebilen TEK çalışma gönderir
+        // (dahili 30-dk job ile aynı anda çalışsa bile çift mail gitmez).
+        const claim = await prisma.booking.updateMany({
+          where: { id: booking.id, reminderSent: false },
+          data: { reminderSent: true },
+        })
+        if (claim.count === 0) continue
+
         const startsAt = new Date(booking.session!.startsAt)
         const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
         const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
@@ -57,11 +65,6 @@ export const sendReminders = async (req: Request, res: Response) => {
           time,
           booking.session!.class.venue?.name || ''
         )
-
-        await prisma.booking.update({
-          where: { id: booking.id },
-          data: { reminderSent: true }
-        })
         sent++
       } catch (e) {
         console.error(`Reminder email error for booking ${booking.id}:`, e)

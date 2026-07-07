@@ -93,6 +93,11 @@ async function cleanup() {
   await prisma.class.deleteMany({ where: { id: 990151 } }).catch(() => {})
   // For You distinct testi kalıntısı
   await prisma.class_Session.deleteMany({ where: { id: 990171 } }).catch(() => {})
+  // Cron hatırlatma idempot-lik testi kalıntısı (990191)
+  await prisma.booking.deleteMany({ where: { sessionId: 990191 } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: 990191 } }).catch(() => {})
+  await prisma.class.deleteMany({ where: { id: 990191 } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: 990191 } }).catch(() => {})
   // Salon istatistik groupSize testi kalıntısı (990181)
   await prisma.booking.deleteMany({ where: { sessionId: 990181 } }).catch(() => {})
   await prisma.class_Session.deleteMany({ where: { id: 990181 } }).catch(() => {})
@@ -905,6 +910,21 @@ async function run() {
     if (!up) throw new Error('StatDers upcoming listesinde yok')
     if (up.booked !== 3) throw new Error(`booked ${up.booked} (3 bekleniyor — groupSize, kayıt sayısı değil)`)
     if (up.fillRate !== 30) throw new Error(`fillRate ${up.fillRate} (30 bekleniyor: 3/10 koltuk)`)
+  })
+
+  await check('Cron hatırlatma: eşzamanlı 2 tetikte tek mail (atomik reminderSent claim)', async () => {
+    const RS = 990191
+    await prisma.class.upsert({ where: { id: RS }, update: {}, create: { id: RS, venueId: V, title: 'ReminderDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const startsAt = new Date(Date.now() + 120 * 60 * 1000) // +2 saat → hatırlatma penceresi (105-135 dk)
+    await prisma.class_Session.upsert({ where: { id: RS }, update: { startsAt, status: 'open' }, create: { id: RS, classId: RS, startsAt, endsAt: new Date(startsAt.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.user.upsert({ where: { id: RS }, update: { email: `rem_${RS}@x.com` }, create: { id: RS, username: `rem_${RS}`, email: `rem_${RS}@x.com`, passwordHash: 'x', fullName: 'Reminder User', tierId: 1, tierSportCounts: {} } })
+    await prisma.booking.deleteMany({ where: { sessionId: RS } })
+    await prisma.booking.create({ data: { userId: RS, sessionId: RS, status: 'confirmed', bookingType: 'class', groupSize: 1, baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, pointsEarned: 0, reminderSent: false, checkedIn: false, bookingNumber: `REM-${Date.now()}` } })
+    const secret = process.env.CRON_SECRET || 'cron-secret-2024'
+    const hit = (): Promise<any> => fetch(BASE + '/api/cron/reminders', { headers: { 'x-cron-secret': secret } }).then(r => r.json()).catch(() => ({ sent: 0 }))
+    const [a, b] = await Promise.all([hit(), hit()])
+    const total = (a?.sent || 0) + (b?.sent || 0)
+    if (total !== 1) throw new Error(`toplam gönderim ${total} (1 bekleniyor — eşzamanlı tetikte çift mail olmamalı)`)
   })
 
   // Hesap silme — EN SON (kullanıcıyı kaldırır). Yanlış parola reddedilmeli, doğru parola tüm veriyi temizlemeli.
