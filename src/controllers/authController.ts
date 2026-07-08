@@ -368,16 +368,24 @@ export const updateProfile = async (req: Request, res: Response) => {
 export const updatePrivacy = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId
-    const { activityPrivacy } = req.body
+    const { activityPrivacy, profilePrivacy } = req.body
 
-    if (!['public', 'private'].includes(activityPrivacy)) {
-      return res.status(400).json({ error: 'Geçersiz gizlilik ayarı.' })
+    const data: any = {}
+    if (activityPrivacy !== undefined) {
+      if (!['public', 'private'].includes(activityPrivacy)) return res.status(400).json({ error: 'Geçersiz gizlilik ayarı.' })
+      data.activityPrivacy = activityPrivacy
     }
+    if (profilePrivacy !== undefined) {
+      // Gizli hesap: yeni takipler istek (pending) olur; herkese açık: doğrudan kabul
+      if (!['public', 'private'].includes(profilePrivacy)) return res.status(400).json({ error: 'Geçersiz gizlilik ayarı.' })
+      data.profilePrivacy = profilePrivacy
+    }
+    if (Object.keys(data).length === 0) return res.status(400).json({ error: 'Geçersiz gizlilik ayarı.' })
 
     const user = await prisma.user.update({
       where: { id: userId },
-      data: { activityPrivacy },
-      select: { id: true, activityPrivacy: true }
+      data,
+      select: { id: true, activityPrivacy: true, profilePrivacy: true }
     })
 
     return res.json({ message: 'Gizlilik ayarı güncellendi.', user })
