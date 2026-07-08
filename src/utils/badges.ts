@@ -27,11 +27,14 @@ export async function syncUserBadges(userId: number): Promise<string[]> {
   ])
 
   const totalLessons = bookings.length + dropins.length
-  // Düzenli rozeti: bir SEZON içinde 10 ders (all-time değil). Sezon penceresinden say.
-  const seasonStart = seasonInfo(now).start
-  const seasonLessons =
-    bookings.filter(b => b.session && new Date(b.session.startsAt) >= seasonStart).length +
-    dropins.filter(d => d.slot && new Date(d.slot.startsAt) >= seasonStart).length
+  // Düzenli rozeti: bir SEZON içinde 10 ders (all-time değil). HERHANGİ bir sezonda başarıldıysa
+  // verilir — sadece güncel sezona bakmak, geçmiş sezonda 10'a ulaşıp o sezon uygulamayı hiç
+  // açmayan kullanıcıyı kaçırırdı. Bu yüzden dersleri sezona göre grupla, EN YÜKSEK sezonu al.
+  const seasonTally = new Map<string, number>()
+  const tallySeason = (d?: Date | null) => { if (!d) return; const k = seasonInfo(new Date(d)).key; seasonTally.set(k, (seasonTally.get(k) || 0) + 1) }
+  for (const b of bookings) tallySeason(b.session?.startsAt)
+  for (const d of dropins) tallySeason(d.slot?.startsAt)
+  const maxSeasonLessons = seasonTally.size ? Math.max(...seasonTally.values()) : 0
   // Streak = GERÇEKTEN gidilmiş (check-in'li) günler — takvim/liderlikle tutarlı
   const dates = [
     ...bookings.filter(b => b.checkedIn).map(b => b.session?.startsAt),
@@ -90,7 +93,7 @@ export async function syncUserBadges(userId: number): Promise<string[]> {
     let ok = false
     switch (badge.criteriaType) {
       case 'first_lesson': ok = totalLessons >= 1; break
-      case 'lessons': ok = seasonLessons >= (badge.criteriaValue || 0); break // Düzenli = sezonda 10
+      case 'lessons': ok = maxSeasonLessons >= (badge.criteriaValue || 0); break // Düzenli = herhangi bir sezonda 10
       // 'streak' kademeli rozeti kaldırıldı → tek "rekor seri" (User.recordStreak) modeli
       case 'variety': ok = distinctSports >= (badge.criteriaValue || 0); break
       case 'loyalty': ok = maxVenue >= (badge.criteriaValue || 0); break

@@ -96,6 +96,11 @@ async function cleanup() {
   await prisma.class.deleteMany({ where: { id: 990151 } }).catch(() => {})
   // For You distinct testi kalıntısı
   await prisma.class_Session.deleteMany({ where: { id: 990171 } }).catch(() => {})
+  // Düzenli (geçmiş sezon) testi kalıntıları (990261-990270)
+  await prisma.userBadge.deleteMany({ where: { userId: 990261 } }).catch(() => {})
+  await prisma.booking.deleteMany({ where: { userId: 990261 } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: { in: Array.from({ length: 10 }, (_, i) => 990261 + i) } } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: 990261 } }).catch(() => {})
   // Takip akışı testi kalıntıları (990251/990252)
   await prisma.follow.deleteMany({ where: { OR: [{ followerId: { in: [990251, 990252] } }, { followingId: { in: [990251, 990252] } }] } }).catch(() => {})
   await prisma.notification.deleteMany({ where: { userId: { in: [990251, 990252] } } }).catch(() => {})
@@ -1091,6 +1096,30 @@ async function run() {
     await prisma.follow.deleteMany({ where: { OR: [{ followerId: A }, { followingId: B }] } }).catch(() => {})
     await prisma.notification.deleteMany({ where: { userId: { in: [A, B] } } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: { in: [A, B] } } }).catch(() => {})
+  })
+
+  await check('Düzenli: GEÇMİŞ sezonda 10 ders → rozet (güncel sezon 0 olsa da)', async () => {
+    await ensureBadges()
+    const DU = 990261
+    const ids = Array.from({ length: 10 }, (_, i) => 990261 + i)
+    await prisma.userBadge.deleteMany({ where: { userId: DU } })
+    await prisma.booking.deleteMany({ where: { userId: DU } })
+    await prisma.user.upsert({ where: { id: DU }, update: {}, create: { id: DU, username: `duz_${DU}`, email: `duz_${DU}@x.com`, passwordHash: 'x', fullName: 'Duzenli User', tierId: 1, tierSportCounts: {} } })
+    // 10 seans Nisan 2026 (bahar sezonu — güncel sezondan farklı, geçmiş)
+    for (let i = 0; i < 10; i++) {
+      const sid = 990261 + i
+      const d = new Date('2026-04-10T09:00:00Z'); d.setUTCDate(d.getUTCDate() + i)
+      await prisma.class_Session.upsert({ where: { id: sid }, update: { startsAt: d }, create: { id: sid, classId: C, startsAt: d, endsAt: new Date(d.getTime() + 3600000), status: 'open', availableSpots: 20 } })
+      await prisma.booking.create({ data: { id: sid, userId: DU, sessionId: sid, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `DUZ-${sid}-${Date.now()}`, checkedIn: false } })
+    }
+    const tok = jwt.sign({ userId: DU, email: `duz_${DU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http('/api/auth/me', { token: tok })
+    const keys = (r.json?.user?.badges || []).map((b: any) => b.badge?.key)
+    if (!keys.includes('lessons_10')) throw new Error('Düzenli (lessons_10) verilmedi — geçmiş sezon 10 ders sayılmadı')
+    await prisma.userBadge.deleteMany({ where: { userId: DU } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { userId: DU } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: { in: ids } } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: DU } }).catch(() => {})
   })
 
   await check('Cron hatırlatma: eşzamanlı 2 tetikte tek mail (atomik reminderSent claim)', async () => {
