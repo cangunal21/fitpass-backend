@@ -383,7 +383,7 @@ export const getFeed = async (req: Request, res: Response) => {
 
     // Takip edilenlerin ID'leri
     const follows = await prisma.follow.findMany({
-      where: { followerId: userId },
+      where: { followerId: userId, status: 'accepted' }, // sadece KABUL edilmiş takipler
       select: { followingId: true }
     })
     const followingIds = follows.map(f => f.followingId)
