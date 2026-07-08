@@ -2,6 +2,7 @@ import { registerNumericParams } from '../middlewares/numericParams'
 import { Router } from 'express'
 import {
   followUser, unfollowUser, getFollowStatus, getFollowers, getFollowing,
+  acceptFollowRequest, rejectFollowRequest, getFollowRequests,
   getUserLeaderboard, getVenueLeaderboard, getStreakLeaderboard, getSuggestions, getFeed,
   likeActivity, unlikeActivity, getActivityComments, addActivityComment,
   getNotifications, markNotificationsRead, getMyCalendar,
@@ -13,6 +14,9 @@ const router = Router()
 registerNumericParams(router)
 router.post('/follow/:username', authMiddleware, followUser)
 router.delete('/unfollow/:username', authMiddleware, unfollowUser)
+router.get('/follow-requests', authMiddleware, getFollowRequests)
+router.post('/follow-requests/:username/accept', authMiddleware, acceptFollowRequest)
+router.post('/follow-requests/:username/reject', authMiddleware, rejectFollowRequest)
 router.get('/status/:username', authMiddleware, getFollowStatus)
 router.get('/followers/:username', getFollowers)
 router.get('/following/:username', getFollowing)

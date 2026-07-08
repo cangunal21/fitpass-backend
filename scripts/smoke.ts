@@ -96,6 +96,10 @@ async function cleanup() {
   await prisma.class.deleteMany({ where: { id: 990151 } }).catch(() => {})
   // For You distinct testi kalıntısı
   await prisma.class_Session.deleteMany({ where: { id: 990171 } }).catch(() => {})
+  // Takip akışı testi kalıntıları (990251/990252)
+  await prisma.follow.deleteMany({ where: { OR: [{ followerId: { in: [990251, 990252] } }, { followingId: { in: [990251, 990252] } }] } }).catch(() => {})
+  await prisma.notification.deleteMany({ where: { userId: { in: [990251, 990252] } } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: { in: [990251, 990252] } } }).catch(() => {})
   // Kurucu/Elçi testi kalıntıları (990241-990244)
   await prisma.referral.deleteMany({ where: { referrerId: 990241 } }).catch(() => {})
   await prisma.userBadge.deleteMany({ where: { userId: 990241 } }).catch(() => {})
@@ -1054,6 +1058,39 @@ async function run() {
     await prisma.booking.deleteMany({ where: { userId: KU } }).catch(() => {})
     await prisma.class_Session.deleteMany({ where: { id: 990241 } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: { in: [KU, ...RIDS] } } }).catch(() => {})
+  })
+
+  await check('Takip: açık→accepted+bildirim, gizli→istek+bildirim, kabul→accepted, sayaç accepted-only', async () => {
+    const A = 990251, B = 990252
+    await prisma.follow.deleteMany({ where: { OR: [{ followerId: A }, { followingId: B }] } })
+    await prisma.notification.deleteMany({ where: { userId: { in: [A, B] } } })
+    await prisma.user.upsert({ where: { id: A }, update: {}, create: { id: A, username: `fa_${A}`, email: `fa_${A}@x.com`, passwordHash: 'x', fullName: 'Follower A', tierId: 1, tierSportCounts: {} } })
+    await prisma.user.upsert({ where: { id: B }, update: { profilePrivacy: 'public' }, create: { id: B, username: `fb_${B}`, email: `fb_${B}@x.com`, passwordHash: 'x', fullName: 'Target B', tierId: 1, tierSportCounts: {}, profilePrivacy: 'public' } })
+    const tokA = jwt.sign({ userId: A, email: `fa_${A}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const tokB = jwt.sign({ userId: B, email: `fb_${B}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    // Açık profil → doğrudan accepted + follow bildirimi
+    const r1 = await http(`/api/social/follow/fb_${B}`, { method: 'POST', token: tokA })
+    if (r1.json?.status !== 'accepted') throw new Error(`açık status ${r1.json?.status} (accepted)`)
+    if ((await prisma.notification.count({ where: { userId: B, type: 'follow' } })) < 1) throw new Error('takip bildirimi yok')
+    const st1 = await http(`/api/social/status/fb_${B}`, { token: tokA })
+    if (st1.json?.followers !== 1) throw new Error(`followers ${st1.json?.followers} (1)`)
+    // Gizli profil → istek (pending) + follow_request bildirimi
+    await http(`/api/social/unfollow/fb_${B}`, { method: 'DELETE', token: tokA })
+    await prisma.user.update({ where: { id: B }, data: { profilePrivacy: 'private' } })
+    const r2 = await http(`/api/social/follow/fb_${B}`, { method: 'POST', token: tokA })
+    if (r2.json?.status !== 'pending') throw new Error(`gizli status ${r2.json?.status} (pending)`)
+    if ((await prisma.notification.count({ where: { userId: B, type: 'follow_request' } })) < 1) throw new Error('istek bildirimi yok')
+    const st2 = await http(`/api/social/status/fb_${B}`, { token: tokA })
+    if (st2.json?.followers !== 0 || st2.json?.followStatus !== 'pending') throw new Error(`pending sayaç/status ${st2.json?.followers}/${st2.json?.followStatus}`)
+    // Kabul → accepted + follow_accept bildirimi
+    const acc = await http(`/api/social/follow-requests/fa_${A}/accept`, { method: 'POST', token: tokB })
+    if (acc.status !== 200) throw new Error(`kabul ${acc.status}`)
+    const st3 = await http(`/api/social/status/fb_${B}`, { token: tokA })
+    if (st3.json?.followers !== 1 || st3.json?.followStatus !== 'accepted') throw new Error(`kabul sonrası ${st3.json?.followers}/${st3.json?.followStatus}`)
+    if ((await prisma.notification.count({ where: { userId: A, type: 'follow_accept' } })) < 1) throw new Error('kabul bildirimi yok')
+    await prisma.follow.deleteMany({ where: { OR: [{ followerId: A }, { followingId: B }] } }).catch(() => {})
+    await prisma.notification.deleteMany({ where: { userId: { in: [A, B] } } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: { in: [A, B] } } }).catch(() => {})
   })
 
   await check('Cron hatırlatma: eşzamanlı 2 tetikte tek mail (atomik reminderSent claim)', async () => {

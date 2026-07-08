@@ -9,19 +9,70 @@ export const followUser = async (req: Request, res: Response) => {
   try {
     const followerId = (req as any).userId
     const username = String(req.params.username)
-    const target = await prisma.user.findUnique({ where: { username }, select: { id: true } })
+    const target = await prisma.user.findUnique({ where: { username }, select: { id: true, profilePrivacy: true, pushToken: true } })
     if (!target) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
     if (target.id === followerId) return res.status(400).json({ error: 'Kendinizi takip edemezsiniz.' })
 
     const existing = await prisma.follow.findUnique({ where: { followerId_followingId: { followerId, followingId: target.id } } })
-    if (existing) return res.status(400).json({ error: 'Zaten takip ediyorsunuz.' })
+    if (existing) return res.status(400).json({ error: existing.status === 'pending' ? 'İstek zaten gönderildi.' : 'Zaten takip ediyorsunuz.', status: existing.status })
 
-    await prisma.follow.create({ data: { followerId, followingId: target.id, status: 'accepted' } })
-    return res.json({ message: 'Takip edildi.' })
+    // Gizli profil → istek (pending); açık profil → doğrudan kabul (accepted)
+    const isPrivate = target.profilePrivacy === 'private'
+    const status = isPrivate ? 'pending' : 'accepted'
+    await prisma.follow.create({ data: { followerId, followingId: target.id, status } })
+
+    // Hedefe bildirim (uygulama içi + push) — takipçiye/isteğe göre
+    const me = await prisma.user.findUnique({ where: { id: followerId }, select: { username: true } })
+    const msg = isPrivate ? `@${me?.username} seni takip etmek istiyor` : `@${me?.username} seni takip etmeye başladı`
+    await prisma.notification.create({ data: { userId: target.id, type: isPrivate ? 'follow_request' : 'follow', message: msg, relatedUserId: followerId } }).catch(() => {})
+    if (target.pushToken) sendPushNotification(target.pushToken, isPrivate ? 'Yeni takip isteği' : 'Yeni takipçi 👋', msg).catch(() => {})
+
+    return res.json({ message: isPrivate ? 'Takip isteği gönderildi.' : 'Takip edildi.', status })
   } catch (err: any) {
     if (err?.code === 'P2002') return res.status(400).json({ error: 'Zaten takip ediyorsunuz.' })
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
+}
+
+// Gelen takip isteğini KABUL et (ben = hedef, username = isteği gönderen)
+export const acceptFollowRequest = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    const username = String(req.params.username)
+    const follower = await prisma.user.findUnique({ where: { username }, select: { id: true, pushToken: true } })
+    if (!follower) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
+    const upd = await prisma.follow.updateMany({ where: { followerId: follower.id, followingId: userId, status: 'pending' }, data: { status: 'accepted' } })
+    if (upd.count === 0) return res.status(404).json({ error: 'Bekleyen istek yok.' })
+    const me = await prisma.user.findUnique({ where: { id: userId }, select: { username: true } })
+    await prisma.notification.create({ data: { userId: follower.id, type: 'follow_accept', message: `@${me?.username} takip isteğini kabul etti`, relatedUserId: userId } }).catch(() => {})
+    if (follower.pushToken) sendPushNotification(follower.pushToken, 'Takip isteğin kabul edildi 🎉', `@${me?.username} takip isteğini kabul etti`).catch(() => {})
+    return res.json({ message: 'İstek kabul edildi.' })
+  } catch (err) { return res.status(500).json({ error: 'Sunucu hatası.' }) }
+}
+
+// Gelen takip isteğini REDDET (pending kaydı sil)
+export const rejectFollowRequest = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    const username = String(req.params.username)
+    const follower = await prisma.user.findUnique({ where: { username }, select: { id: true } })
+    if (!follower) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
+    await prisma.follow.deleteMany({ where: { followerId: follower.id, followingId: userId, status: 'pending' } })
+    return res.json({ message: 'İstek reddedildi.' })
+  } catch (err) { return res.status(500).json({ error: 'Sunucu hatası.' }) }
+}
+
+// Bana gelen bekleyen takip istekleri
+export const getFollowRequests = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    const reqs = await prisma.follow.findMany({
+      where: { followingId: userId, status: 'pending' },
+      include: { follower: { select: { id: true, username: true, fullName: true, avatarUrl: true, tier: { select: { name: true, colorHex: true, iconUrl: true } } } } },
+      orderBy: { createdAt: 'desc' },
+    })
+    return res.json({ requests: reqs.map(r => r.follower) })
+  } catch (err) { return res.status(500).json({ error: 'Sunucu hatası.' }) }
 }
 
 export const unfollowUser = async (req: Request, res: Response) => {
@@ -44,9 +95,10 @@ export const getFollowStatus = async (req: Request, res: Response) => {
     if (!target) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
 
     const follow = await prisma.follow.findUnique({ where: { followerId_followingId: { followerId, followingId: target.id } } })
-    const followers = await prisma.follow.count({ where: { followingId: target.id } })
-    const following = await prisma.follow.count({ where: { followerId: target.id } })
-    return res.json({ isFollowing: !!follow, followers, following })
+    // Sayaçlar SADECE kabul edilmiş (accepted) ilişkileri sayar — pending istekler dahil değil
+    const followers = await prisma.follow.count({ where: { followingId: target.id, status: 'accepted' } })
+    const following = await prisma.follow.count({ where: { followerId: target.id, status: 'accepted' } })
+    return res.json({ isFollowing: follow?.status === 'accepted', followStatus: follow?.status || 'none', followers, following })
   } catch (err) { return res.status(500).json({ error: 'Sunucu hatası.' }) }
 }
 
@@ -57,7 +109,7 @@ export const getFollowers = async (req: Request, res: Response) => {
     if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
 
     const follows = await prisma.follow.findMany({
-      where: { followingId: user.id },
+      where: { followingId: user.id, status: 'accepted' },
       include: { follower: { select: { id: true, username: true, fullName: true, avatarUrl: true, tier: { select: { name: true, colorHex: true, iconUrl: true } } } } }
     })
     return res.json({ followers: follows.map(f => f.follower) })
@@ -71,7 +123,7 @@ export const getFollowing = async (req: Request, res: Response) => {
     if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
 
     const follows = await prisma.follow.findMany({
-      where: { followerId: user.id },
+      where: { followerId: user.id, status: 'accepted' },
       include: { following: { select: { id: true, username: true, fullName: true, avatarUrl: true, tier: { select: { name: true, colorHex: true, iconUrl: true } } } } }
     })
     return res.json({ following: follows.map(f => f.following) })
