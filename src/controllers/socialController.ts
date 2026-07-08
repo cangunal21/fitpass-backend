@@ -732,8 +732,23 @@ export const getNotifications = async (req: Request, res: Response) => {
       orderBy: { createdAt: 'desc' },
       take: 50,
     })
+    // İlgili kullanıcıyı ekle (bildirimden profile gidilebilsin + avatar)
+    const relIds = [...new Set(notifications.map(n => n.relatedUserId).filter(Boolean))] as number[]
+    const relUsers = relIds.length
+      ? await prisma.user.findMany({ where: { id: { in: relIds } }, select: { id: true, username: true, fullName: true, avatarUrl: true } })
+      : []
+    const uMap = new Map(relUsers.map(u => [u.id, u]))
+    // follow_request bildirimi hâlâ bekliyor mu? (kabul/ret sonrası buton gösterme)
+    const pendingReqFollowerIds = new Set(
+      (await prisma.follow.findMany({ where: { followingId: userId, status: 'pending' }, select: { followerId: true } })).map(f => f.followerId)
+    )
+    const enriched = notifications.map(n => ({
+      ...n,
+      relatedUser: n.relatedUserId ? uMap.get(n.relatedUserId) || null : null,
+      requestPending: n.type === 'follow_request' && n.relatedUserId ? pendingReqFollowerIds.has(n.relatedUserId) : false,
+    }))
     const unreadCount = await prisma.notification.count({ where: { userId, isRead: false } })
-    return res.json({ notifications, unreadCount })
+    return res.json({ notifications: enriched, unreadCount })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })

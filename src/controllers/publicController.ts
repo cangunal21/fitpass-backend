@@ -494,6 +494,7 @@ export const getUserActivities = async (req: Request, res: Response) => {
         tier: { select: { name: true, pointRate: true, colorHex: true, iconUrl: true } },
         totalLessonsCompleted: true,
         recordStreak: true,
+        preferredSports: true,
         badges: {
           select: {
             id: true,
