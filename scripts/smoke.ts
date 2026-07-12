@@ -96,6 +96,10 @@ async function cleanup() {
   await prisma.class.deleteMany({ where: { id: 990151 } }).catch(() => {})
   // For You distinct testi kalıntısı
   await prisma.class_Session.deleteMany({ where: { id: 990171 } }).catch(() => {})
+  // Gizli hesap testi kalıntıları (990271/990272)
+  await prisma.follow.deleteMany({ where: { OR: [{ followerId: { in: [990271, 990272] } }, { followingId: { in: [990271, 990272] } }] } }).catch(() => {})
+  await prisma.notification.deleteMany({ where: { userId: { in: [990271, 990272] } } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: { in: [990271, 990272] } } }).catch(() => {})
   // Düzenli (geçmiş sezon) testi kalıntıları (990261-990270)
   await prisma.userBadge.deleteMany({ where: { userId: 990261 } }).catch(() => {})
   await prisma.booking.deleteMany({ where: { userId: 990261 } }).catch(() => {})
@@ -1096,6 +1100,35 @@ async function run() {
     await prisma.follow.deleteMany({ where: { OR: [{ followerId: A }, { followingId: B }] } }).catch(() => {})
     await prisma.notification.deleteMany({ where: { userId: { in: [A, B] } } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: { in: [A, B] } } }).catch(() => {})
+  })
+
+  await check('Gizli hesap: içerik sahibi+onaylı takipçiye açık, yabancıya/bekleyene gizli', async () => {
+    const OWN = 990271, VIEW = 990272
+    await prisma.follow.deleteMany({ where: { OR: [{ followerId: VIEW }, { followingId: OWN }] } })
+    await prisma.notification.deleteMany({ where: { userId: { in: [OWN, VIEW] } } })
+    await prisma.user.upsert({ where: { id: OWN }, update: { profilePrivacy: 'private', activityPrivacy: 'public', preferredSports: ['Yoga'] }, create: { id: OWN, username: `gz_${OWN}`, email: `gz_${OWN}@x.com`, passwordHash: 'x', fullName: 'Gizli User', tierId: 1, tierSportCounts: {}, profilePrivacy: 'private', activityPrivacy: 'public', preferredSports: ['Yoga'] } })
+    await prisma.user.upsert({ where: { id: VIEW }, update: {}, create: { id: VIEW, username: `vw_${VIEW}`, email: `vw_${VIEW}@x.com`, passwordHash: 'x', fullName: 'Viewer', tierId: 1, tierSportCounts: {} } })
+    const vtok = jwt.sign({ userId: VIEW, email: `vw_${VIEW}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const otok = jwt.sign({ userId: OWN, email: `gz_${OWN}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    // 1) Yabancı → gizli, içerik yok
+    const r1 = await http(`/api/public/users/gz_${OWN}`, { token: vtok })
+    if (!r1.json?.isProfilePrivate) throw new Error('yabancıya gizli işareti gelmedi')
+    if (r1.json?.user?.preferredSports || r1.json?.user?.badges) throw new Error('gizli hesapta içerik sızdı')
+    // 2) Sahibi → tam içerik
+    const r2 = await http(`/api/public/users/gz_${OWN}`, { token: otok })
+    if (r2.json?.isProfilePrivate) throw new Error('sahibine gizli döndü')
+    if (!('preferredSports' in (r2.json?.user || {}))) throw new Error('sahibine içerik gelmedi')
+    // 3) Bekleyen (pending) takipçi → hâlâ gizli
+    await http(`/api/social/follow/gz_${OWN}`, { method: 'POST', token: vtok })
+    const r3 = await http(`/api/public/users/gz_${OWN}`, { token: vtok })
+    if (!r3.json?.isProfilePrivate) throw new Error('pending takipçiye içerik açıldı (olmamalı)')
+    // 4) Kabul sonrası → onaylı takipçi görür
+    await http(`/api/social/follow-requests/vw_${VIEW}/accept`, { method: 'POST', token: otok })
+    const r4 = await http(`/api/public/users/gz_${OWN}`, { token: vtok })
+    if (r4.json?.isProfilePrivate) throw new Error('onaylı takipçiye hâlâ gizli')
+    await prisma.follow.deleteMany({ where: { OR: [{ followerId: VIEW }, { followingId: OWN }] } }).catch(() => {})
+    await prisma.notification.deleteMany({ where: { userId: { in: [OWN, VIEW] } } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: { in: [OWN, VIEW] } } }).catch(() => {})
   })
 
   await check('Düzenli: GEÇMİŞ sezonda 10 ders → rozet (güncel sezon 0 olsa da)', async () => {

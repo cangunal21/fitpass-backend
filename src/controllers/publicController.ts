@@ -489,7 +489,7 @@ export const getUserActivities = async (req: Request, res: Response) => {
       where: { username },
       select: {
         id: true, username: true, fullName: true, avatarUrl: true,
-        activityPrivacy: true, banned: true,
+        activityPrivacy: true, profilePrivacy: true, banned: true,
         neighborhood: { select: { name: true } },
         tier: { select: { name: true, pointRate: true, colorHex: true, iconUrl: true } },
         totalLessonsCompleted: true,
@@ -515,6 +515,26 @@ export const getUserActivities = async (req: Request, res: Response) => {
     // Banlı kullanıcının public profili görünmesin
     if (user.banned) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
     delete (user as any).banned
+
+    // GİZLİ HESAP (profilePrivacy=private): içeriği yalnızca SAHİBİ veya ONAYLI TAKİPÇİ görür.
+    // Diğerlerine sadece temel kimlik (isim/avatar/tier/ilçe) + "gizli" işareti döner.
+    const viewerId = (req as any).userId
+    const isOwner = !!viewerId && viewerId === user.id
+    let isAcceptedFollower = false
+    if (viewerId && !isOwner) {
+      const f = await prisma.follow.findUnique({
+        where: { followerId_followingId: { followerId: viewerId, followingId: user.id } },
+        select: { status: true },
+      })
+      isAcceptedFollower = f?.status === 'accepted'
+    }
+    if (user.profilePrivacy === 'private' && !isOwner && !isAcceptedFollower) {
+      return res.json({
+        user: { id: user.id, username: user.username, fullName: user.fullName, avatarUrl: user.avatarUrl, tier: user.tier, neighborhood: user.neighborhood, profilePrivacy: 'private' },
+        isProfilePrivate: true,
+        activities: null,
+      })
+    }
 
     // Sezon şampiyonu rozetlerine kapsam adı (il/ilçe) + sezon etiketi (TR/EN)
     const champs = (user.badges as any[]).filter(b => b.badge?.key === 'season_champion')

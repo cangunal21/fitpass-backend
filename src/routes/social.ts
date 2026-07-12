@@ -8,7 +8,7 @@ import {
   getNotifications, markNotificationsRead, getMyCalendar,
 } from '../controllers/socialController'
 import { reportUser } from '../controllers/reportController'
-import { authMiddleware } from '../middlewares/auth'
+import { authMiddleware, optionalAuthMiddleware } from '../middlewares/auth'
 
 const router = Router()
 registerNumericParams(router)
@@ -18,8 +18,8 @@ router.get('/follow-requests', authMiddleware, getFollowRequests)
 router.post('/follow-requests/:username/accept', authMiddleware, acceptFollowRequest)
 router.post('/follow-requests/:username/reject', authMiddleware, rejectFollowRequest)
 router.get('/status/:username', authMiddleware, getFollowStatus)
-router.get('/followers/:username', getFollowers)
-router.get('/following/:username', getFollowing)
+router.get('/followers/:username', optionalAuthMiddleware, getFollowers)
+router.get('/following/:username', optionalAuthMiddleware, getFollowing)
 router.get('/leaderboard/users', getUserLeaderboard)
 router.get('/leaderboard/venues', getVenueLeaderboard)
 router.get('/leaderboard/streaks', getStreakLeaderboard)

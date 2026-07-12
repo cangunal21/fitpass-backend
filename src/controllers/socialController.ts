@@ -102,11 +102,21 @@ export const getFollowStatus = async (req: Request, res: Response) => {
   } catch (err) { return res.status(500).json({ error: 'Sunucu hatası.' }) }
 }
 
+// Gizli hesabın içeriğini (takipçi/takip listeleri) yalnızca SAHİBİ veya ONAYLI TAKİPÇİ görebilir
+async function canViewProfile(viewerId: number | undefined, target: { id: number; profilePrivacy: string | null }): Promise<boolean> {
+  if (target.profilePrivacy !== 'private') return true
+  if (!viewerId) return false
+  if (viewerId === target.id) return true
+  const f = await prisma.follow.findUnique({ where: { followerId_followingId: { followerId: viewerId, followingId: target.id } }, select: { status: true } })
+  return f?.status === 'accepted'
+}
+
 export const getFollowers = async (req: Request, res: Response) => {
   try {
     const username = String(req.params.username)
-    const user = await prisma.user.findUnique({ where: { username }, select: { id: true } })
+    const user = await prisma.user.findUnique({ where: { username }, select: { id: true, profilePrivacy: true } })
     if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
+    if (!(await canViewProfile((req as any).userId, user))) return res.json({ followers: [], isProfilePrivate: true })
 
     const follows = await prisma.follow.findMany({
       where: { followingId: user.id, status: 'accepted' },
@@ -119,8 +129,9 @@ export const getFollowers = async (req: Request, res: Response) => {
 export const getFollowing = async (req: Request, res: Response) => {
   try {
     const username = String(req.params.username)
-    const user = await prisma.user.findUnique({ where: { username }, select: { id: true } })
+    const user = await prisma.user.findUnique({ where: { username }, select: { id: true, profilePrivacy: true } })
     if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
+    if (!(await canViewProfile((req as any).userId, user))) return res.json({ following: [], isProfilePrivate: true })
 
     const follows = await prisma.follow.findMany({
       where: { followerId: user.id, status: 'accepted' },
