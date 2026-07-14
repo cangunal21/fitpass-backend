@@ -96,6 +96,11 @@ async function cleanup() {
   await prisma.class.deleteMany({ where: { id: 990151 } }).catch(() => {})
   // For You distinct testi kalıntısı
   await prisma.class_Session.deleteMany({ where: { id: 990171 } }).catch(() => {})
+  // Kayıt/giriş case testi kalıntısı (usrcase01)
+  {
+    const u = await prisma.user.findFirst({ where: { email: { equals: 'usrcase01@x.com', mode: 'insensitive' } }, select: { id: true } }).catch(() => null)
+    if (u) { await prisma.refreshToken.deleteMany({ where: { userId: u.id } }).catch(() => {}); await prisma.emailVerificationToken.deleteMany({ where: { userId: u.id } }).catch(() => {}); await prisma.user.delete({ where: { id: u.id } }).catch(() => {}) }
+  }
   // Gizli hesap testi kalıntıları (990271/990272)
   await prisma.follow.deleteMany({ where: { OR: [{ followerId: { in: [990271, 990272] } }, { followingId: { in: [990271, 990272] } }] } }).catch(() => {})
   await prisma.notification.deleteMany({ where: { userId: { in: [990271, 990272] } } }).catch(() => {})
@@ -502,7 +507,7 @@ async function run() {
     const reg = async (tag: string, refCode?: string) => {
       const email = `ref_${tag}_${uniq}@x.com`
       const r = await http('/api/auth/register', { method: 'POST', body: { username: `ref_${tag}_${uniq}`, email, password: 'RefTest1234', fullName: `Ref ${tag}`, ...(refCode ? { referralCode: refCode } : {}) } })
-      const u = await prisma.user.findUnique({ where: { email }, select: { id: true } })
+      const u = await prisma.user.findUnique({ where: { email: email.toLowerCase() }, select: { id: true } }) // kod email'i küçük harfe normalize eder
       return { token: r.json?.token as string, id: u?.id as number }
     }
     const R = await reg('R')
@@ -1153,6 +1158,25 @@ async function run() {
     await prisma.booking.deleteMany({ where: { userId: DU } }).catch(() => {})
     await prisma.class_Session.deleteMany({ where: { id: { in: ids } } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: DU } }).catch(() => {})
+  })
+
+  await check('Kayıt/giriş: geçersiz username reddedilir + email case-insensitive', async () => {
+    const email = 'usrcase01@x.com'
+    const clean = async () => { const u = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } }, select: { id: true } }); if (u) { await prisma.refreshToken.deleteMany({ where: { userId: u.id } }); await prisma.emailVerificationToken.deleteMany({ where: { userId: u.id } }); await prisma.user.delete({ where: { id: u.id } }).catch(() => {}) } }
+    await clean()
+    // 1) geçersiz username (boşluk + /) → 400
+    const bad = await http('/api/auth/register', { method: 'POST', body: { username: 'ali veli/x', email: 'valid_reg_x@x.com', password: 'Test1234', fullName: 'T' } })
+    if (bad.status !== 400) throw new Error(`geçersiz username ${bad.status} (400 bekleniyor)`)
+    // 2) karışık-case email ile kayıt (UsrCase01@X.CoM → usrcase01@x.com)
+    const reg = await http('/api/auth/register', { method: 'POST', body: { username: 'usrcase01', email: 'UsrCase01@X.CoM', password: 'Test1234', fullName: 'T' } })
+    if (reg.status !== 201) throw new Error(`kayıt ${reg.status}: ${reg.text.slice(0, 120)}`)
+    // 3) aynı email farklı case → çift hesap engeli 400
+    const dup = await http('/api/auth/register', { method: 'POST', body: { username: 'usrcase02', email: 'usrcase01@x.com', password: 'Test1234', fullName: 'T' } })
+    if (dup.status !== 400) throw new Error(`çift email (case) ${dup.status} (400 bekleniyor)`)
+    // 4) FARKLI case ile giriş → başarılı
+    const login = await http('/api/auth/login', { method: 'POST', body: { email: 'USRCASE01@x.com', password: 'Test1234' } })
+    if (login.status !== 200) throw new Error(`case-insensitive giriş ${login.status} (200 bekleniyor)`)
+    await clean()
   })
 
   await check('Admin: secret yok/yanlış → 401, doğru → 200 (timing-safe)', async () => {

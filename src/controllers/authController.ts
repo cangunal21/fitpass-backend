@@ -32,13 +32,22 @@ export const register = async (req: Request, res: Response) => {
       return res.status(400).json({ error: `Şifre en az ${MIN_PASSWORD} karakter olmalı.` })
     }
 
-    // Mevcut kullanıcı kontrolü
+    // Kullanıcı adı formatı: 3-30 karakter, sadece harf/rakam/nokta/alt çizgi.
+    // (Boşluk, /, @, unicode vb. profil URL'lerini bozar + impersonation riski.)
+    const uname = String(username).trim()
+    if (!/^[a-zA-Z0-9._]{3,30}$/.test(uname)) {
+      return res.status(400).json({ error: 'Kullanıcı adı 3-30 karakter olmalı; yalnızca harf, rakam, nokta ve alt çizgi.' })
+    }
+    // E-posta case-insensitive: normalize (Ali@X.com = ali@x.com) → çift hesap + giriş uyumsuzluğu önlenir
+    const cleanEmail = String(email).trim().toLowerCase()
+
+    // Mevcut kullanıcı kontrolü (case-insensitive — "Ali"/"ali" veya "A@x"/"a@x" çakışsın)
     const existingUser = await prisma.user.findFirst({
-      where: { OR: [{ email }, { username }] }
+      where: { OR: [{ email: { equals: cleanEmail, mode: 'insensitive' } }, { username: { equals: uname, mode: 'insensitive' } }] }
     })
 
     if (existingUser) {
-      if (existingUser.email === email) {
+      if (existingUser.email.toLowerCase() === cleanEmail) {
         return res.status(400).json({ error: 'Bu e-posta zaten kullanılıyor.' })
       }
       return res.status(400).json({ error: 'Bu kullanıcı adı zaten alınmış.' })
@@ -48,8 +57,8 @@ export const register = async (req: Request, res: Response) => {
 
     const user = await prisma.user.create({
       data: {
-        username: clampStr(username, 30) || '',
-        email,
+        username: uname,
+        email: cleanEmail,
         phone: clampStr(phone, 30) || null,
         passwordHash,
         fullName: clampStr(fullName, 80) || '',
@@ -110,7 +119,7 @@ export const login = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'E-posta ve şifre gerekli.' })
     }
 
-    const user = await prisma.user.findUnique({ where: { email } })
+    const user = await prisma.user.findFirst({ where: { email: { equals: String(email).trim(), mode: 'insensitive' } } })
 
     if (!user) {
       return res.status(401).json({ error: 'E-posta veya şifre hatalı.' })
@@ -269,7 +278,7 @@ export const forgotPassword = async (req: Request, res: Response) => {
   try {
     const { email } = req.body
 
-    const user = await prisma.user.findUnique({ where: { email } })
+    const user = await prisma.user.findFirst({ where: { email: { equals: String(email).trim(), mode: 'insensitive' } } })
 
     if (!user) {
       return res.json({ message: 'Email gönderildi' })
