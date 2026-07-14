@@ -1155,6 +1155,15 @@ async function run() {
     await prisma.user.deleteMany({ where: { id: DU } }).catch(() => {})
   })
 
+  await check('Admin: secret yok/yanlış → 401, doğru → 200 (timing-safe)', async () => {
+    const noSecret = await http('/api/admin/stats')
+    if (noSecret.status !== 401) throw new Error(`secretsiz ${noSecret.status} (401 bekleniyor)`)
+    const wrong = await fetch(BASE + '/api/admin/stats', { headers: { 'x-admin-secret': 'yanlis-secret-xyz' } })
+    if (wrong.status !== 401) throw new Error(`yanlış secret ${wrong.status} (401 bekleniyor)`)
+    const ok = await http('/api/admin/stats', { admin: true })
+    if (ok.status !== 200) throw new Error(`doğru secret ${ok.status} (200 bekleniyor)`)
+  })
+
   await check('Cron hatırlatma: eşzamanlı 2 tetikte tek mail (atomik reminderSent claim)', async () => {
     const RS = 990191
     await prisma.class.upsert({ where: { id: RS }, update: {}, create: { id: RS, venueId: V, title: 'ReminderDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
