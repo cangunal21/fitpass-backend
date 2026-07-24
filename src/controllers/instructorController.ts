@@ -58,12 +58,16 @@ export const getVenueInstructors = async (req: Request, res: Response) => {
   try {
     const venueId = (req as any).venueId
 
+    // select (include DEĞİL) → passwordHash salon sahibine SIZMASIN; davet için email/inviteStatus döner
     const instructors = await prisma.instructor.findMany({
       where: { venueId },
-      include: {
-        _count: { select: { classes: true } }
+      select: {
+        id: true, fullName: true, specialty: true, specialtyEn: true, bio: true, bioEn: true,
+        avatarUrl: true, phone: true, email: true, inviteStatus: true,
+        avgRating: true, totalReviews: true, isActive: true, verified: true, createdAt: true,
+        _count: { select: { classes: true } },
       },
-      orderBy: { createdAt: 'desc' }
+      orderBy: { createdAt: 'desc' },
     })
 
     return res.json({ instructors })
