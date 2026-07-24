@@ -1,6 +1,8 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import { sendReportNotificationEmail } from '../utils/email'
+import { applyUserBan } from '../utils/moderation'
+import { parseIntSafe } from '../utils/validate'
 
 // Kullanıcı başka bir kullanıcıyı (profil/avatar vb.) şikayet eder
 export const reportUser = async (req: Request, res: Response) => {
@@ -8,9 +10,16 @@ export const reportUser = async (req: Request, res: Response) => {
     const reporterUserId = (req as any).userId
     const { username, reportedUserId, reason } = req.body
 
-    // Hedefi username veya id ile bul
-    let targetId: number | null = reportedUserId ? parseInt(reportedUserId) : null
-    if (!targetId && username) {
+    // Hedefi id (doğrulanmış) veya username ile bul — id gövdeden gelir, VARLIK teyidi şart
+    // (aksi halde geçersiz/taşan id → FK ihlali 500; "12abc"→12 yanlış kullanıcı şikayeti).
+    let targetId: number | null = null
+    if (reportedUserId !== undefined && reportedUserId !== null && reportedUserId !== '') {
+      const pid = parseIntSafe(reportedUserId)
+      if (pid) {
+        const exists = await prisma.user.findUnique({ where: { id: pid }, select: { id: true } })
+        targetId = exists?.id ?? null
+      }
+    } else if (username) {
       const target = await prisma.user.findFirst({
         where: { username: { equals: String(username).replace(/^@/, ''), mode: 'insensitive' } },
         select: { id: true },
@@ -84,11 +93,13 @@ export const resolveReport = async (req: Request, res: Response) => {
 
     const report = await prisma.report.findUnique({ where: { id: reportId } })
     if (!report) return res.status(404).json({ error: 'Şikayet bulunamadı.' })
+    if (report.status !== 'open') return res.status(400).json({ error: 'Bu şikayet zaten işleme alınmış.' })
 
     if (action === 'remove_avatar') {
       await prisma.user.update({ where: { id: report.reportedUserId }, data: { avatarUrl: null } })
     } else if (action === 'ban') {
-      await prisma.user.update({ where: { id: report.reportedUserId }, data: { banned: true } })
+      // banUser ile AYNI tam ban (cache invalidate + refresh iptal + içerik purge)
+      await applyUserBan(report.reportedUserId, true)
     } else if (action !== 'dismiss') {
       return res.status(400).json({ error: 'Geçersiz işlem.' })
     }

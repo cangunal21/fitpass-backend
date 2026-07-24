@@ -1,6 +1,24 @@
 // Kullanıcı içeriğini (yorum + feed yorumu) toplu temizleme yardımcıları.
 // Hem ban (banUser) hem hesap silme (deleteAccount) tarafından paylaşılır ki
 // yorum silme + salon/eğitmen puan ortalamalarının yeniden hesaplanması tek yerde olsun.
+import prisma from './prisma'
+import { invalidate } from './cache'
+
+// Ban/unban TEK yerde — hem admin banUser hem şikayet resolveReport(ban) bunu çağırır.
+// Ban anında: banned yaz + ban-cache geçersizle + tüm refresh token'ları iptal et +
+// yorum/feed içeriğini sil (banlı içerik public'te kalmasın, puanlar yeniden hesaplanır).
+export async function applyUserBan(userId: number, ban: boolean) {
+  const user = await prisma.user.update({ where: { id: userId }, data: { banned: ban } })
+  invalidate(`banned:${userId}`)
+  if (ban) {
+    await prisma.refreshToken.updateMany({ where: { userId }, data: { revoked: true } }).catch(() => {})
+    await prisma.$transaction(async (tx) => {
+      await purgeUserReviews(tx, userId)
+      await purgeUserComments(tx, userId)
+    }).catch((e) => console.error('Ban içerik temizleme hatası:', e))
+  }
+  return user
+}
 
 // Bir kullanıcının TÜM yorumlarını (Review) siler ve etkilenen salon + eğitmenlerin
 // avgRating/totalReviews değerlerini kalan yorumlara göre yeniden hesaplar.

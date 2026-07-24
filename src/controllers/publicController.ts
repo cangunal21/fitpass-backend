@@ -389,10 +389,15 @@ export const getDropInSlots = async (req: Request, res: Response) => {
 // GET /api/public/dropin/:id
 export const getDropInSlotById = async (req: Request, res: Response) => {
   try {
-    const id = parseInt(req.params.id as string)
+    const id = parseIntSafe(req.params.id)
+    if (!id) return res.status(404).json({ error: 'Slot bulunamadı.' })
     const slot = await prisma.dropInSlot.findUnique({
       where: { id },
-      include: {
+      select: {
+        // privateCode ve bookedBy KASITEN yok — gizli slotun kodu public'e sızmamalı
+        id: true, venueId: true, sportCategoryId: true, title: true, startsAt: true, endsAt: true,
+        format: true, totalPlayers: true, currentPlayers: true, totalPrice: true, pricePerPerson: true,
+        status: true, visibility: true, createdAt: true,
         venue: { select: { id: true, name: true, address: true } },
         sportCategory: { select: { name: true, colorHex: true, iconUrl: true } },
         participants: {
@@ -560,14 +565,23 @@ export const getUserActivities = async (req: Request, res: Response) => {
       return res.json({ user, activities: null, isPrivate: true })
     }
 
-    // Fetch bookings
+    // Fetch bookings — YALNIZCA gösterim alanları (checkInCode/finansal alanlar public'e SIZMAMALI)
     const bookings = await prisma.booking.findMany({
       where: { userId: user.id, status: 'confirmed' },
-      include: {
+      select: {
+        id: true,
+        createdAt: true,
+        status: true,
+        groupSize: true,
         session: {
-          include: {
+          select: {
+            startsAt: true,
             class: {
-              include: { venue: { select: { id: true, name: true } } }
+              select: {
+                title: true, titleEn: true, category: true,
+                sportCategory: { select: { name: true, iconUrl: true, colorHex: true } },
+                venue: { select: { id: true, name: true } },
+              }
             }
           }
         }
@@ -576,12 +590,16 @@ export const getUserActivities = async (req: Request, res: Response) => {
       take: 20,
     })
 
-    // Fetch drop-in participations
+    // Fetch drop-in participations — yalnızca gösterim alanları
     const dropIns = await prisma.dropInParticipant.findMany({
       where: { userId: user.id, status: 'confirmed' },
-      include: {
+      select: {
+        id: true,
+        joinedAt: true,
+        status: true,
         slot: {
-          include: {
+          select: {
+            startsAt: true, title: true,
             venue: { select: { id: true, name: true } },
             sportCategory: { select: { name: true, iconUrl: true, colorHex: true } },
           }

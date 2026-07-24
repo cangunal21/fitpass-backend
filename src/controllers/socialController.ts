@@ -637,6 +637,13 @@ export const unlikeActivity = async (req: Request, res: Response) => {
 export const getActivityComments = async (req: Request, res: Response) => {
   try {
     const feedKey = String(req.params.feedKey)
+    // Gizlilik: gizli aktivitenin yorumları yalnızca sahibine görünür (like/comment yazma ile aynı guard)
+    const viewerId = (req as any).userId
+    const activity = await resolveFeedActivity(feedKey)
+    if (!activity) return res.status(404).json({ error: 'Aktivite bulunamadı.' })
+    if (activity.privacy === 'private' && activity.ownerId !== viewerId) {
+      return res.status(403).json({ error: 'Bu aktiviteye erişiminiz yok.' })
+    }
     const all = await prisma.activityComment.findMany({
       where: { feedKey },
       include: { user: { select: { username: true, fullName: true, avatarUrl: true } } },

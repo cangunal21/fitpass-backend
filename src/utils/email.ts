@@ -380,6 +380,10 @@ export const sendWaitlistNotificationEmail = async (to: string, fullName: string
   })
 }
 
+// Kullanıcı kaynaklı metni HTML e-postaya gömmeden önce kaçışla (HTML enjeksiyonu/phishing önlemi)
+const esc = (s: unknown): string => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string))
+const escSubject = (s: unknown): string => String(s ?? '').replace(/[\r\n]+/g, ' ').slice(0, 200)
+
 export const sendComplaintEmail = async (
   name: string,
   email: string,
@@ -391,20 +395,20 @@ export const sendComplaintEmail = async (
     from: FROM_EMAIL,
     to: adminEmail,
     replyTo: email,
-    subject: `[Şikayet] ${subject}`,
+    subject: `[Şikayet] ${escSubject(subject)}`,
     html: baseTemplate(`
       <h2 style="font-size:20px;font-weight:800;color:#1a1a1a;margin:0 0 20px;">Yeni Şikayet / Geri Bildirim</h2>
       <div style="background:#F8F8F8;border-radius:12px;padding:20px 24px;margin-bottom:20px;">
         <p style="margin:0 0 8px;font-size:13px;color:#888;">Gönderen</p>
-        <p style="margin:0;font-size:15px;font-weight:700;color:#1a1a1a;">${name} · <a href="mailto:${email}" style="color:#4F46E5;">${email}</a></p>
+        <p style="margin:0;font-size:15px;font-weight:700;color:#1a1a1a;">${esc(name)} · <a href="mailto:${esc(email)}" style="color:#4F46E5;">${esc(email)}</a></p>
       </div>
       <div style="background:#F8F8F8;border-radius:12px;padding:20px 24px;margin-bottom:20px;">
         <p style="margin:0 0 8px;font-size:13px;color:#888;">Konu</p>
-        <p style="margin:0;font-size:15px;font-weight:700;color:#1a1a1a;">${subject}</p>
+        <p style="margin:0;font-size:15px;font-weight:700;color:#1a1a1a;">${esc(subject)}</p>
       </div>
       <div style="background:#F8F8F8;border-radius:12px;padding:20px 24px;">
         <p style="margin:0 0 8px;font-size:13px;color:#888;">Mesaj</p>
-        <p style="margin:0;font-size:15px;color:#333;line-height:1.7;white-space:pre-wrap;">${message}</p>
+        <p style="margin:0;font-size:15px;color:#333;line-height:1.7;white-space:pre-wrap;">${esc(message)}</p>
       </div>
       <p style="margin-top:20px;font-size:12px;color:#aaa;">Bu maile yanıt vererek kullanıcıya direkt ulaşabilirsiniz.</p>
     `)
@@ -424,20 +428,20 @@ export const sendReportNotificationEmail = async (
   await resend.emails.send({
     from: FROM_EMAIL,
     to: adminEmail,
-    subject: `[Şikayet] @${reportedUsername} kullanıcısı şikayet edildi`,
+    subject: `[Şikayet] @${escSubject(reportedUsername)} kullanıcısı şikayet edildi`,
     html: baseTemplate(`
       <h2 style="font-size:20px;font-weight:800;color:#1a1a1a;margin:0 0 20px;">Yeni Kullanıcı Şikayeti</h2>
       <div style="background:#FEF2F2;border-radius:12px;padding:20px 24px;margin-bottom:16px;border:1px solid #FECACA;">
         <p style="margin:0 0 8px;font-size:13px;color:#888;">Şikayet edilen kullanıcı</p>
-        <p style="margin:0;font-size:15px;font-weight:700;color:#1a1a1a;">${reportedName} · @${reportedUsername}</p>
+        <p style="margin:0;font-size:15px;font-weight:700;color:#1a1a1a;">${esc(reportedName)} · @${esc(reportedUsername)}</p>
       </div>
       <div style="background:#F8F8F8;border-radius:12px;padding:20px 24px;margin-bottom:16px;">
         <p style="margin:0 0 8px;font-size:13px;color:#888;">Şikayet eden</p>
-        <p style="margin:0;font-size:15px;font-weight:700;color:#1a1a1a;">${reporterName} · @${reporterUsername}</p>
+        <p style="margin:0;font-size:15px;font-weight:700;color:#1a1a1a;">${esc(reporterName)} · @${esc(reporterUsername)}</p>
       </div>
       <div style="background:#F8F8F8;border-radius:12px;padding:20px 24px;">
         <p style="margin:0 0 8px;font-size:13px;color:#888;">Sebep</p>
-        <p style="margin:0;font-size:15px;color:#333;line-height:1.7;white-space:pre-wrap;">${reason || 'Belirtilmedi'}</p>
+        <p style="margin:0;font-size:15px;color:#333;line-height:1.7;white-space:pre-wrap;">${esc(reason || 'Belirtilmedi')}</p>
       </div>
       <div style="text-align:center;margin-top:24px;">
         <a href="${SITE_URL}/admin" style="display:inline-block;padding:12px 28px;background:${BRAND_COLOR};color:#fff;border-radius:12px;text-decoration:none;font-size:14px;font-weight:700;">Admin Panelinde İncele →</a>

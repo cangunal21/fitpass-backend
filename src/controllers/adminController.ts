@@ -2,7 +2,7 @@ import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import { sendVenueApprovedEmail } from '../utils/email'
 import { invalidate } from '../utils/cache'
-import { purgeUserReviews, purgeUserComments } from '../utils/moderation'
+import { purgeUserReviews, purgeUserComments, applyUserBan } from '../utils/moderation'
 import { sendPushNotification } from '../utils/push'
 
 // İstatistikler
@@ -75,7 +75,7 @@ export const getAllUsers = async (req: Request, res: Response) => {
   try {
     const users = await prisma.user.findMany({
       select: {
-        id: true, username: true, email: true, fullName: true,
+        id: true, username: true, email: true, fullName: true, banned: true,
         totalLessonsCompleted: true, rewardPoints: true, createdAt: true,
         _count: { select: { bookings: true } }
       },
@@ -231,22 +231,8 @@ export const banUser = async (req: Request, res: Response) => {
     const userId = parseInt(req.params.id as string)
     const { ban } = req.body
 
-    const user = await prisma.user.update({
-      where: { id: userId },
-      data: { banned: !!ban },
-    })
-    // Ban anında etki etsin: ban-cache'ini geçersiz kıl + tüm refresh token'ları iptal et
-    // (banlı kullanıcı ne yeni access token alabilir ne de mevcut oturumu sürdürebilir).
-    invalidate(`banned:${userId}`)
-    if (ban) {
-      await prisma.refreshToken.updateMany({ where: { userId }, data: { revoked: true } }).catch(() => {})
-      // Banlı kullanıcının yorumları (salon/eğitmen) + feed yorumları silinir; salon/eğitmen
-      // puan ortalamaları yeniden hesaplanır (banlı içerik public'te kalmasın).
-      await prisma.$transaction(async (tx) => {
-        await purgeUserReviews(tx, userId)
-        await purgeUserComments(tx, userId)
-      }).catch((e) => console.error('Ban içerik temizleme hatası:', e))
-    }
+    // Ban/unban tek yerde (applyUserBan): banned + cache invalidate + refresh iptal + içerik purge
+    const user = await applyUserBan(userId, !!ban)
     const { passwordHash, ...safeUser } = user
     return res.json({ message: ban ? 'Kullanıcı banlandı.' : 'Kullanıcı aktif edildi.', user: safeUser })
   } catch (err) {
