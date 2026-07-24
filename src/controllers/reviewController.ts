@@ -51,11 +51,11 @@ export const createReview = async (req: Request, res: Response) => {
     if (!booking.checkedIn) {
       return res.status(403).json({ error: 'Yalnızca derse katıldığınız (giriş onaylı) rezervasyonlar puanlanabilir.' })
     }
-    // Puanlama ders bitiminden 2 saat sonra açılır (bildirim de o an düşer)
+    // Puanlama ders BİTTİĞİ an açılır (uygulamayı hemen açarsa direkt puanlayabilir).
+    // +2 saat yalnızca "hatırlatma bildirimi" için (ratingPromptJob), puanlama hakkını geciktirmez.
     const endsAt = booking.session?.endsAt
-    const RATING_DELAY_MS = 2 * 60 * 60 * 1000
-    if (!endsAt || Date.now() < new Date(endsAt).getTime() + RATING_DELAY_MS) {
-      return res.status(400).json({ error: 'Puanlama, ders bitiminden 2 saat sonra açılır.' })
+    if (!endsAt || Date.now() < new Date(endsAt).getTime()) {
+      return res.status(400).json({ error: 'Puanlama ders bittikten sonra açılır.' })
     }
 
     // Zaten puanlandı mı? (salon satırı referans alınır — bir booking tek kez puanlanır)

@@ -441,6 +441,7 @@ model Booking {
   groupSize        Int            @default(1)
   taggedFriends    Json           @default("[]")
   reminderSent     Boolean        @default(false)
+  ratingPromptSent Boolean        @default(false) // ders bitiminden 2sa sonra "puanla" hatırlatması gönderildi mi
   checkInCode      String?        @unique
   checkedIn        Boolean        @default(false)
   checkedInAt      DateTime?
