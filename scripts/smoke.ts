@@ -158,16 +158,18 @@ async function cleanup() {
   await prisma.favoriteVenue.deleteMany({ where: { userId: 990101 } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990101 } }).catch(() => {})
   await prisma.venue.deleteMany({ where: { id: 990101 } }).catch(() => {})
-  // Yorum yaşam-döngüsü + çift puanlama + pending/job + eğitmen-auth testi kalıntıları
+  // Yorum yaşam-döngüsü + çift puanlama + pending/job + eğitmen-auth + eğitmen-portal testi kalıntıları
   await prisma.notification.deleteMany({ where: { userId: { in: [990093, 990095] } } }).catch(() => {})
-  await prisma.instructorPasswordResetToken.deleteMany({ where: { instructorId: { in: [990093, 990095, 990097, 990098] } } }).catch(() => {})
-  await prisma.review.deleteMany({ where: { OR: [{ venueId: { in: [990091, 990093, 990094, 990095, 990097, 990099] } }, { instructorId: { in: [990093, 990095, 990097, 990098] } }] } }).catch(() => {})
-  await prisma.booking.deleteMany({ where: { userId: { in: [990091, 990093, 990094, 990095, 990097] } } }).catch(() => {})
+  await prisma.instructorPasswordResetToken.deleteMany({ where: { instructorId: { in: [990093, 990095, 990097, 990098, 990100] } } }).catch(() => {})
+  await prisma.review.deleteMany({ where: { OR: [{ venueId: { in: [990091, 990093, 990094, 990095, 990097, 990099, 990100] } }, { instructorId: { in: [990093, 990095, 990097, 990098, 990100] } }] } }).catch(() => {})
+  await prisma.booking.deleteMany({ where: { userId: { in: [990091, 990093, 990094, 990095, 990097, 990100] } } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { class: { venueId: 990100 } } }).catch(() => {})
   await prisma.class_Session.deleteMany({ where: { id: { in: [990091, 990092, 990093, 990094, 990095, 990096] } } }).catch(() => {})
   await prisma.class.deleteMany({ where: { id: { in: [990091, 990093, 990094, 990095] } } }).catch(() => {})
-  await prisma.instructor.deleteMany({ where: { id: { in: [990093, 990095, 990097, 990098] } } }).catch(() => {})
-  await prisma.user.deleteMany({ where: { id: { in: [990091, 990093, 990094, 990095, 990097] } } }).catch(() => {})
-  await prisma.venue.deleteMany({ where: { id: { in: [990091, 990093, 990094, 990095, 990097, 990099] } } }).catch(() => {})
+  await prisma.class.deleteMany({ where: { venueId: 990100 } }).catch(() => {})
+  await prisma.instructor.deleteMany({ where: { id: { in: [990093, 990095, 990097, 990098, 990100] } } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: { in: [990091, 990093, 990094, 990095, 990097, 990100] } } }).catch(() => {})
+  await prisma.venue.deleteMany({ where: { id: { in: [990091, 990093, 990094, 990095, 990097, 990099, 990100] } } }).catch(() => {})
   // Salon gate + pagination testi kalıntıları
   await prisma.class.deleteMany({ where: { venueId: 990071 } }).catch(() => {})
   await prisma.venue.deleteMany({ where: { id: 990071 } }).catch(() => {})
@@ -863,6 +865,68 @@ async function run() {
     await prisma.instructor.deleteMany({ where: { id: { in: [II, II2] } } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: IU } }).catch(() => {})
     await prisma.venue.deleteMany({ where: { id: { in: [IV, IV2] } } }).catch(() => {})
+  })
+
+  // ---- Eğitmen portalı: profil düzenle + kendi dersi + seans + check-in + sahiplik + onay kapısı ----
+  await check('Eğitmen portalı: profil-düzenle + ders/seans ekle + check-in (sahiplik + finans yok + onay)', async () => {
+    const IV = 990100, II = 990100, IU = 990100
+    await prisma.venue.upsert({ where: { id: IV }, update: { isApproved: true, isActive: true }, create: { id: IV, name: 'PortalVenue', email: `pv${IV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.instructor.upsert({ where: { id: II }, update: { isActive: true, venueId: IV }, create: { id: II, venueId: IV, fullName: 'Portal Hoca', isActive: true } })
+    await prisma.user.upsert({ where: { id: IU }, update: {}, create: { id: IU, username: `portal_${IU}`, email: `portal_${IU}@x.com`, passwordHash: 'x', fullName: 'Portal User', tierSportCounts: {} } })
+    const iTok = jwt.sign({ instructorId: II, email: 'portal@x.com', role: 'instructor' }, JWT_SECRET, { expiresIn: '1h' })
+
+    // 1) PUT /me — profil düzenle (fullName/bio/specialty/avatar) + finans SIZMAZ
+    const upd = await http('/api/instructor/me', { method: 'PUT', token: iTok, body: { fullName: 'Yeni Hoca Adı', bio: 'Yeni bio', specialty: 'Yoga · Pilates', avatarUrl: 'https://img/x.jpg' } })
+    if (upd.status !== 200) throw new Error(`profil düzenleme başarısız: ${upd.status} ${upd.text.slice(0, 120)}`)
+    if (upd.json?.instructor?.fullName !== 'Yeni Hoca Adı' || upd.json?.instructor?.bio !== 'Yeni bio' || upd.json?.instructor?.avatarUrl !== 'https://img/x.jpg') throw new Error('profil alanları güncellenmedi')
+    if (/venuePayout|finalAmount|passwordHash|iban/i.test(JSON.stringify(upd.json))) throw new Error('profil yanıtı finans/hassas alan sızdırdı')
+
+    // 2) POST /classes — kendi salonuna, kendi üzerine ders (venueId DB'den, instructorId zorla)
+    const cr = await http('/api/instructor/classes', { method: 'POST', token: iTok, body: { title: 'Sabah Yogası', category: catName, basePrice: 150, duration: 60, capacity: 12 } })
+    if (cr.status !== 201) throw new Error(`ders ekleme başarısız: ${cr.status} ${cr.text.slice(0, 120)}`)
+    const classId = cr.json?.class?.id
+    if (cr.json?.class?.instructorId !== II || cr.json?.class?.venueId !== IV) throw new Error('ders sahiplik/venue hatalı (instructorId/venueId)')
+
+    // 3) POST /classes/:id/sessions — kendi dersine seans
+    const d = new Date(Date.now() + 2 * 86400000)
+    const date = d.toISOString().slice(0, 10)
+    const se = await http(`/api/instructor/classes/${classId}/sessions`, { method: 'POST', token: iTok, body: { date, time: '10:00', capacity: 12 } })
+    if (se.status !== 201) throw new Error(`seans ekleme başarısız: ${se.status} ${se.text.slice(0, 120)}`)
+    const sessionId = se.json?.session?.id
+
+    // 4) GET /classes — yalnız kendi dersi listede
+    const gc = await http('/api/instructor/classes', { token: iTok })
+    if (!(gc.json?.classes || []).some((c: any) => c.id === classId)) throw new Error('kendi dersi /classes listesinde yok')
+
+    // 5) CHECK-IN — kendi dersinin öğrencisini QR koduyla onayla + finans yok + idempotent
+    const code = `PRT${Date.now() % 100000}`
+    await prisma.booking.create({ data: { userId: IU, sessionId, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `PRTB-${Date.now()}`, checkInCode: code, checkedIn: false } })
+    const ci = await http('/api/instructor/checkin', { method: 'POST', token: iTok, body: { code } })
+    if (ci.status !== 200 || !ci.json?.success) throw new Error(`check-in başarısız: ${ci.status} ${ci.text.slice(0, 120)}`)
+    if (/venuePayout|finalAmount|baseAmount|commission/i.test(JSON.stringify(ci.json))) throw new Error('check-in yanıtı finans sızdırdı')
+    const ci2 = await http('/api/instructor/checkin', { method: 'POST', token: iTok, body: { code } })
+    if (!ci2.json?.alreadyCheckedIn) throw new Error('ikinci check-in alreadyCheckedIn dönmedi')
+
+    // 6) SAHİPLİK — başka hocanın (instructorId=null) dersindeki öğrenciyi check-in → 403
+    const otherClass = await prisma.class.create({ data: { venueId: IV, title: 'Başka Ders', category: catName, basePrice: 100, durationMinutes: 60, capacity: 10, isActive: true, instructorId: null } })
+    const past = new Date(Date.now() - 86400000)
+    const otherSess = await prisma.class_Session.create({ data: { classId: otherClass.id, startsAt: past, endsAt: past, availableSpots: 10, status: 'open' } })
+    const code2 = `OTH${Date.now() % 100000}`
+    await prisma.booking.create({ data: { userId: IU, sessionId: otherSess.id, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `OTHB-${Date.now()}`, checkInCode: code2, checkedIn: false } })
+    const ciOther = await http('/api/instructor/checkin', { method: 'POST', token: iTok, body: { code: code2 } })
+    if (ciOther.status !== 403) throw new Error(`başka hocanın öğrencisini check-in yapabildi: ${ciOther.status}`)
+
+    // 7) ONAY KAPISI — salon onaysızsa eğitmen ders ekleyemez (403)
+    await prisma.venue.update({ where: { id: IV }, data: { isApproved: false } })
+    const crBlocked = await http('/api/instructor/classes', { method: 'POST', token: iTok, body: { title: 'Olmaz', category: catName, basePrice: 100, duration: 60, capacity: 10 } })
+    if (crBlocked.status !== 403) throw new Error(`onaysız salonda ders eklenebildi: ${crBlocked.status}`)
+
+    await prisma.booking.deleteMany({ where: { userId: IU } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { class: { venueId: IV } } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { venueId: IV } }).catch(() => {})
+    await prisma.instructor.deleteMany({ where: { id: II } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: IU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: IV } }).catch(() => {})
   })
 
   // ---- Şifre sıfırlama uçtan uca: token tek-kullanım + oturum iptal + hesap sızıntısı yok ----

@@ -27,7 +27,7 @@ export const createInstructor = async (req: Request, res: Response) => {
 
     // Metinleri çeviriden/kayıttan ÖNCE sınırla (AI maliyeti + DB şişmesi)
     const sName = clampStr(fullName, 80) || ''
-    const sSpecialty = clampStr(specialty, 120) || ''
+    const sSpecialty = clampStr(specialty, 200) || ''
     const sBio = clampStr(bio, 1000) || null
     const specialtyEn = await translateSpecialty(sSpecialty)
     const bioEn = sBio ? await translateInstructorBio(sBio) : null
@@ -105,7 +105,7 @@ export const updateInstructor = async (req: Request, res: Response) => {
     }
 
     // Metinleri sınırla (AI maliyeti + DB şişmesi)
-    const sSpecialty = specialty !== undefined ? clampStr(specialty, 120) : undefined
+    const sSpecialty = specialty !== undefined ? clampStr(specialty, 200) : undefined
     const sBio = bio !== undefined ? clampStr(bio, 1000) : undefined
     // Değişen alanları yeniden çevir
     const specialtyEn = (sSpecialty && sSpecialty !== existing.specialty) ? await translateSpecialty(sSpecialty) : undefined

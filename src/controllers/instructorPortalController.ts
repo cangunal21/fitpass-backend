@@ -1,0 +1,203 @@
+import { Request, Response } from 'express'
+import prisma from '../utils/prisma'
+import { clampStr, parseIntSafe } from '../utils/validate'
+import { translateClassTitle, translateSpecialty, translateInstructorBio } from '../utils/translate'
+
+// Eğitmen portalı — kendi profili + kendi dersleri + kendi öğrencilerini check-in.
+// GÜVENLİK: hepsi instructorAuthMiddleware (role='instructor', req.instructorId) arkasında; JWT venueId
+// TAŞIMAZ → venueId DB'den türetilir, instructorId gövdeden ASLA alınmaz, sahiplik hep instructorId
+// ile kurulur. Hiçbir uç FİNANS (venuePayout/commission/finalAmount) döndürmez; drop-in check-in yok
+// (drop-in'in hoca sahibi yoktur).
+
+// PUT /api/instructor/me — kendi profilini düzenle (yalnız fullName/specialty/bio/avatarUrl).
+// email/phone/verified/isActive/venueId ASLA değiştirilemez (login kimliği + tekillik/güven kolonları).
+export const updateInstructorMe = async (req: Request, res: Response) => {
+  try {
+    const instructorId = (req as any).instructorId
+    const { fullName, specialty, bio, avatarUrl } = req.body
+
+    const existing = await prisma.instructor.findUnique({ where: { id: instructorId } })
+    if (!existing) return res.status(404).json({ error: 'Eğitmen bulunamadı.' })
+
+    const sSpecialty = specialty !== undefined ? clampStr(specialty, 200) : undefined // çoklu branş birleşimi → 200
+    const sBio = bio !== undefined ? clampStr(bio, 1000) : undefined
+    const specialtyEn = (sSpecialty && sSpecialty !== existing.specialty) ? await translateSpecialty(sSpecialty) : undefined
+    const bioEn = (sBio && sBio !== existing.bio) ? await translateInstructorBio(sBio) : undefined
+
+    const updated = await prisma.instructor.update({
+      where: { id: instructorId },
+      data: {
+        // fullName NOT NULL — boş string'e düşürme
+        fullName: fullName !== undefined ? (clampStr(fullName, 80) || existing.fullName) : undefined,
+        specialty: sSpecialty,
+        bio: sBio,
+        avatarUrl: avatarUrl !== undefined ? (clampStr(avatarUrl, 500) || null) : undefined,
+        ...(specialtyEn !== undefined ? { specialtyEn } : {}),
+        ...(bioEn !== undefined ? { bioEn } : {}),
+      },
+      select: {
+        id: true, fullName: true, specialty: true, specialtyEn: true, bio: true, bioEn: true,
+        avatarUrl: true, phone: true, email: true, avgRating: true, totalReviews: true,
+        verified: true, isActive: true, venue: { select: { id: true, name: true } },
+      },
+    })
+    return res.json({ message: 'Profil güncellendi!', instructor: updated })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// POST /api/instructor/classes — kendi salonuna, kendi üzerine ders oluştur.
+// venueId DB'den (instructor.venueId), instructorId ZORLA req'den. Salon onaysız/askıdaysa 403.
+export const createInstructorClass = async (req: Request, res: Response) => {
+  try {
+    const instructorId = (req as any).instructorId
+    const inst = await prisma.instructor.findUnique({
+      where: { id: instructorId },
+      select: { venueId: true, venue: { select: { isApproved: true, isActive: true } } },
+    })
+    if (!inst) return res.status(404).json({ error: 'Eğitmen bulunamadı.' })
+    if (!inst.venue?.isApproved || inst.venue?.isActive === false) {
+      return res.status(403).json({ error: 'Salonunuz henüz onaylı/aktif değil. Ders ekleyemezsiniz.' })
+    }
+
+    const { title, description, category, basePrice, duration, capacity } = req.body
+    if (!title || !category || !basePrice || !duration || !capacity) {
+      return res.status(400).json({ error: 'Tüm zorunlu alanları doldurun.' })
+    }
+
+    const sportCat = await prisma.sportCategory.findFirst({
+      where: { name: { equals: category, mode: 'insensitive' } },
+      select: { id: true },
+    })
+
+    const safeTitle = clampStr(title, 120) || ''
+    const safeDesc = clampStr(description, 2000) || null
+    const titleEn = await translateClassTitle(safeTitle)
+
+    const newClass = await prisma.class.create({
+      data: {
+        title: safeTitle,
+        titleEn,
+        description: safeDesc,
+        category,
+        sportCategoryId: sportCat?.id ?? null,
+        basePrice: parseFloat(basePrice),
+        duration: parseInt(duration),
+        durationMinutes: parseInt(duration),
+        capacity: parseInt(capacity),
+        venueId: inst.venueId,     // DB'den — gövdeden ALINMAZ
+        instructorId,              // ZORLA giriş yapan eğitmen — başka hoca adına açılamaz
+        isActive: true,
+      },
+    })
+
+    return res.status(201).json({ message: 'Ders oluşturuldu!', class: newClass })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// POST /api/instructor/classes/:classId/sessions — kendi dersine seans ekle.
+// Sahiplik: cls.instructorId === req.instructorId (venueId DEĞİL).
+export const createInstructorSession = async (req: Request, res: Response) => {
+  try {
+    const instructorId = (req as any).instructorId
+    const classId = parseIntSafe(req.params.classId)
+    const { date, time, capacity } = req.body
+
+    if (!classId || !date || !time || !capacity) {
+      return res.status(400).json({ error: 'Tarih, saat ve kapasite zorunludur.' })
+    }
+
+    const cls = await prisma.class.findUnique({ where: { id: classId }, select: { instructorId: true, durationMinutes: true, duration: true } })
+    // instructorId nullable → kesin eşitlik; sadece KENDİ dersine seans ekleyebilir
+    if (!cls || cls.instructorId !== instructorId) {
+      return res.status(403).json({ error: 'Bu derse seans ekleme yetkiniz yok.' })
+    }
+
+    const startsAt = new Date(`${date}T${time}:00`)
+    if (isNaN(startsAt.getTime()) || startsAt <= new Date()) {
+      return res.status(400).json({ error: 'Geçmiş/geçersiz tarihli seans eklenemez. Gelecekteki bir tarih ve saat seçin.' })
+    }
+    const endsAt = new Date(startsAt.getTime() + (cls.durationMinutes || cls.duration || 60) * 60000)
+
+    const session = await prisma.class_Session.create({
+      data: { classId, startsAt, endsAt, availableSpots: parseInt(capacity) },
+    })
+
+    return res.status(201).json({ message: 'Seans oluşturuldu!', session })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// GET /api/instructor/classes — YALNIZ kendi derslerin (+ yaklaşan seansları). Salon geneli DÖNDÜRMEZ.
+export const getMyInstructorClasses = async (req: Request, res: Response) => {
+  try {
+    const instructorId = (req as any).instructorId
+    const now = new Date()
+    const classes = await prisma.class.findMany({
+      where: { instructorId },
+      select: {
+        id: true, title: true, category: true, basePrice: true, durationMinutes: true,
+        capacity: true, isActive: true,
+        sessions: {
+          where: { startsAt: { gte: now } },
+          orderBy: { startsAt: 'asc' },
+          select: { id: true, startsAt: true, endsAt: true, availableSpots: true, status: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+    return res.json({ classes })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// POST /api/instructor/checkin — öğrenciyi kendi dersinde check-in yap (öğrenci QR kodunu okutur).
+// Sahiplik: booking.session.class.instructorId === req.instructorId. FİNANS DÖNDÜRMEZ.
+export const checkInInstructorBooking = async (req: Request, res: Response) => {
+  try {
+    const instructorId = (req as any).instructorId
+    const { code } = req.body
+    if (!code?.trim()) return res.status(400).json({ error: 'Check-in kodu gerekli.' })
+
+    const booking = await prisma.booking.findFirst({
+      where: { checkInCode: code.trim().toUpperCase() },
+      include: {
+        user: { select: { fullName: true, username: true, avatarUrl: true } },
+        session: { include: { class: { select: { title: true, instructorId: true } } } },
+      },
+    })
+    if (!booking) return res.status(404).json({ error: 'Geçersiz kod. Rezervasyon bulunamadı.' })
+
+    // SAHİPLİK: yalnız KENDİ dersinin öğrencisini check-in yapabilir (instructorId nullable → kesin eşitlik)
+    if (booking.session?.class?.instructorId !== instructorId) {
+      return res.status(403).json({ error: 'Bu rezervasyon sizin dersinize ait değil.' })
+    }
+    if (booking.status !== 'confirmed') {
+      return res.status(400).json({ error: 'Rezervasyon onaylı değil.' })
+    }
+
+    const payload = {
+      user: booking.user,
+      classTitle: booking.session?.class?.title,
+      groupSize: booking.groupSize,
+      checkedInAt: booking.checkedInAt,
+    }
+    if (booking.checkedIn) {
+      return res.json({ alreadyCheckedIn: true, message: 'Bu rezervasyon zaten check-in yapılmış.', booking: payload })
+    }
+    await prisma.booking.update({ where: { id: booking.id }, data: { checkedIn: true, checkedInAt: new Date() } })
+    return res.json({ success: true, message: 'Check-in başarılı!', booking: { ...payload, checkedInAt: new Date() } })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}

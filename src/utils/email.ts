@@ -115,7 +115,7 @@ export const sendInstructorInviteEmail = async (to: string, instructorName: stri
     html: baseTemplate(`
       <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0 0 8px;">Eğitmen Girişin Hazır 🎉</h2>
       <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
-        Merhaba <strong>${esc(instructorName)}</strong>, <strong>${esc(venueName)}</strong> seni Şipşakspor'da eğitmen olarak ekledi. Aşağıdaki butonla şifreni belirleyip kendi puan ve yorumlarını görüp yanıtlayabilirsin. (Salon gelir/finans bilgilerini görmezsin.)
+        Merhaba <strong>${esc(instructorName)}</strong>, <strong>${esc(venueName)}</strong> seni Şipşakspor'da eğitmen olarak ekledi. Aşağıdaki butonla şifreni belirleyip kendi puan ve yorumlarını görüp yanıtlayabilirsin.
       </p>
       <div style="text-align: center; margin-bottom: 24px;">
         <a href="${url}" style="display: inline-block; padding: 14px 32px; background: ${BRAND_COLOR}; color: #fff; border-radius: 14px; text-decoration: none; font-size: 15px; font-weight: 700;">Şifremi Belirle →</a>
