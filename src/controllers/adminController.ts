@@ -194,7 +194,9 @@ export const deleteVenue = async (req: Request, res: Response) => {
       // booking'den ayrıştırılmış olabilir) Review→Instructor FK'sını ihlal etmesin diye ÖNCE silinir.
       const venueInstructors = await tx.instructor.findMany({ where: { venueId }, select: { id: true } })
       if (venueInstructors.length) {
-        await tx.review.deleteMany({ where: { instructorId: { in: venueInstructors.map((i: any) => i.id) } } })
+        const instIds = venueInstructors.map((i: any) => i.id)
+        await tx.review.deleteMany({ where: { instructorId: { in: instIds } } })
+        await tx.instructorPasswordResetToken.deleteMany({ where: { instructorId: { in: instIds } } })
       }
       await tx.instructor.deleteMany({ where: { venueId } })
       // Salon düzeyindeki kalan kayıtlar (bağımsız tablolar)

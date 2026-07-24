@@ -158,15 +158,16 @@ async function cleanup() {
   await prisma.favoriteVenue.deleteMany({ where: { userId: 990101 } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990101 } }).catch(() => {})
   await prisma.venue.deleteMany({ where: { id: 990101 } }).catch(() => {})
-  // Yorum yaşam-döngüsü + çift puanlama + pending/job testi kalıntıları (review → booking → session → class → instructor → user → venue)
+  // Yorum yaşam-döngüsü + çift puanlama + pending/job + eğitmen-auth testi kalıntıları
   await prisma.notification.deleteMany({ where: { userId: { in: [990093, 990095] } } }).catch(() => {})
-  await prisma.review.deleteMany({ where: { OR: [{ venueId: { in: [990091, 990093, 990094, 990095] } }, { instructorId: { in: [990093, 990095] } }] } }).catch(() => {})
-  await prisma.booking.deleteMany({ where: { userId: { in: [990091, 990093, 990094, 990095] } } }).catch(() => {})
+  await prisma.instructorPasswordResetToken.deleteMany({ where: { instructorId: { in: [990093, 990095, 990097, 990098] } } }).catch(() => {})
+  await prisma.review.deleteMany({ where: { OR: [{ venueId: { in: [990091, 990093, 990094, 990095, 990097, 990099] } }, { instructorId: { in: [990093, 990095, 990097, 990098] } }] } }).catch(() => {})
+  await prisma.booking.deleteMany({ where: { userId: { in: [990091, 990093, 990094, 990095, 990097] } } }).catch(() => {})
   await prisma.class_Session.deleteMany({ where: { id: { in: [990091, 990092, 990093, 990094, 990095, 990096] } } }).catch(() => {})
   await prisma.class.deleteMany({ where: { id: { in: [990091, 990093, 990094, 990095] } } }).catch(() => {})
-  await prisma.instructor.deleteMany({ where: { id: { in: [990093, 990095] } } }).catch(() => {})
-  await prisma.user.deleteMany({ where: { id: { in: [990091, 990093, 990094, 990095] } } }).catch(() => {})
-  await prisma.venue.deleteMany({ where: { id: { in: [990091, 990093, 990094, 990095] } } }).catch(() => {})
+  await prisma.instructor.deleteMany({ where: { id: { in: [990093, 990095, 990097, 990098] } } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: { in: [990091, 990093, 990094, 990095, 990097] } } }).catch(() => {})
+  await prisma.venue.deleteMany({ where: { id: { in: [990091, 990093, 990094, 990095, 990097, 990099] } } }).catch(() => {})
   // Salon gate + pagination testi kalıntıları
   await prisma.class.deleteMany({ where: { venueId: 990071 } }).catch(() => {})
   await prisma.venue.deleteMany({ where: { id: 990071 } }).catch(() => {})
@@ -777,6 +778,91 @@ async function run() {
     await prisma.instructor.deleteMany({ where: { id: II } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: IU } }).catch(() => {})
     await prisma.venue.deleteMany({ where: { id: IV } }).catch(() => {})
+  })
+
+  // ---- Faz C: EĞİTMEN AUTH — davet→şifre→giriş→me(finans yok)→yanıt + realm izolasyonu ----
+  await check('Eğitmen auth: davet→şifre→giriş→me(finans yok)→yanıt; salon/eğitmen token izolasyonu', async () => {
+    const IV = 990097, II = 990097, II2 = 990098, IU = 990097, IV2 = 990099
+    await prisma.venue.upsert({ where: { id: IV }, update: { isApproved: true, isActive: true }, create: { id: IV, name: 'AuthVenue', email: `av${IV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.venue.upsert({ where: { id: IV2 }, update: { isApproved: true, isActive: true }, create: { id: IV2, name: 'OtherVenue', email: `ov${IV2}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.instructor.upsert({ where: { id: II }, update: { email: null, passwordHash: null, inviteStatus: 'none', isActive: true, venueId: IV }, create: { id: II, venueId: IV, fullName: 'Auth Hoca', isActive: true } })
+    await prisma.instructor.upsert({ where: { id: II2 }, update: { venueId: IV }, create: { id: II2, venueId: IV, fullName: 'Diğer Hoca', isActive: true } })
+    await prisma.user.upsert({ where: { id: IU }, update: {}, create: { id: IU, username: `arev_${IU}`, email: `arev_${IU}@x.com`, passwordHash: 'x', fullName: 'A Rev', tierSportCounts: {} } })
+    const rvwMine = await prisma.review.create({ data: { reviewerUserId: IU, targetType: 'instructor', instructorId: II, rating: 5, comment: 'harika hoca', isAnonymous: true } })
+    const rvwOther = await prisma.review.create({ data: { reviewerUserId: IU, targetType: 'instructor', instructorId: II2, rating: 3, isAnonymous: true } })
+    const vTok = jwt.sign({ venueId: IV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const vTok2 = jwt.sign({ venueId: IV2, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+
+    // 0) Yanlış salon davet edemez → 403
+    const wrongInv = await http(`/api/venue/instructors/${II}/invite`, { method: 'POST', token: vTok2, body: { email: 'x@x.com' } })
+    if (wrongInv.status !== 403) throw new Error(`başka salon eğitmeni davet edebildi: ${wrongInv.status}`)
+
+    // 1) Salon eğitmeni davet eder. GÜVENLİK: token yanıtta DÖNMEZ (sadece e-posta) → DB'den okunur.
+    const inv = await http(`/api/venue/instructors/${II}/invite`, { method: 'POST', token: vTok, body: { email: 'authhoca@x.com' } })
+    if (inv.status !== 200) throw new Error(`davet başarısız: ${inv.status} ${inv.text.slice(0, 120)}`)
+    if (inv.json?.inviteUrl || inv.json?.token) throw new Error('davet token yanıtta SIZDI (yalnız e-postayla gitmeli)')
+    const rtRow = await prisma.instructorPasswordResetToken.findFirst({ where: { instructorId: II, used: false }, orderBy: { id: 'desc' } })
+    const token = rtRow?.token
+    if (!token) throw new Error('davet token üretilmedi')
+
+    // 2) Şifre belirle: kısa şifre → 400; geçerli → 200; token tek-kullanım (ikinci → 400)
+    if ((await http('/api/instructor/set-password', { method: 'POST', body: { token, password: '123' } })).status !== 400) throw new Error('kısa şifre reddedilmedi')
+    if ((await http('/api/instructor/set-password', { method: 'POST', body: { token, password: 'HocaPass123' } })).status !== 200) throw new Error('şifre belirlenemedi')
+    if ((await http('/api/instructor/set-password', { method: 'POST', body: { token, password: 'HocaPass123' } })).status !== 400) throw new Error('davet token tekrar kullanılabildi (tek-kullanım değil)')
+
+    // 3) Giriş: yanlış şifre → 401; doğru (email case-insensitive) → token
+    if ((await http('/api/instructor/login', { method: 'POST', body: { email: 'authhoca@x.com', password: 'yanlis' } })).status !== 401) throw new Error('yanlış şifre 401 dönmedi')
+    const l = await http('/api/instructor/login', { method: 'POST', body: { email: 'AuthHoca@x.com', password: 'HocaPass123' } })
+    if (l.status !== 200 || !l.json?.token) throw new Error(`giriş başarısız: ${l.status}`)
+    const iTok = l.json.token
+
+    // 4) /me — FİNANS ve hassas alan SIZMAZ
+    const me = await http('/api/instructor/me', { token: iTok })
+    if (me.status !== 200) throw new Error(`/me başarısız: ${me.status}`)
+    for (const leak of ['iban', 'taxNumber', 'identityNumber', 'passwordHash', 'totalRevenue', 'finalAmount', 'venuePayout', 'checkInCode']) {
+      if (JSON.stringify(me.json).toLowerCase().includes(leak.toLowerCase())) throw new Error(`/me finans/hassas alan sızdırdı: ${leak}`)
+    }
+
+    // 5) REALM İZOLASYONU: eğitmen token'ı salon ucunda 401; salon token'ı eğitmen ucunda 401
+    const vLeak = await http('/api/venue/me', { token: iTok })
+    if (vLeak.status !== 401) throw new Error(`eğitmen token'ı SALON ucuna girdi: ${vLeak.status}`)
+    const iLeak = await http('/api/instructor/me', { token: vTok })
+    if (iLeak.status !== 401) throw new Error(`salon token'ı EĞİTMEN ucuna girdi: ${iLeak.status}`)
+    // 5b) KRİTİK: eğitmen/salon token'ı (userId'siz) KULLANICI ucuna girmesin — aksi halde
+    // where:{userId:undefined} tüm kullanıcıların rezervasyonunu döndürürdü (cross-user sızıntı)
+    const uLeak1 = await http('/api/bookings/my', { token: iTok })
+    if (uLeak1.status !== 401) throw new Error(`eğitmen token'ı KULLANICI ucuna girdi (cross-user sızıntı!): ${uLeak1.status}`)
+    const uLeak2 = await http('/api/bookings/my', { token: vTok })
+    if (uLeak2.status !== 401) throw new Error(`salon token'ı KULLANICI ucuna girdi (cross-user sızıntı!): ${uLeak2.status}`)
+
+    // 6) Kendi yorumları — anonim yorumda kimlik gizli
+    const rv = await http('/api/instructor/reviews', { token: iTok })
+    const list = rv.json?.reviews || []
+    const mine = list.find((r: any) => r.id === rvwMine.id)
+    if (!mine) throw new Error('kendi yorumu listede yok')
+    if (mine.reviewer !== null || 'reviewerUserId' in mine) throw new Error('anonim yorumda kimlik sızıyor (eğitmen kimin verdiğini görmemeli)')
+
+    // 7) Kendi yorumuna public yanıt
+    const rep = await http(`/api/instructor/reviews/${rvwMine.id}/reply`, { method: 'PUT', token: iTok, body: { reply: 'teşekkürler!', visibility: 'public' } })
+    if (rep.status !== 200) throw new Error(`yanıt başarısız: ${rep.status}`)
+    // GÜVENLİK: yanıt yanıtındaki review anonim → reviewerUserId/bookingId SIZMAMALI (deanonimizasyon)
+    const repReview = rep.json?.review || {}
+    if ('reviewerUserId' in repReview || repReview.reviewer != null) throw new Error('yanıt yanıtında anonim kimlik sızdı')
+    const afterRep = await prisma.review.findUnique({ where: { id: rvwMine.id }, select: { venueReply: true, replyVisibility: true } })
+    if (afterRep?.venueReply !== 'teşekkürler!' || afterRep.replyVisibility !== 'public') throw new Error('yanıt kaydedilmedi')
+
+    // 8) SAHİPLİK: başka hocanın yorumuna yanıt → 403
+    const repOther = await http(`/api/instructor/reviews/${rvwOther.id}/reply`, { method: 'PUT', token: iTok, body: { reply: 'olmaz' } })
+    if (repOther.status !== 403) throw new Error(`başka hocanın yorumuna yanıt yazılabildi: ${repOther.status}`)
+
+    // 9) Yanıtı sil
+    if ((await http(`/api/instructor/reviews/${rvwMine.id}/reply`, { method: 'DELETE', token: iTok })).status !== 200) throw new Error('yanıt silinemedi')
+
+    await prisma.instructorPasswordResetToken.deleteMany({ where: { instructorId: { in: [II, II2] } } }).catch(() => {})
+    await prisma.review.deleteMany({ where: { instructorId: { in: [II, II2] } } }).catch(() => {})
+    await prisma.instructor.deleteMany({ where: { id: { in: [II, II2] } } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: IU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: { in: [IV, IV2] } } }).catch(() => {})
   })
 
   // ---- Şifre sıfırlama uçtan uca: token tek-kullanım + oturum iptal + hesap sızıntısı yok ----

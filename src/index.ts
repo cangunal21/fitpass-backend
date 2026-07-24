@@ -14,6 +14,7 @@ import { sendRatingPrompts } from './jobs/ratingPromptJob'
 import { ensureTiers } from './utils/ensureTiers'
 import { ensureGeo } from './utils/ensureGeo'
 import { ensureBadges } from './utils/ensureBadges'
+import { ensureIndexes } from './utils/ensureIndexes'
 import { awardSeasonChampions } from './jobs/championJob'
 import authRoutes from './routes/auth'
 import bookingRoutes from './routes/bookings'
@@ -22,6 +23,7 @@ import adminRoutes from './routes/admin'
 import publicRoutes from './routes/public'
 import socialRouter from './routes/social'
 import reviewRoutes from './routes/reviews'
+import instructorRoutes from './routes/instructor'
 import cronRoutes from './routes/cron'
 import waitlistRoutes from './routes/waitlist'
 import favoriteRoutes from './routes/favorites'
@@ -116,6 +118,10 @@ app.use('/api/auth/forgot-password', authLimiter)
 app.use('/api/venue/login', authLimiter)
 app.use('/api/venue/register', authLimiter)
 app.use('/api/venue/forgot-password', authLimiter)
+// Eğitmen auth uçları — brute-force koruması
+app.use('/api/instructor/login', authLimiter)
+app.use('/api/instructor/forgot-password', authLimiter)
+app.use('/api/instructor/set-password', authLimiter)
 // Şikayet/iletişim uçları (biri auth'suz) — admin posta kutusu/şikayet listesi flood'una karşı
 app.use('/api/public/complaint', authLimiter)
 app.use('/api/social/report', authLimiter)
@@ -129,6 +135,7 @@ app.use('/api/admin', adminRoutes)
 app.use('/api/public', publicRoutes)
 app.use('/api/social', socialRouter)
 app.use('/api/reviews', reviewRoutes)
+app.use('/api/instructor', instructorRoutes)
 app.use('/api/cron', cronRoutes)
 app.use('/api/waitlist', waitlistRoutes)
 app.use('/api/favorites', favoriteRoutes)
@@ -178,6 +185,8 @@ app.listen(PORT, () => {
   ensureTiers()
   // İl + ilçe verisini garanti et (İstanbul seed'li; 4 yeni il + tüm ilçeleri idempotent ekle)
   ensureGeo()
+  // DB-seviyesi tekillik index'leri (eğitmen e-postası vb.) — idempotent
+  ensureIndexes()
   // Kanonik rozetleri (sezon şampiyonu) garanti et, sonra biten sezon şampiyonlarını ödüllendir
   ensureBadges().then(() => awardSeasonChampions())
   // Sezon dönümünü yakalamak için 12 saatte bir kontrol (sezon başına tek kez ödül verir)

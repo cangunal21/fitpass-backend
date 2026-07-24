@@ -200,7 +200,9 @@ export const replyToReview = async (req: Request, res: Response) => {
       data: { venueReply: reply.trim(), venueRepliedAt: new Date(), replyVisibility }
     })
 
-    return res.json({ message: 'Yanıtınız kaydedildi.', review: updated })
+    // GÜVENLİK: ham satır reviewerUserId/bookingId taşır → anonim yorumda salon kimin verdiğini
+    // görebilirdi. sanitizeReview anonimde bu alanları çıkarır (yalnız anonim satırları etkiler).
+    return res.json({ message: 'Yanıtınız kaydedildi.', review: sanitizeReview(updated) })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
@@ -277,6 +279,78 @@ export const getInstructorReviews = async (req: Request, res: Response) => {
     return res.json({ reviews: safeReviews, avgRating: avg, totalReviews: reviews.length })
   } catch (err) {
     console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// ─── EĞİTMEN PORTALI (instructorAuth) — eğitmen KENDİ yorumlarını görür + yanıtlar ───
+
+// Eğitmenin kendi yorumları (req.instructorId'den). GÜVENLİK: anonim yorumda yorum sahibinin
+// kimliği sanitizeReview ile gizlenir (eğitmen kimin kaç verdiğini göremez — salonla aynı kural).
+export const getMyInstructorReviews = async (req: Request, res: Response) => {
+  try {
+    const instructorId = (req as any).instructorId
+    const reviews = await prisma.review.findMany({
+      where: { instructorId, targetType: 'instructor' },
+      include: { reviewer: { select: { fullName: true, username: true, avatarUrl: true } } },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    })
+    const avg = reviews.length ? Math.round((reviews.reduce((s, r) => s + r.rating, 0) / reviews.length) * 10) / 10 : 0
+    // Eğitmen kendi yanıtını görebilmeli → viewerId'yi geçmeye gerek yok, kendi yanıtı zaten public/private
+    // ayrımından bağımsız kendisine ait; ama private-başkası yanıtı yok (tek reply kolonu) → sanitize yeter.
+    const safeReviews = reviews.map(r => sanitizeReview(r))
+    return res.json({ reviews: safeReviews, avgRating: avg, totalReviews: reviews.length })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// Eğitmen yorum yanıtı (instructorAuth). Sahiplik: review.targetType==='instructor' VE
+// review.instructorId===req.instructorId (aksi halde eğitmen salon yorumuna yanıt yazamaz).
+export const instructorReplyToReview = async (req: Request, res: Response) => {
+  try {
+    const instructorId = (req as any).instructorId
+    const reviewId = parseInt(req.params.id as string)
+    const { reply } = req.body
+    const replyVisibility = req.body.visibility === 'private' ? 'private' : 'public'
+
+    if (typeof reply !== 'string' || !reply.trim()) return res.status(400).json({ error: 'Yanıt boş olamaz.' })
+    if (reply.length > 1000) return res.status(400).json({ error: 'Yanıt en fazla 1000 karakter olabilir.' })
+
+    const review = await prisma.review.findUnique({ where: { id: reviewId } })
+    if (!review || review.targetType !== 'instructor' || review.instructorId !== instructorId) {
+      return res.status(403).json({ error: 'Bu yoruma yanıt verme yetkiniz yok.' })
+    }
+
+    const updated = await prisma.review.update({
+      where: { id: reviewId },
+      data: { venueReply: reply.trim(), venueRepliedAt: new Date(), replyVisibility },
+    })
+    // GÜVENLİK: anonim yorumda reviewerUserId/bookingId sızmasın (eğitmen kimin verdiğini görmemeli)
+    return res.json({ message: 'Yanıtınız kaydedildi.', review: sanitizeReview(updated) })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// Eğitmen yanıtını sil (instructorAuth, aynı sahiplik)
+export const deleteInstructorReply = async (req: Request, res: Response) => {
+  try {
+    const instructorId = (req as any).instructorId
+    const reviewId = parseInt(req.params.id as string)
+    const review = await prisma.review.findUnique({ where: { id: reviewId } })
+    if (!review || review.targetType !== 'instructor' || review.instructorId !== instructorId) {
+      return res.status(403).json({ error: 'Yetki yok.' })
+    }
+    await prisma.review.update({
+      where: { id: reviewId },
+      data: { venueReply: null, venueRepliedAt: null, replyVisibility: null },
+    })
+    return res.json({ message: 'Yanıt silindi.' })
+  } catch (err) {
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }

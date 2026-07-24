@@ -311,14 +311,34 @@ model Instructor {
   bio          String?
   bioEn        String?
   avatarUrl    String?
+  phone        String?    // salon kaydında girilebilir (createInstructor bunu yazıyordu — kolon eklendi)
+  // email tekilliği @unique yerine UYGULAMA düzeyinde (invite/create'te kontrol) → prod db push
+  // veri-kaybı uyarısına takılmaz (salon-kontrollü, düşük hacimli oluşturma). Login findFirst kullanır.
+  email        String?    // eğitmen girişi + davet e-postası
+  passwordHash String?    // eğitmen kendi şifresini belirleyince (davet/reset) dolar
+  inviteStatus String     @default("none") // none | pending (davet gönderildi) | active (giriş kurdu)
   avgRating    Float      @default(0)
   totalReviews Int        @default(0)
   isActive     Boolean    @default(true)
   verified     Boolean    @default(false) // admin onaylı "doğrulanmış hoca" tiki
   createdAt    DateTime   @default(now())
 
-  classes  Class[]
-  reviews  Review[]
+  classes              Class[]
+  reviews              Review[]
+  passwordResetTokens  InstructorPasswordResetToken[]
+}
+
+// Eğitmen davet/şifre-sıfırlama token'ı (VenuePasswordResetToken'ın aynası; tek-kullanım + 1sa expiry)
+model InstructorPasswordResetToken {
+  id           Int        @id @default(autoincrement())
+  instructorId Int
+  token        String     @unique
+  expiresAt    DateTime
+  used         Boolean    @default(false)
+  createdAt    DateTime   @default(now())
+  instructor   Instructor @relation(fields: [instructorId], references: [id])
+
+  @@index([instructorId])
 }
 
 // ─────────────────────────────────────────────

@@ -6,11 +6,13 @@ const JWT_SECRET = process.env.JWT_SECRET || 'fitpass-secret-key-change-in-produ
 // böylece çıkış / şifre değişimi / token sızması penceresi 7 gün yerine ~1 saat olur
 // (JWT stateless — iptal edilemez, tek koruma kısa ömür). Venue (salon) token'ı UZUN (7 gün)
 // çünkü salon panelinde henüz refresh mekanizması yok; kısaltmak salonları saat başı atardı.
-export const generateToken = (payload: { userId?: number; venueId?: number; email: string; role?: string }) => {
-  const expiresIn = payload.venueId ? '7d' : '1h'
+export const generateToken = (payload: { userId?: number; venueId?: number; instructorId?: number; email: string; role?: string }) => {
+  // Salon ve eğitmen panellerinde refresh mekanizması yok → 7 gün (aksi halde saat başı atılırlar).
+  // Kullanıcı access token'ı kısa (1 saat) çünkü client refresh ile sessizce yeniler.
+  const expiresIn = payload.venueId || payload.instructorId ? '7d' : '1h'
   return jwt.sign(payload, JWT_SECRET, { expiresIn })
 }
 
 export const verifyToken = (token: string) => {
-  return jwt.verify(token, JWT_SECRET) as { userId?: number; venueId?: number; email: string; role?: string }
+  return jwt.verify(token, JWT_SECRET) as { userId?: number; venueId?: number; instructorId?: number; email: string; role?: string }
 }

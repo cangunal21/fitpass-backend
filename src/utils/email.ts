@@ -105,6 +105,50 @@ export const sendVenuePasswordResetEmail = async (to: string, venueName: string,
   })
 }
 
+// Eğitmen daveti: salon sahibi eğitmene giriş verince → şifre belirleme linki
+export const sendInstructorInviteEmail = async (to: string, instructorName: string, venueName: string, token: string) => {
+  const url = `${SITE_URL}/egitmen-sifre-belirle?token=${token}`
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to,
+    subject: 'Şipşakspor — Eğitmen Girişi Daveti',
+    html: baseTemplate(`
+      <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0 0 8px;">Eğitmen Girişin Hazır 🎉</h2>
+      <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
+        Merhaba <strong>${esc(instructorName)}</strong>, <strong>${esc(venueName)}</strong> seni Şipşakspor'da eğitmen olarak ekledi. Aşağıdaki butonla şifreni belirleyip kendi puan ve yorumlarını görüp yanıtlayabilirsin. (Salon gelir/finans bilgilerini görmezsin.)
+      </p>
+      <div style="text-align: center; margin-bottom: 24px;">
+        <a href="${url}" style="display: inline-block; padding: 14px 32px; background: ${BRAND_COLOR}; color: #fff; border-radius: 14px; text-decoration: none; font-size: 15px; font-weight: 700;">Şifremi Belirle →</a>
+      </div>
+      <div style="background: #EEF2FF; border-radius: 12px; padding: 14px;">
+        <p style="font-size: 13px; color: #4F46E5; margin: 0;">Bu link 1 saat geçerlidir. Şifreni belirledikten sonra sipsakspor.com'daki "Eğitmen Girişi"nden giriş yapabilirsin.</p>
+      </div>
+    `),
+  })
+}
+
+// Eğitmen şifre sıfırlama (davet ile aynı "şifre belirle" sayfasına gider)
+export const sendInstructorPasswordResetEmail = async (to: string, instructorName: string, token: string) => {
+  const url = `${SITE_URL}/egitmen-sifre-belirle?token=${token}`
+  await resend.emails.send({
+    from: FROM_EMAIL,
+    to,
+    subject: 'Şipşakspor Eğitmen — Şifre Sıfırlama',
+    html: baseTemplate(`
+      <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0 0 8px;">Eğitmen Şifresi Sıfırlama</h2>
+      <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
+        Merhaba <strong>${esc(instructorName)}</strong>, eğitmen girişin için şifre sıfırlama talebinde bulunuldu. Aşağıdaki butonla yeni şifreni belirleyebilirsin.
+      </p>
+      <div style="text-align: center; margin-bottom: 24px;">
+        <a href="${url}" style="display: inline-block; padding: 14px 32px; background: ${BRAND_COLOR}; color: #fff; border-radius: 14px; text-decoration: none; font-size: 15px; font-weight: 700;">Şifremi Sıfırla →</a>
+      </div>
+      <div style="background: #FEF2F2; border-radius: 12px; padding: 14px;">
+        <p style="font-size: 13px; color: #DC2626; margin: 0;">⚠️ Bu link 1 saat geçerlidir. Eğer bu talebi siz yapmadıysanız bu emaili görmezden gelebilirsiniz.</p>
+      </div>
+    `),
+  })
+}
+
 export const sendBookingConfirmationEmail = async (
   to: string,
   fullName: string,
