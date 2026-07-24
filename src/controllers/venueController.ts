@@ -30,7 +30,11 @@ async function purgeBookingsForSessions(tx: any, sessionIds: number[]) {
   }
   // FK kısıtlı alt kayıtlar (onDelete tanımsız = Restrict) → önce sil
   await tx.payment.deleteMany({ where: { bookingId: { in: ids } } })
-  await tx.review.deleteMany({ where: { bookingId: { in: ids } } })
+  // YORUM SİLİNMEZ, AYRIŞTIRILIR: bookingId=null'a çekilir → seans/rezervasyon silinse de yorum
+  // kalıcı kalır (salon, kötü yorumu seansı silerek temizleyemesin). venueId/instructorId ve puan
+  // korunur; recomputeVenueRating sonrası ortalama aynı kalır. booking silinmeden ÖNCE ayrıştırılır
+  // ki Review→Booking FK ihlali olmasın.
+  await tx.review.updateMany({ where: { bookingId: { in: ids } }, data: { bookingId: null } })
   await tx.commissionHistory.deleteMany({ where: { bookingId: { in: ids } } })
   await tx.activityLog.deleteMany({ where: { bookingId: { in: ids } } })
   await tx.booking.deleteMany({ where: { id: { in: ids } } })

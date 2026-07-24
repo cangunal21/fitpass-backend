@@ -38,6 +38,6 @@ router.get('/users/:username', optionalAuthMiddleware, getUserActivities)
 router.post('/complaint', submitComplaint)
 router.get('/users-search', searchUsers)
 router.post('/validate-coupon', validateCoupon)
-router.get('/instructors/:id', getInstructorById)
+router.get('/instructors/:id', optionalAuthMiddleware, getInstructorById)
 
 export default router

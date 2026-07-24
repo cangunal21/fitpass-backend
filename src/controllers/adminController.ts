@@ -190,7 +190,12 @@ export const deleteVenue = async (req: Request, res: Response) => {
         await tx.dropInParticipant.deleteMany({ where: { slotId: { in: slotIds } } })
         await tx.dropInSlot.deleteMany({ where: { id: { in: slotIds } } })
       }
-      // Eğitmenler (artık ders/seans referansı kalmadı)
+      // Eğitmenler (artık ders/seans referansı kalmadı). Hocaya bağlı yorumlar (instructorId'li,
+      // booking'den ayrıştırılmış olabilir) Review→Instructor FK'sını ihlal etmesin diye ÖNCE silinir.
+      const venueInstructors = await tx.instructor.findMany({ where: { venueId }, select: { id: true } })
+      if (venueInstructors.length) {
+        await tx.review.deleteMany({ where: { instructorId: { in: venueInstructors.map((i: any) => i.id) } } })
+      }
       await tx.instructor.deleteMany({ where: { venueId } })
       // Salon düzeyindeki kalan kayıtlar (bağımsız tablolar)
       await tx.coupon.deleteMany({ where: { venueId } })

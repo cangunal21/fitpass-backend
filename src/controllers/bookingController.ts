@@ -323,7 +323,7 @@ export const getMyBookings = async (req: Request, res: Response) => {
         dropInSlot: {
           include: { venue: true },
         },
-        review: true,
+        reviews: true, // salon + hoca ayrı satır (targetType)
       },
       orderBy: { createdAt: 'desc' },
     })
@@ -341,6 +341,9 @@ export const getMyBookings = async (req: Request, res: Response) => {
         ...b.dropInSlot,
         venue: b.dropInSlot.venue ? (({ passwordHash, ...v }) => v)(b.dropInSlot.venue) : null,
       } : null,
+      // Geriye dönük uyum: eski istemci `review` (tekil, salon yorumu) bekliyor + yeni `reviewed` bayrağı
+      review: (b as any).reviews?.find((r: any) => r.targetType === 'venue') || null,
+      reviewed: ((b as any).reviews?.length || 0) > 0,
     }))
 
     res.json({ bookings: safeBookings })

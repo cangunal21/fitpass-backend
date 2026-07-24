@@ -4,7 +4,7 @@ import { sendComplaintEmail } from '../utils/email'
 import { syncUserTier } from '../utils/tier'
 import { cached } from '../utils/cache'
 import { parseIntSafe, parseDateSafe } from '../utils/validate'
-import { sanitizeReview } from '../utils/reviews'
+import { sanitizeReview, hidePrivateReply } from '../utils/reviews'
 import { seasonLabelsFromKey } from '../utils/season'
 
 // Venue'de public'e ASLA çıkmaması gereken hassas alanlar (şifre, ödeme/KYC: IBAN, TCKN,
@@ -694,6 +694,7 @@ export const getInstructorById = async (req: Request, res: Response) => {
           }
         },
         reviews: {
+          where: { targetType: 'instructor' },
           orderBy: { createdAt: 'desc' },
           take: 20,
           include: { reviewer: { select: { fullName: true, avatarUrl: true } } }
@@ -707,7 +708,9 @@ export const getInstructorById = async (req: Request, res: Response) => {
       ? instructor.reviews.reduce((s, r) => s + r.rating, 0) / instructor.reviews.length
       : 0
 
-    const safeReviews = instructor.reviews.map(sanitizeReview)
+    // optionalAuth: private hoca yanıtı yalnız yorumu yazana görünür
+    const viewerId = (req as any).userId as number | undefined
+    const safeReviews = instructor.reviews.map(r => hidePrivateReply(r, sanitizeReview(r), viewerId))
 
     return res.json({
       instructor: {

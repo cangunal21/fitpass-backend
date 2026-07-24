@@ -455,7 +455,7 @@ model Booking {
 
   payment           Payment?
   commissionHistory CommissionHistory?
-  review            Review?
+  reviews           Review[]           // salon + hoca ayrı satır (targetType) → çoğul
   activityLog       ActivityLog?
 
   @@index([userId])
@@ -513,24 +513,32 @@ model VenuePayout {
 
 model Review {
   id             Int         @id @default(autoincrement())
-  booking        Booking     @relation(fields: [bookingId], references: [id])
-  bookingId      Int         @unique
+  // Yorum booking'DEN AYRIŞTIRILDI: booking/seans silinse bile yorum kalıcı (salon kötü
+  // yorumu seansı silerek temizleyemesin). bookingId nullable → seans silinince null'a çekilir.
+  booking        Booking?    @relation(fields: [bookingId], references: [id])
+  bookingId      Int?
   reviewer       User        @relation(fields: [reviewerUserId], references: [id])
   reviewerUserId Int
-  targetType     String
+  targetType     String      // 'venue' | 'instructor' — her katılımdan iki satır (salon + hoca)
   venue          Venue?      @relation(fields: [venueId], references: [id])
   venueId        Int?
   instructor     Instructor? @relation(fields: [instructorId], references: [id])
   instructorId   Int?
+  classId        Int?        // ders-bazlı puan için saklanır (v1'de gösterilmez, ileride kullanılacak)
   rating          Int
   comment         String?
   isAnonymous     Boolean     @default(true)
-  venueReply      String?
+  venueReply      String?     // hedef sahibinin (salon veya hoca) cevabı
   venueRepliedAt  DateTime?
+  replyVisibility String?     // 'public' (herkes görür) | 'private' (yalnız yorumu yazan + platform)
   createdAt       DateTime    @default(now())
 
+  // (bookingId, targetType) tekil: bir booking için salon+hoca ayrı satır, çift-puan engellenir.
+  // bookingId null'ken Postgres NULL'ları farklı sayar → ayrıştırılmış yorumlar çakışmaz.
+  @@unique([bookingId, targetType])
   @@index([venueId])
   @@index([instructorId])
+  @@index([classId])
 }
 
 // ─────────────────────────────────────────────

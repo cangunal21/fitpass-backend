@@ -157,13 +157,14 @@ async function cleanup() {
   await prisma.favoriteVenue.deleteMany({ where: { userId: 990101 } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990101 } }).catch(() => {})
   await prisma.venue.deleteMany({ where: { id: 990101 } }).catch(() => {})
-  // Yorum yaşam-döngüsü testi kalıntıları (review → booking → session → class → user → venue)
-  await prisma.review.deleteMany({ where: { venueId: 990091 } }).catch(() => {})
-  await prisma.booking.deleteMany({ where: { userId: 990091 } }).catch(() => {})
-  await prisma.class_Session.deleteMany({ where: { id: { in: [990091, 990092] } } }).catch(() => {})
-  await prisma.class.deleteMany({ where: { id: 990091 } }).catch(() => {})
-  await prisma.user.deleteMany({ where: { id: 990091 } }).catch(() => {})
-  await prisma.venue.deleteMany({ where: { id: 990091 } }).catch(() => {})
+  // Yorum yaşam-döngüsü + çift puanlama testi kalıntıları (review → booking → session → class → instructor → user → venue)
+  await prisma.review.deleteMany({ where: { OR: [{ venueId: { in: [990091, 990093, 990094] } }, { instructorId: 990093 }] } }).catch(() => {})
+  await prisma.booking.deleteMany({ where: { userId: { in: [990091, 990093, 990094] } } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: { in: [990091, 990092, 990093, 990094] } } }).catch(() => {})
+  await prisma.class.deleteMany({ where: { id: { in: [990091, 990093, 990094] } } }).catch(() => {})
+  await prisma.instructor.deleteMany({ where: { id: 990093 } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: { in: [990091, 990093, 990094] } } }).catch(() => {})
+  await prisma.venue.deleteMany({ where: { id: { in: [990091, 990093, 990094] } } }).catch(() => {})
   // Salon gate + pagination testi kalıntıları
   await prisma.class.deleteMany({ where: { venueId: 990071 } }).catch(() => {})
   await prisma.venue.deleteMany({ where: { id: 990071 } }).catch(() => {})
@@ -628,8 +629,10 @@ async function run() {
     await prisma.venue.deleteMany({ where: { id: FV } }).catch(() => {})
   })
 
-  // ---- Yorum yaşam döngüsü: seans silinince silinen yorumlar salon puanından düşer ----
-  await check('Yorum: seans silinince salon avgRating/totalReviews yeniden hesaplanır', async () => {
+  // ---- Yorum yaşam döngüsü: seans SİLİNSE BİLE yorum kalıcı (booking'den ayrıştırılır) ----
+  // GÜVENLİK: salon, kötü yorumu seansı/dersi silerek TEMİZLEYEMEZ. Seans silinince yorumun
+  // bookingId'si null'a çekilir; venueId + puan korunur → avgRating/totalReviews DEĞİŞMEZ.
+  await check('Yorum: seans silinince yorum KALICI (ayrıştırılır), salon puanı düşmez', async () => {
     const RV = 990091, RC = 990091, RS1 = 990091, RS2 = 990092, RU = 990091
     await prisma.venue.upsert({ where: { id: RV }, update: { isApproved: true, isActive: true }, create: { id: RV, name: 'RevVenue', email: `rv${RV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.class.upsert({ where: { id: RC }, update: {}, create: { id: RC, venueId: RV, title: 'RevDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
@@ -639,21 +642,86 @@ async function run() {
     await prisma.class_Session.upsert({ where: { id: RS2 }, update: {}, create: { id: RS2, classId: RC, startsAt: past(1), endsAt: past(1), availableSpots: 20, status: 'open' } })
     const bk1 = await prisma.booking.create({ data: { userId: RU, sessionId: RS1, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `RV1-${Date.now()}` } })
     const bk2 = await prisma.booking.create({ data: { userId: RU, sessionId: RS2, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `RV2-${Date.now()}` } })
-    await prisma.review.create({ data: { bookingId: bk1.id, reviewerUserId: RU, targetType: 'venue', venueId: RV, rating: 2 } })
+    const rvw1 = await prisma.review.create({ data: { bookingId: bk1.id, reviewerUserId: RU, targetType: 'venue', venueId: RV, rating: 2 } })
     await prisma.review.create({ data: { bookingId: bk2.id, reviewerUserId: RU, targetType: 'venue', venueId: RV, rating: 4 } })
     await prisma.venue.update({ where: { id: RV }, data: { avgRating: 3, totalReviews: 2 } })
-    // RS1 seansını sil → rating-2 yorum da silinir → recompute: sadece rating-4 kalır
+    // RS1 seansını sil → rating-2 yorum SİLİNMEZ, bookingId=null olur; puan 3/2 kalır (avg değişmez)
     const vTok = jwt.sign({ venueId: RV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
     const del = await http(`/api/venue/classes/${RC}/sessions/${RS1}`, { method: 'DELETE', token: vTok })
     if (del.status !== 200) throw new Error(`seans silme: ${del.status} ${del.text.slice(0, 120)}`)
+    const survived = await prisma.review.findUnique({ where: { id: rvw1.id }, select: { id: true, bookingId: true, venueId: true, rating: true } })
+    if (!survived) throw new Error('EXPLOIT: seans silinince yorum da silindi (salon kötü yorumu temizleyebiliyor)')
+    if (survived.bookingId !== null) throw new Error(`yorum booking'den ayrıştırılmadı (bookingId=${survived.bookingId})`)
+    if (survived.venueId !== RV || survived.rating !== 2) throw new Error('ayrıştırılan yorumun venueId/puanı bozuldu')
     const v = await prisma.venue.findUnique({ where: { id: RV }, select: { avgRating: true, totalReviews: true } })
-    if (v?.totalReviews !== 1 || v?.avgRating !== 4) throw new Error(`salon puanı güncellenmedi: avg=${v?.avgRating} total=${v?.totalReviews} (4/1 bekleniyor)`)
+    if (v?.totalReviews !== 2 || v?.avgRating !== 3) throw new Error(`salon puanı değişmemeli: avg=${v?.avgRating} total=${v?.totalReviews} (3/2 bekleniyor)`)
     await prisma.review.deleteMany({ where: { venueId: RV } }).catch(() => {})
     await prisma.booking.deleteMany({ where: { userId: RU } }).catch(() => {})
     await prisma.class_Session.deleteMany({ where: { classId: RC } }).catch(() => {})
     await prisma.class.deleteMany({ where: { id: RC } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: RU } }).catch(() => {})
     await prisma.venue.deleteMany({ where: { id: RV } }).catch(() => {})
+  })
+
+  // ---- YENİ puanlama akışı: çift puan (salon+hoca), check-in kapısı, bitişten 2 saat penceresi ----
+  await check('Puanlama: check-in\'li + bitişten 2sa sonra salon & hoca çift puanı + display', async () => {
+    const IV = 990093, IC = 990093, ISS = 990093, IU = 990093, II = 990093
+    const past3h = new Date(Date.now() - 3 * 3600000)
+    await prisma.venue.upsert({ where: { id: IV }, update: { isApproved: true, isActive: true, avgRating: 0, totalReviews: 0 }, create: { id: IV, name: 'RateVenue', email: `rt${IV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.instructor.upsert({ where: { id: II }, update: { avgRating: 0, totalReviews: 0, isActive: true }, create: { id: II, venueId: IV, fullName: 'Rate Hoca', isActive: true } })
+    await prisma.class.upsert({ where: { id: IC }, update: { instructorId: II }, create: { id: IC, venueId: IV, instructorId: II, title: 'RateDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    await prisma.class_Session.upsert({ where: { id: ISS }, update: { startsAt: past3h, endsAt: past3h }, create: { id: ISS, classId: IC, startsAt: past3h, endsAt: past3h, availableSpots: 20, status: 'open' } })
+    await prisma.user.upsert({ where: { id: IU }, update: {}, create: { id: IU, username: `rate_${IU}`, email: `rate_${IU}@x.com`, passwordHash: 'x', fullName: 'Rate User', tierSportCounts: {} } })
+    // check-in'li booking (derse GİTMİŞ)
+    const bkC = await prisma.booking.create({ data: { userId: IU, sessionId: ISS, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `RT-${Date.now()}`, checkedIn: true, checkedInAt: new Date() } })
+    const tokC = jwt.sign({ userId: IU }, JWT_SECRET, { expiresIn: '1h' })
+    // Salon 5 + hoca 4, iki AYRI yorum
+    const r = await http('/api/reviews', { method: 'POST', token: tokC, body: { bookingId: bkC.id, venueRating: 5, venueComment: 'salon süper', instructorRating: 4, instructorComment: 'hoca iyi', isAnonymous: false } })
+    if (r.status !== 201) throw new Error(`çift puan 201 dönmedi: ${r.status} ${r.text.slice(0, 140)}`)
+    const rows = await prisma.review.findMany({ where: { bookingId: bkC.id }, select: { targetType: true, rating: true, venueId: true, instructorId: true, comment: true } })
+    if (rows.length !== 2) throw new Error(`2 satır (salon+hoca) bekleniyordu, ${rows.length} var`)
+    const vrow = rows.find(x => x.targetType === 'venue'); const irow = rows.find(x => x.targetType === 'instructor')
+    if (vrow?.rating !== 5 || vrow?.venueId !== IV) throw new Error('salon satırı hatalı')
+    if (irow?.rating !== 4 || irow?.instructorId !== II) throw new Error('hoca satırı hatalı')
+    // Ortalamalar iki tarafta da güncellendi mi
+    const vAgg = await prisma.venue.findUnique({ where: { id: IV }, select: { avgRating: true, totalReviews: true } })
+    const iAgg = await prisma.instructor.findUnique({ where: { id: II }, select: { avgRating: true, totalReviews: true } })
+    if (vAgg?.avgRating !== 5 || vAgg?.totalReviews !== 1) throw new Error(`salon ort. güncellenmedi: ${vAgg?.avgRating}/${vAgg?.totalReviews}`)
+    if (iAgg?.avgRating !== 4 || iAgg?.totalReviews !== 1) throw new Error(`hoca ort. güncellenmedi: ${iAgg?.avgRating}/${iAgg?.totalReviews}`)
+    // Display uçları: hem salon hem hoca profilinde sayım + ortalama
+    const vpub = await expectOk(`/api/reviews/venue/${IV}`)
+    if (vpub.json?.totalReviews !== 1 || vpub.json?.avgRating !== 5) throw new Error(`salon display sayım/ort. yanlış: ${vpub.json?.avgRating}/${vpub.json?.totalReviews}`)
+    const ipub = await expectOk(`/api/reviews/instructor/${II}`)
+    if (ipub.json?.totalReviews !== 1 || ipub.json?.avgRating !== 4) throw new Error(`hoca display sayım/ort. yanlış: ${ipub.json?.avgRating}/${ipub.json?.totalReviews}`)
+    // İkinci gönderim → 400 (bu ders zaten puanlandı)
+    const r2 = await http('/api/reviews', { method: 'POST', token: tokC, body: { bookingId: bkC.id, venueRating: 3 } })
+    if (r2.status !== 400) throw new Error(`ikinci puan reddedilmedi: ${r2.status}`)
+    await prisma.review.deleteMany({ where: { OR: [{ venueId: IV }, { instructorId: II }] } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { userId: IU } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { classId: IC } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: IC } }).catch(() => {})
+    await prisma.instructor.deleteMany({ where: { id: II } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: IU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: IV } }).catch(() => {})
+  })
+
+  // ---- Puanlama check-in KAPISI: derse katılmayan (checkedIn=false) puan VEREMEZ (403) ----
+  await check('Puanlama: check-in olmayan booking 403 (derse gitmeyen puanlayamaz)', async () => {
+    const IV = 990094, IC = 990094, ISS = 990094, IU = 990094
+    const past3h = new Date(Date.now() - 3 * 3600000)
+    await prisma.venue.upsert({ where: { id: IV }, update: { isApproved: true, isActive: true }, create: { id: IV, name: 'NoCheckVenue', email: `nc${IV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: IC }, update: {}, create: { id: IC, venueId: IV, title: 'NoCheckDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    await prisma.class_Session.upsert({ where: { id: ISS }, update: { startsAt: past3h, endsAt: past3h }, create: { id: ISS, classId: IC, startsAt: past3h, endsAt: past3h, availableSpots: 20, status: 'open' } })
+    await prisma.user.upsert({ where: { id: IU }, update: {}, create: { id: IU, username: `nc_${IU}`, email: `nc_${IU}@x.com`, passwordHash: 'x', fullName: 'NoCheck', tierSportCounts: {} } })
+    const bkN = await prisma.booking.create({ data: { userId: IU, sessionId: ISS, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `NC-${Date.now()}`, checkedIn: false } })
+    const tokN = jwt.sign({ userId: IU }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http('/api/reviews', { method: 'POST', token: tokN, body: { bookingId: bkN.id, venueRating: 5 } })
+    if (r.status !== 403) throw new Error(`check-in'siz puan 403 dönmeli, döndü: ${r.status} ${r.text.slice(0, 120)}`)
+    await prisma.booking.deleteMany({ where: { userId: IU } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { classId: IC } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: IC } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: IU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: IV } }).catch(() => {})
   })
 
   // ---- Şifre sıfırlama uçtan uca: token tek-kullanım + oturum iptal + hesap sızıntısı yok ----

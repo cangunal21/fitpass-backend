@@ -7,3 +7,15 @@ export function sanitizeReview<T extends { isAnonymous?: boolean; reviewer?: any
   const { reviewerUserId, bookingId, reviewer, ...rest } = r as any
   return { ...rest, reviewer: null }
 }
+
+// Salon/hoca'nın PRIVATE yanıtını yalnızca yorumu yazan kullanıcıya göster; herkeste (ve anonimde,
+// viewerId eşleşmediği için) gizle. `raw` ham review (reviewerUserId erişilebilir), `safe` sanitize
+// edilmiş çıktı objesi. Aynı `safe` objesi (mutasyonla) döner.
+export function hidePrivateReply(raw: any, safe: any, viewerId?: number): any {
+  if (raw?.replyVisibility === 'private' && raw?.reviewerUserId !== viewerId) {
+    safe.venueReply = null
+    safe.venueRepliedAt = null
+    safe.replyVisibility = null
+  }
+  return safe
+}
