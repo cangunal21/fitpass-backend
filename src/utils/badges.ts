@@ -67,7 +67,6 @@ export async function syncUserBadges(userId: number): Promise<string[]> {
   const teamCount = bookings.filter(b => Array.isArray(b.taggedFriends) && (b.taggedFriends as any[]).length > 0).length
 
   const earnedBadgeIds = new Set(earned.map(e => e.badgeId))
-  const earnedSportIds = new Set(earned.filter(e => e.sportCategoryId != null).map(e => e.sportCategoryId as number))
 
   const newlyAwarded: string[] = []
   const toCreate: { userId: number; badgeId: number; sportCategoryId: number | null }[] = []
@@ -76,12 +75,15 @@ export async function syncUserBadges(userId: number): Promise<string[]> {
   for (const badge of badges) {
     if (badge.criteriaType === 'sport_master') {
       const threshold = badge.criteriaValue || 40
+      // Dedup YALNIZCA bu sport_master rozetine göre — şampiyon rozeti (aynı sportCategoryId'yi
+      // taşır) o sporda ustalığı ENGELLEMESİN.
+      const earnedMasterSports = new Set(earned.filter(e => e.badgeId === badge.id && e.sportCategoryId != null).map(e => e.sportCategoryId as number))
       for (const [name, count] of sportCounts) {
         if (count < threshold) continue
         const sc = await prisma.sportCategory.findFirst({ where: { name }, select: { id: true } })
-        if (sc && !earnedSportIds.has(sc.id)) {
+        if (sc && !earnedMasterSports.has(sc.id)) {
           toCreate.push({ userId, badgeId: badge.id, sportCategoryId: sc.id })
-          earnedSportIds.add(sc.id)
+          earnedMasterSports.add(sc.id)
           newlyAwarded.push(`${name} ustası`)
         }
       }

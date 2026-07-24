@@ -60,6 +60,11 @@ export const createBooking = async (req: Request, res: Response) => {
         })
 
         if (!session) throw new BookingError('Ders seansı bulunamadı.', 404)
+        // Geçmiş/başlamış seansa rezervasyon yapılamaz — aksi halde geçmiş seansı booklayıp
+        // (katılmadan) yorum kilidini (startsAt < now) baypas edip sahte yorum yazılabilirdi.
+        if (new Date(session.startsAt) <= new Date()) {
+          throw new BookingError('Bu seans başlamış, rezervasyon yapılamaz.', 400)
+        }
         // Donmuş/onaysız salonun seansına (eski linkle) rezervasyon yapılamaz
         if (!session.class.venue || !session.class.venue.isActive || !session.class.venue.isApproved) {
           throw new BookingError('Bu salon şu anda rezervasyona kapalı.', 400)
@@ -457,15 +462,16 @@ export const cancelBooking = async (req: Request, res: Response) => {
       })
       if (flip.count === 0) return null // başka bir istek zaten iptal etti → hiçbir geri-alma yapma
 
-      // Rezervasyon gerçekleşmediği için kazandığı puanı geri al (yalnızca iptali biz yaptıysak)
+      // Rezervasyon gerçekleşmediği için kazandığı puanı geri al (yalnızca iptali biz yaptıysak).
+      // Bakiyeden FAZLA düşme: yıllık puan sıfırlaması sonrası eski booking iptal edilince
+      // bakiye NEGATİFE düşerdi (redemption gelince bedava kredi istismarı). min ile clamp.
       if (booking.pointsEarned > 0) {
-        await tx.user.update({
-          where: { id: userId },
-          data: { rewardPoints: { decrement: booking.pointsEarned } },
-        })
-        await tx.rewardPoint.create({
-          data: { userId, points: -booking.pointsEarned, source: 'booking_cancelled', bookingId: booking.id },
-        })
+        const cur = await tx.user.findUnique({ where: { id: userId }, select: { rewardPoints: true } })
+        const dec = Math.min(booking.pointsEarned, cur?.rewardPoints || 0)
+        if (dec > 0) {
+          await tx.user.update({ where: { id: userId }, data: { rewardPoints: { decrement: dec } } })
+          await tx.rewardPoint.create({ data: { userId, points: -dec, source: 'booking_cancelled', bookingId: booking.id } })
+        }
       }
 
       // Kupon kullanımı iptalle geri verilir (aksi halde iptal edilen rezervasyon kuponun
@@ -678,7 +684,9 @@ export const transferBooking = async (req: Request, res: Response) => {
         const couponDiscount = money(Math.max(0, oldBase - booking.venuePayout))
         const newVenuePayout = money(Math.max(0, newBase - couponDiscount))
         const newFinalAmount = money(Math.max(0, newBase - couponDiscount))
-        const priceRefund = money(Math.max(0, oldBase - newBase)) // daha ucuz derse geçişte iade edilecek fark (ödeme entegrasyonunda karta iade)
+        // İade = ÖDENEN (finalAmount) − yeni borç (newFinalAmount); baz farkı DEĞİL, yoksa kupon
+        // (özellikle yüzde) kullanan kullanıcıya fazla iade çıkardı. (ödeme entegrasyonunda karta iade)
+        const priceRefund = money(Math.max(0, booking.finalAmount - newFinalAmount))
 
         // Puanı yeni (daha ucuz olabilen) tutara göre yeniden hesapla. Aksi halde pahalı ders
         // bookla → ucuza transfer et → fazla puanı tut (redemption gelince istismar) + pointsEarned

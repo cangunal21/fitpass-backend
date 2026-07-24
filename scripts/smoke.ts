@@ -96,6 +96,11 @@ async function cleanup() {
   await prisma.class.deleteMany({ where: { id: 990151 } }).catch(() => {})
   // For You distinct testi kalıntısı
   await prisma.class_Session.deleteMany({ where: { id: 990171 } }).catch(() => {})
+  // Güvenlik regresyon testi kalıntıları (990281/990283)
+  await prisma.booking.deleteMany({ where: { userId: { in: [990281, 990283] } } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: 990283 } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: { in: [990281, 990283] } } }).catch(() => {})
+  await prisma.coupon.deleteMany({ where: { code: { startsWith: 'NEG' } } }).catch(() => {})
   // Kayıt/giriş case testi kalıntısı (usrcase01)
   {
     const u = await prisma.user.findFirst({ where: { email: { equals: 'usrcase01@x.com', mode: 'insensitive' } }, select: { id: true } }).catch(() => null)
@@ -974,6 +979,40 @@ async function run() {
     if (!up) throw new Error('StatDers upcoming listesinde yok')
     if (up.booked !== 3) throw new Error(`booked ${up.booked} (3 bekleniyor — groupSize, kayıt sayısı değil)`)
     if (up.fillRate !== 30) throw new Error(`fillRate ${up.fillRate} (30 bekleniyor: 3/10 koltuk)`)
+  })
+
+  await check('Güvenlik: public profil bookings checkInCode/finansal alan SIZDIRMAZ', async () => {
+    const PU = 990281
+    await prisma.user.upsert({ where: { id: PU }, update: { activityPrivacy: 'public', profilePrivacy: 'public' }, create: { id: PU, username: `pub_${PU}`, email: `pub_${PU}@x.com`, passwordHash: 'x', fullName: 'Pub User', tierId: 1, tierSportCounts: {}, activityPrivacy: 'public' } })
+    await prisma.booking.deleteMany({ where: { userId: PU } })
+    await prisma.booking.create({ data: { id: 990281, userId: PU, sessionId: S, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `PUB-${Date.now()}`, checkInCode: `SEC${Date.now() % 100000}`, checkedIn: false } })
+    const r = await http(`/api/public/users/pub_${PU}`)
+    const b = (r.json?.bookings || [])[0]
+    if (!b) throw new Error('booking dönmedi')
+    for (const leak of ['checkInCode', 'finalAmount', 'venuePayout', 'commissionAmount', 'bookingNumber']) {
+      if (leak in b) throw new Error(`hassas alan sızdı: ${leak}`)
+    }
+    await prisma.booking.deleteMany({ where: { userId: PU } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: PU } }).catch(() => {})
+  })
+
+  await check('Güvenlik: createBooking geçmiş seansa izin vermez (400)', async () => {
+    const BU = 990283
+    await prisma.user.upsert({ where: { id: BU }, update: {}, create: { id: BU, username: `bkp_${BU}`, email: `bkp_${BU}@x.com`, passwordHash: 'x', fullName: 'Bk', tierId: 1, tierSportCounts: {} } })
+    const past = new Date(Date.now() - 3 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: 990283 }, update: { startsAt: past, status: 'open' }, create: { id: 990283, classId: C, startsAt: past, endsAt: new Date(past.getTime() + 3600000), status: 'open', availableSpots: 20 } })
+    const tok = jwt.sign({ userId: BU, email: `bkp_${BU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http('/api/bookings', { method: 'POST', token: tok, body: { sessionId: 990283 } })
+    if (r.status !== 400) throw new Error(`geçmiş seans rezervasyonu ${r.status} (400 bekleniyor): ${r.text.slice(0, 100)}`)
+    await prisma.booking.deleteMany({ where: { userId: BU } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: 990283 } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: BU } }).catch(() => {})
+  })
+
+  await check('Güvenlik: createCoupon negatif fixed indirim reddeder (400)', async () => {
+    const vtok = jwt.sign({ venueId: V, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http('/api/venue/coupons', { method: 'POST', token: vtok, body: { code: `NEG${Date.now()}`, discountType: 'fixed', discountValue: -100 } })
+    if (r.status !== 400) throw new Error(`negatif fixed kupon ${r.status} (400 bekleniyor)`)
   })
 
   await check('Rekor seri: 3 gün üst üste check-in → getMe recordStreak 3', async () => {

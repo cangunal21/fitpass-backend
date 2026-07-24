@@ -656,6 +656,7 @@ export const searchUsers = async (req: Request, res: Response) => {
 
     const users = await prisma.user.findMany({
       where: {
+        banned: false, // banlı hesap public aramada görünmesin
         OR: [
           { username: { contains: q, mode: 'insensitive' } },
           { fullName: { contains: q, mode: 'insensitive' } },

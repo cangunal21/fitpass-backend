@@ -16,6 +16,10 @@ export const createCoupon = async (req: Request, res: Response) => {
     if (discountType === 'percent' && (discountValue <= 0 || discountValue > 100)) {
       return res.status(400).json({ error: 'Yüzde indirim 1-100 arasında olmalıdır.' })
     }
+    // Sabit (fixed) indirim pozitif olmalı — negatif değer fiyatı artırırdı (finalAmount = base − discount)
+    if (discountType === 'fixed' && !(discountValue > 0)) {
+      return res.status(400).json({ error: 'Sabit indirim 0’dan büyük olmalıdır.' })
+    }
 
     const existing = await prisma.coupon.findUnique({ where: { code: code.toUpperCase() } })
     if (existing) return res.status(400).json({ error: 'Bu kupon kodu zaten kullanılıyor.' })

@@ -115,6 +115,9 @@ app.use('/api/auth/forgot-password', authLimiter)
 app.use('/api/venue/login', authLimiter)
 app.use('/api/venue/register', authLimiter)
 app.use('/api/venue/forgot-password', authLimiter)
+// Şikayet/iletişim uçları (biri auth'suz) — admin posta kutusu/şikayet listesi flood'una karşı
+app.use('/api/public/complaint', authLimiter)
+app.use('/api/social/report', authLimiter)
 app.use('/api/chat', chatLimiter)
 
 // Routes

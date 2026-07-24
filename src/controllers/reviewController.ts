@@ -1,19 +1,19 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
-import { clampStr } from '../utils/validate'
+import { clampStr, parseIntSafe } from '../utils/validate'
 import { sanitizeReview } from '../utils/reviews'
 
 // Yorum ekle (auth required)
 export const createReview = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId
-    const bookingId = parseInt(req.body.bookingId)
+    const bookingId = parseIntSafe(req.body.bookingId) // int4 aralığı garanti (taşan/bozuk → undefined)
     const rating = parseInt(req.body.rating)
-    const { comment, isAnonymous } = req.body
 
-    if (!bookingId || isNaN(bookingId) || !rating || rating < 1 || rating > 5) {
+    if (!bookingId || !Number.isInteger(rating) || rating < 1 || rating > 5) {
       return res.status(400).json({ error: 'Geçerli bir puan (1-5) ve rezervasyon gerekli.' })
     }
+    const { comment, isAnonymous } = req.body
 
     // Booking kullanıcıya ait mi?
     const booking = await prisma.booking.findUnique({
@@ -86,7 +86,7 @@ export const replyToReview = async (req: Request, res: Response) => {
     const reviewId = parseInt(req.params.id as string)
     const { reply } = req.body
 
-    if (!reply?.trim()) return res.status(400).json({ error: 'Yanıt boş olamaz.' })
+    if (typeof reply !== 'string' || !reply.trim()) return res.status(400).json({ error: 'Yanıt boş olamaz.' })
     if (reply.length > 1000) return res.status(400).json({ error: 'Yanıt en fazla 1000 karakter olabilir.' })
 
     const review = await prisma.review.findUnique({ where: { id: reviewId } })
