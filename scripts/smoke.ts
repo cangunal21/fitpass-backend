@@ -12,6 +12,7 @@ import { generateToken } from '../src/utils/jwt'
 import { seasonInfo } from '../src/utils/season'
 import { ensureBadges } from '../src/utils/ensureBadges'
 import { awardSeasonChampions } from '../src/jobs/championJob'
+import { sendRatingPrompts } from '../src/jobs/ratingPromptJob'
 import prisma from '../src/utils/prisma'
 
 const PORT = 3199
@@ -157,14 +158,15 @@ async function cleanup() {
   await prisma.favoriteVenue.deleteMany({ where: { userId: 990101 } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990101 } }).catch(() => {})
   await prisma.venue.deleteMany({ where: { id: 990101 } }).catch(() => {})
-  // Yorum yaşam-döngüsü + çift puanlama testi kalıntıları (review → booking → session → class → instructor → user → venue)
-  await prisma.review.deleteMany({ where: { OR: [{ venueId: { in: [990091, 990093, 990094] } }, { instructorId: 990093 }] } }).catch(() => {})
-  await prisma.booking.deleteMany({ where: { userId: { in: [990091, 990093, 990094] } } }).catch(() => {})
-  await prisma.class_Session.deleteMany({ where: { id: { in: [990091, 990092, 990093, 990094] } } }).catch(() => {})
-  await prisma.class.deleteMany({ where: { id: { in: [990091, 990093, 990094] } } }).catch(() => {})
-  await prisma.instructor.deleteMany({ where: { id: 990093 } }).catch(() => {})
-  await prisma.user.deleteMany({ where: { id: { in: [990091, 990093, 990094] } } }).catch(() => {})
-  await prisma.venue.deleteMany({ where: { id: { in: [990091, 990093, 990094] } } }).catch(() => {})
+  // Yorum yaşam-döngüsü + çift puanlama + pending/job testi kalıntıları (review → booking → session → class → instructor → user → venue)
+  await prisma.notification.deleteMany({ where: { userId: { in: [990093, 990095] } } }).catch(() => {})
+  await prisma.review.deleteMany({ where: { OR: [{ venueId: { in: [990091, 990093, 990094, 990095] } }, { instructorId: { in: [990093, 990095] } }] } }).catch(() => {})
+  await prisma.booking.deleteMany({ where: { userId: { in: [990091, 990093, 990094, 990095] } } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: { in: [990091, 990092, 990093, 990094, 990095, 990096] } } }).catch(() => {})
+  await prisma.class.deleteMany({ where: { id: { in: [990091, 990093, 990094, 990095] } } }).catch(() => {})
+  await prisma.instructor.deleteMany({ where: { id: { in: [990093, 990095] } } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: { in: [990091, 990093, 990094, 990095] } } }).catch(() => {})
+  await prisma.venue.deleteMany({ where: { id: { in: [990091, 990093, 990094, 990095] } } }).catch(() => {})
   // Salon gate + pagination testi kalıntıları
   await prisma.class.deleteMany({ where: { venueId: 990071 } }).catch(() => {})
   await prisma.venue.deleteMany({ where: { id: 990071 } }).catch(() => {})
@@ -720,6 +722,59 @@ async function run() {
     await prisma.booking.deleteMany({ where: { userId: IU } }).catch(() => {})
     await prisma.class_Session.deleteMany({ where: { classId: IC } }).catch(() => {})
     await prisma.class.deleteMany({ where: { id: IC } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: IU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: IV } }).catch(() => {})
+  })
+
+  // ---- Faz B: bekleyen-puan listesi (GET /pending) + hatırlatma job'ı (ratingPromptJob) ----
+  await check('Puanlama: /pending bekleyen dersi verir + job hatırlatma gönderir + puanlayınca listeden düşer', async () => {
+    const IV = 990095, IC = 990095, II = 990095, IU = 990095
+    const ISS = 990095   // katılınan + 3sa önce bitmiş (job'a uygun: >2sa)
+    const ISS2 = 990096  // katılınmayan (checkedIn=false) — pending'de OLMAMALI
+    const past3h = new Date(Date.now() - 3 * 3600000)
+    await prisma.venue.upsert({ where: { id: IV }, update: { isApproved: true, isActive: true }, create: { id: IV, name: 'PendVenue', email: `pv${IV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.instructor.upsert({ where: { id: II }, update: { isActive: true }, create: { id: II, venueId: IV, fullName: 'Pend Hoca', isActive: true } })
+    await prisma.class.upsert({ where: { id: IC }, update: { instructorId: II }, create: { id: IC, venueId: IV, instructorId: II, title: 'PendDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    await prisma.class_Session.upsert({ where: { id: ISS }, update: { startsAt: past3h, endsAt: past3h }, create: { id: ISS, classId: IC, startsAt: past3h, endsAt: past3h, availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: ISS2 }, update: { startsAt: past3h, endsAt: past3h }, create: { id: ISS2, classId: IC, startsAt: past3h, endsAt: past3h, availableSpots: 20, status: 'open' } })
+    await prisma.user.upsert({ where: { id: IU }, update: {}, create: { id: IU, username: `pend_${IU}`, email: `pend_${IU}@x.com`, passwordHash: 'x', fullName: 'Pend User', tierSportCounts: {} } })
+    const bkGo = await prisma.booking.create({ data: { userId: IU, sessionId: ISS, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `PG-${Date.now()}`, checkedIn: true, checkedInAt: new Date(), ratingPromptSent: false } })
+    // katılınmayan booking (aynı kullanıcı, farklı seans) — pending listesine GİRMEMELİ
+    await prisma.booking.create({ data: { userId: IU, sessionId: ISS2, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `PN-${Date.now()}`, checkedIn: false } })
+    const tok = jwt.sign({ userId: IU }, JWT_SECRET, { expiresIn: '1h' })
+
+    // 1) /pending yalnız katılınan+bitmiş+puansız dersi verir (hoca bilgisi dahil)
+    const p1 = await expectOk('/api/reviews/pending', { token: tok })
+    const list1 = p1.json?.pending || []
+    if (list1.length !== 1) throw new Error(`pending 1 ders bekleniyordu, ${list1.length} geldi`)
+    const item = list1[0]
+    if (item.bookingId !== bkGo.id) throw new Error('pending yanlış booking')
+    if (item.instructorId !== II || item.instructorName !== 'Pend Hoca') throw new Error('pending hoca bilgisi eksik')
+    if (item.venueId !== IV || item.venueName !== 'PendVenue') throw new Error('pending salon bilgisi eksik')
+
+    // 2) job: hatırlatma gönderir → ratingPromptSent=true + in-app bildirim oluşur
+    await sendRatingPrompts()
+    const afterJob = await prisma.booking.findUnique({ where: { id: bkGo.id }, select: { ratingPromptSent: true } })
+    if (!afterJob?.ratingPromptSent) throw new Error('job ratingPromptSent işaretlemedi')
+    const notif = await prisma.notification.findFirst({ where: { userId: IU, type: 'rating_prompt' } })
+    if (!notif) throw new Error('job in-app puanlama bildirimi oluşturmadı')
+    // idempotent: ikinci koşuda tekrar bildirim OLUŞTURMAZ (ratingPromptSent zaten true)
+    await sendRatingPrompts()
+    const notifCount = await prisma.notification.count({ where: { userId: IU, type: 'rating_prompt' } })
+    if (notifCount !== 1) throw new Error(`job çift-gönderim yaptı: ${notifCount} bildirim`)
+
+    // 3) puanla → /pending artık boş (salon satırı oluştu)
+    const rv = await http('/api/reviews', { method: 'POST', token: tok, body: { bookingId: bkGo.id, venueRating: 4, instructorRating: 5 } })
+    if (rv.status !== 201) throw new Error(`pending sonrası puan 201 dönmedi: ${rv.status} ${rv.text.slice(0, 120)}`)
+    const p2 = await expectOk('/api/reviews/pending', { token: tok })
+    if ((p2.json?.pending || []).length !== 0) throw new Error('puanladıktan sonra pending boşalmadı')
+
+    await prisma.notification.deleteMany({ where: { userId: IU } }).catch(() => {})
+    await prisma.review.deleteMany({ where: { OR: [{ venueId: IV }, { instructorId: II }] } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { userId: IU } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { classId: IC } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: IC } }).catch(() => {})
+    await prisma.instructor.deleteMany({ where: { id: II } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: IU } }).catch(() => {})
     await prisma.venue.deleteMany({ where: { id: IV } }).catch(() => {})
   })

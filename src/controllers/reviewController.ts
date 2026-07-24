@@ -121,6 +121,63 @@ export const createReview = async (req: Request, res: Response) => {
   }
 }
 
+// Puanlanmayı bekleyen dersler (auth). "Katıldım ama puanlamadım": check-in onaylı + confirmed +
+// ders BİTMİŞ (endsAt <= now, createReview kapısıyla birebir) + o booking için salon (targetType='venue')
+// yorumu YOK. Mobil bunu foreground'da çekip puanlama modalını açar. Hassas alan sızmaması için
+// include DEĞİL nested select kullanılır (venue finans/checkInCode dönmez).
+export const getPendingRatings = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    const now = new Date()
+
+    const bookings = await prisma.booking.findMany({
+      where: {
+        userId,
+        status: 'confirmed',
+        checkedIn: true,
+        session: { endsAt: { lte: now } },          // session non-null + ders bitmiş
+        reviews: { none: { targetType: 'venue' } },  // salon puanı henüz verilmemiş
+      },
+      select: {
+        id: true,
+        session: {
+          select: {
+            endsAt: true,
+            class: {
+              select: {
+                title: true,
+                titleEn: true,
+                venueId: true,
+                instructorId: true,
+                venue: { select: { id: true, name: true } },
+                instructor: { select: { id: true, fullName: true } },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { session: { endsAt: 'desc' } },
+      take: 20,
+    })
+
+    const pending = bookings.map(b => ({
+      bookingId: b.id,
+      className: b.session!.class.title,
+      classNameEn: b.session!.class.titleEn,
+      venueId: b.session!.class.venueId,
+      venueName: b.session!.class.venue?.name ?? null,
+      instructorId: b.session!.class.instructorId,
+      instructorName: b.session!.class.instructor?.fullName ?? null,
+      endsAt: b.session!.endsAt,
+    }))
+
+    return res.json({ pending })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
 // Salon yanıtı (venue auth)
 export const replyToReview = async (req: Request, res: Response) => {
   try {

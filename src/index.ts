@@ -10,6 +10,7 @@ import helmet from 'helmet'
 import rateLimit from 'express-rate-limit'
 import { sendRemindersJob } from './jobs/reminderJob'
 import { sendStreakNudges } from './jobs/streakJob'
+import { sendRatingPrompts } from './jobs/ratingPromptJob'
 import { ensureTiers } from './utils/ensureTiers'
 import { ensureGeo } from './utils/ensureGeo'
 import { ensureBadges } from './utils/ensureBadges'
@@ -187,6 +188,9 @@ app.listen(PORT, () => {
   // Streak teşvik e-postaları: saatte bir kontrol (job kendi içinde akşam penceresi + 20s guard uygular)
   sendStreakNudges()
   setInterval(sendStreakNudges, 60 * 60 * 1000)
+  // Ders sonrası puanlama hatırlatması: 30 dk'da bir (job kendi içinde 2sa+ / checkedIn / tek-puan filtreler)
+  sendRatingPrompts()
+  setInterval(sendRatingPrompts, 30 * 60 * 1000)
 })
 
 export default app
