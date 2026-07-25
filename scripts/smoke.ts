@@ -938,6 +938,10 @@ async function run() {
     await http('/api/auth/forgot-password', { method: 'POST', body: { email } })
     const prt = await prisma.passwordResetToken.findFirst({ where: { userId: uid, used: false }, orderBy: { id: 'desc' } })
     if (!prt) throw new Error('reset token oluşmadı')
+    // GÜVENLİK (undefined-filter): token'SIZ reset → 400 olmalı; aksi halde where:{token:undefined}
+    // filtreyi yok sayıp kurbanın token'ını bulur ve şifresini ezerdi (hesap ele geçirme).
+    if ((await http('/api/auth/reset-password', { method: 'POST', body: { password: 'Hacked12345' } })).status !== 400) throw new Error("token'sız reset-password 400 dönmedi (undefined-filter hesap ele geçirme açığı!)")
+    if ((await http('/api/auth/login', { method: 'POST', body: { email, password: 'Hacked12345' } })).status === 200) throw new Error("token'sız reset kurbanın şifresini değiştirdi (hesap ele geçirme!)")
     if ((await http('/api/auth/reset-password', { method: 'POST', body: { token: prt.token, password: 'NewPass1234' } })).status !== 200) throw new Error('reset başarısız')
     // Eski şifre login FAIL, yeni şifre OK
     if ((await http('/api/auth/login', { method: 'POST', body: { email, password: 'OldPass1234' } })).status === 200) throw new Error('eski şifreyle giriş yapılabildi')
@@ -949,6 +953,12 @@ async function run() {
     if (rt && rt.revoked !== true) throw new Error('şifre sıfırlamada eski refresh token iptal edilmedi (oturum yaşıyor)')
     // Enumeration yok: olmayan e-posta da 200
     if ((await http('/api/auth/forgot-password', { method: 'POST', body: { email: `yok_${uq}@x.com` } })).status !== 200) throw new Error('olmayan e-posta farklı yanıt (hesap sızıntısı)')
+    // GÜVENLİK (undefined-filter): token'sız verify-email → 400 (başkasının e-postasını doğrulayamaz)
+    if ((await http('/api/auth/verify-email', { method: 'POST', body: {} })).status !== 400) throw new Error("token'sız verify-email 400 dönmedi (undefined-filter)")
+    // GÜVENLİK (venueAuth): venueId TAŞIMAYAN venue token'ı reddedilmeli (aksi halde where:{venueId:undefined}
+    // ile tüm salonların rezervasyon/gelir/kupon/hoca verisi dökülürdü)
+    const noVenueIdTok = jwt.sign({ role: 'venue', email: 'x@x.com' }, JWT_SECRET, { expiresIn: '1h' })
+    if ((await http('/api/venue/me', { token: noVenueIdTok })).status !== 401) throw new Error("venueId'siz venue token'ı 401 dönmedi (undefined-filter salon sızıntısı!)")
     await prisma.refreshToken.deleteMany({ where: { userId: uid } }).catch(() => {})
     await prisma.passwordResetToken.deleteMany({ where: { userId: uid } }).catch(() => {})
     await prisma.emailVerificationToken.deleteMany({ where: { userId: uid } }).catch(() => {})

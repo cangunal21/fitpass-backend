@@ -12,7 +12,11 @@ export const venueAuthMiddleware = (req: Request, res: Response, next: NextFunct
 
   try {
     const decoded = verifyToken(token) as any
-    if (!decoded || decoded.role !== 'venue') {
+    // GÜVENLİK: venueId'nin VARLIĞINI de zorla (authMiddleware/instructorAuth ile aynı desen).
+    // Yalnız role kontrol edilip venueId undefined kalırsa, tüm venue uçlarındaki `where:{venueId}`
+    // filtresi Prisma'da YOK SAYILIR → tüm salonların verisi (rezervasyon/gelir/kupon/hoca/drop-in)
+    // dökülür. venueId'siz token (forge/misconfig) burada reddedilerek beş uç birden korunur.
+    if (!decoded || decoded.role !== 'venue' || !decoded.venueId) {
       return res.status(401).json({ error: 'Geçersiz token.' })
     }
     ;(req as any).venueId = decoded.venueId

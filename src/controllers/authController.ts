@@ -307,6 +307,12 @@ export const resetPassword = async (req: Request, res: Response) => {
   try {
     const { token, password } = req.body
 
+    // GÜVENLİK: token doğrulanmazsa `where:{token:undefined}` Prisma'da filtreyi YOK SAYAR →
+    // findFirst BAŞKA bir kullanıcının geçerli token'ını döndürür → o kurbanın şifresi ezilir
+    // (hesap ele geçirme). Bu yüzden query'den ÖNCE token varlığı+tipi kesinlikle kontrol edilir.
+    if (!token || typeof token !== 'string') {
+      return res.status(400).json({ error: 'Geçersiz veya süresi dolmuş sıfırlama linki.' })
+    }
     if (!password || password.length < MIN_PASSWORD) {
       return res.status(400).json({ error: `Şifre en az ${MIN_PASSWORD} karakter olmalı.` })
     }
@@ -519,6 +525,12 @@ export const changePassword = async (req: Request & { userId?: number }, res: Re
 export const verifyEmail = async (req: Request, res: Response) => {
   try {
     const { token } = req.body
+
+    // GÜVENLİK: token yoksa `where:{token:undefined}` filtreyi yok sayar → başka birinin doğrulama
+    // token'ı bulunup e-postası izinsiz doğrulanır. Query'den önce zorunlu kontrol.
+    if (!token || typeof token !== 'string') {
+      return res.status(400).json({ error: 'Geçersiz doğrulama linki.' })
+    }
 
     const record = await prisma.emailVerificationToken.findFirst({
       where: { token, used: false, expiresAt: { gt: new Date() } }
