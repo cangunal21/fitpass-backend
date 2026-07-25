@@ -704,10 +704,6 @@ export const getInstructorById = async (req: Request, res: Response) => {
 
     if (!instructor) return res.status(404).json({ error: 'Eğitmen bulunamadı.' })
 
-    const avgRating = instructor.reviews.length > 0
-      ? instructor.reviews.reduce((s, r) => s + r.rating, 0) / instructor.reviews.length
-      : 0
-
     // optionalAuth: private hoca yanıtı yalnız yorumu yazana görünür
     const viewerId = (req as any).userId as number | undefined
     const safeReviews = instructor.reviews.map(r => hidePrivateReply(r, sanitizeReview(r), viewerId))
@@ -716,8 +712,10 @@ export const getInstructorById = async (req: Request, res: Response) => {
       instructor: {
         ...instructor,
         reviews: safeReviews,
-        avgRating: Math.round(avgRating * 10) / 10,
-        totalReviews: instructor.reviews.length
+        // avgRating/totalReviews: SAKLI değerler (createReview'da tüm yorumlardan tutulur).
+        // Buradaki reviews `take:20` ile sınırlı olduğundan slice'tan hesaplamak SAPARDI.
+        avgRating: instructor.avgRating,
+        totalReviews: instructor.totalReviews,
       }
     })
   } catch (err) {

@@ -29,8 +29,10 @@ export const sendRatingPrompts = async () => {
     for (const booking of bookings) {
       try {
         // Atomik sahiplen: ratingPromptSent'i false→true çevirebilen TEK çalışma bildirir.
+        // reviews:{none} filtresi claim'e de eklendi → findMany ile claim ARASINDA kullanıcı puanladıysa
+        // (venue satırı oluştuysa) count=0 döner, gereksiz "puanla" hatırlatması gitmez.
         const claim = await prisma.booking.updateMany({
-          where: { id: booking.id, ratingPromptSent: false },
+          where: { id: booking.id, ratingPromptSent: false, reviews: { none: { targetType: 'venue' } } },
           data: { ratingPromptSent: true },
         })
         if (claim.count === 0) continue

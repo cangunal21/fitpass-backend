@@ -885,6 +885,9 @@ async function run() {
     const cr = await http('/api/instructor/classes', { method: 'POST', token: iTok, body: { title: 'Sabah Yogası', category: catName, basePrice: 150, duration: 60, capacity: 12 } })
     if (cr.status !== 201) throw new Error(`ders ekleme başarısız: ${cr.status} ${cr.text.slice(0, 120)}`)
     const classId = cr.json?.class?.id
+    // DOĞRULUK: negatif/NaN fiyat-süre-kapasite reddedilmeli (negatif süre endsAt'i bozup puanlama penceresini kaydırırdı)
+    if ((await http('/api/instructor/classes', { method: 'POST', token: iTok, body: { title: 'Neg', category: catName, basePrice: -100, duration: -30, capacity: -5 } })).status !== 400) throw new Error('negatif fiyat/süre ders reddedilmedi')
+    if ((await http('/api/instructor/classes', { method: 'POST', token: iTok, body: { title: 'NaN', category: catName, basePrice: 'abc', duration: 60, capacity: 10 } })).status !== 400) throw new Error('sayısal olmayan fiyat reddedilmedi')
     if (cr.json?.class?.instructorId !== II || cr.json?.class?.venueId !== IV) throw new Error('ders sahiplik/venue hatalı (instructorId/venueId)')
 
     // 3) POST /classes/:id/sessions — kendi dersine seans

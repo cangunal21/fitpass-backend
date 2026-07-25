@@ -21,8 +21,12 @@ export const updateInstructorMe = async (req: Request, res: Response) => {
 
     const sSpecialty = specialty !== undefined ? clampStr(specialty, 200) : undefined // çoklu branş birleşimi → 200
     const sBio = bio !== undefined ? clampStr(bio, 1000) : undefined
-    const specialtyEn = (sSpecialty && sSpecialty !== existing.specialty) ? await translateSpecialty(sSpecialty) : undefined
-    const bioEn = (sBio && sBio !== existing.bio) ? await translateInstructorBio(sBio) : undefined
+    // EN karşılığı TR ile senkron kalmalı: alan TEMİZLENİRSE (boş) EN'i de null'a çek, aksi halde eski EN
+    // hayalet kalırdı. Dolu+değişmişse çevir; dolu+aynıysa dokunma (undefined).
+    const specialtyEn = sSpecialty === undefined ? undefined
+      : (sSpecialty ? (sSpecialty !== existing.specialty ? await translateSpecialty(sSpecialty) : undefined) : null)
+    const bioEn = sBio === undefined ? undefined
+      : (sBio ? (sBio !== existing.bio ? await translateInstructorBio(sBio) : undefined) : null)
 
     const updated = await prisma.instructor.update({
       where: { id: instructorId },
@@ -62,9 +66,17 @@ export const createInstructorClass = async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Salonunuz henüz onaylı/aktif değil. Ders ekleyemezsiniz.' })
     }
 
-    const { title, description, category, basePrice, duration, capacity } = req.body
-    if (!title || !category || !basePrice || !duration || !capacity) {
-      return res.status(400).json({ error: 'Tüm zorunlu alanları doldurun.' })
+    const { title, description, category } = req.body
+    if (!title || !category) {
+      return res.status(400).json({ error: 'Ders adı ve branş zorunludur.' })
+    }
+    // Sayısal alanlar POZİTİF olmalı: `!basePrice` guard'ı negatif/NaN'ı geçirirdi; negatif süre
+    // endsAt'i startsAt'ten öne çekip puanlama penceresini bozardı. `!(x > 0)` → NaN/0/negatif hepsini yakalar.
+    const price = Number(req.body.basePrice)
+    const dur = parseInt(req.body.duration)
+    const cap = parseInt(req.body.capacity)
+    if (!(price > 0) || !(dur > 0) || !(cap > 0)) {
+      return res.status(400).json({ error: 'Fiyat, süre ve kapasite pozitif bir sayı olmalı.' })
     }
 
     const sportCat = await prisma.sportCategory.findFirst({
@@ -83,10 +95,10 @@ export const createInstructorClass = async (req: Request, res: Response) => {
         description: safeDesc,
         category,
         sportCategoryId: sportCat?.id ?? null,
-        basePrice: parseFloat(basePrice),
-        duration: parseInt(duration),
-        durationMinutes: parseInt(duration),
-        capacity: parseInt(capacity),
+        basePrice: price,
+        duration: dur,
+        durationMinutes: dur,
+        capacity: cap,
         venueId: inst.venueId,     // DB'den — gövdeden ALINMAZ
         instructorId,              // ZORLA giriş yapan eğitmen — başka hoca adına açılamaz
         isActive: true,
@@ -118,7 +130,7 @@ export const createInstructorSession = async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Bu derse seans ekleme yetkiniz yok.' })
     }
 
-    const startsAt = new Date(`${date}T${time}:00`)
+    const startsAt = new Date(`${date}T${time}:00+03:00`) // TR (UTC+3) duvar-saati — sunucu TZ'inden bağımsız doğru an
     if (isNaN(startsAt.getTime()) || startsAt <= new Date()) {
       return res.status(400).json({ error: 'Geçmiş/geçersiz tarihli seans eklenemez. Gelecekteki bir tarih ve saat seçin.' })
     }
@@ -194,7 +206,12 @@ export const checkInInstructorBooking = async (req: Request, res: Response) => {
     if (booking.checkedIn) {
       return res.json({ alreadyCheckedIn: true, message: 'Bu rezervasyon zaten check-in yapılmış.', booking: payload })
     }
-    await prisma.booking.update({ where: { id: booking.id }, data: { checkedIn: true, checkedInAt: new Date() } })
+    // ATOMİK: checkedIn=false→true çevirebilen TEK istek başarılı sayılır. Eşzamanlı çift-okutmada
+    // (çift-tık/retry) ikinci istek count=0 alır → "zaten check-in" döner (stale-read yarışı kapalı).
+    const claim = await prisma.booking.updateMany({ where: { id: booking.id, checkedIn: false }, data: { checkedIn: true, checkedInAt: new Date() } })
+    if (claim.count === 0) {
+      return res.json({ alreadyCheckedIn: true, message: 'Bu rezervasyon zaten check-in yapılmış.', booking: payload })
+    }
     return res.json({ success: true, message: 'Check-in başarılı!', booking: { ...payload, checkedInAt: new Date() } })
   } catch (err) {
     console.error(err)

@@ -44,6 +44,10 @@ async function purgeBookingsForSessions(tx: any, sessionIds: number[]) {
 // Salonun avgRating/totalReviews'ını kalan yorumlardan yeniden hesaplar.
 // Ders/seans silmede yorumlar da silindiği için puan hayalet kalmasın diye çağrılır.
 async function recomputeVenueRating(tx: any, venueId: number) {
+  // Venue satırını FOR UPDATE ile kilitle — createReview de aynı kilidi alır. Böylece silme yolundaki
+  // recompute ile eşzamanlı bir puanlama SERİLEŞİR; ikisi kilitsiz çalışırsa lost-update ile
+  // avgRating/totalReviews sapabilirdi.
+  await tx.$executeRaw`SELECT id FROM "Venue" WHERE id = ${venueId} FOR UPDATE`
   const reviews = await tx.review.findMany({ where: { venueId }, select: { rating: true } })
   const avg = reviews.length ? reviews.reduce((s: number, r: any) => s + r.rating, 0) / reviews.length : 0
   await tx.venue.update({ where: { id: venueId }, data: { avgRating: Math.round(avg * 10) / 10, totalReviews: reviews.length } })
@@ -406,7 +410,7 @@ export const createSession = async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Bu derse seans ekleme yetkiniz yok.' })
     }
 
-    const startsAt = new Date(`${date}T${time}:00`)
+    const startsAt = new Date(`${date}T${time}:00+03:00`) // TR (UTC+3) duvar-saati — sunucu TZ'inden bağımsız doğru an
     if (startsAt <= new Date()) {
       return res.status(400).json({ error: 'Geçmiş tarihli seans eklenemez. Lütfen gelecekteki bir tarih ve saat seçin.' })
     }
@@ -531,7 +535,7 @@ export const createDropInSlot = async (req: Request, res: Response) => {
 
     const sportCat = await prisma.sportCategory.findFirst({ where: { name: { equals: sport, mode: 'insensitive' } } })
 
-    const startsAt = new Date(`${date}T${time}:00`)
+    const startsAt = new Date(`${date}T${time}:00+03:00`) // TR (UTC+3) duvar-saati — sunucu TZ'inden bağımsız doğru an
     if (startsAt <= new Date()) {
       return res.status(400).json({ error: 'Geçmiş tarihli slot eklenemez.' })
     }
@@ -680,7 +684,7 @@ export const updateSession = async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Bu seansı düzenleme yetkiniz yok.' })
     }
 
-    const startsAt = new Date(`${date}T${time}:00`)
+    const startsAt = new Date(`${date}T${time}:00+03:00`) // TR (UTC+3) duvar-saati — sunucu TZ'inden bağımsız doğru an
     if (startsAt <= new Date()) {
       return res.status(400).json({ error: 'Geçmiş tarihli seans eklenemez.' })
     }

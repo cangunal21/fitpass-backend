@@ -116,6 +116,8 @@ export const createReview = async (req: Request, res: Response) => {
     // Çift-submit yarışı: existing kontrolü sıralı durumu yakalar, eşzamanlıda unique
     // (bookingId,targetType) ihlali P2002 fırlatır → 500 yerine aynı zarif mesajı döndür
     if (err?.code === 'P2002') return res.status(400).json({ error: 'Bu ders için zaten puan verdiniz.' })
+    // Nadir yarış: booking okunduktan sonra hoca/salon silinirse FK ihlali (P2003) → 500 yerine zarif 400
+    if (err?.code === 'P2003') return res.status(400).json({ error: 'Puanlama şu an yapılamıyor, ders/hoca güncellenmiş olabilir.' })
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
@@ -237,21 +239,22 @@ export const getVenueReviews = async (req: Request, res: Response) => {
     const venueId = parseInt(req.params.venueId as string)
     const viewerId = (req as any).userId as number | undefined
 
-    const reviews = await prisma.review.findMany({
-      where: { venueId, targetType: 'venue' },
-      include: {
-        reviewer: { select: { fullName: true, username: true, avatarUrl: true } }
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-    })
+    const where = { venueId, targetType: 'venue' as const }
+    // Ortalama/toplam TÜM yorumlardan (aggregate) hesaplanır — liste `take:50` ile sınırlı olduğundan
+    // avg'i o dilimden hesaplarsak saklı venue.avgRating ile SAPARDI (ör. 80 yorumda 50'nin ortalaması).
+    const [reviews, stats] = await Promise.all([
+      prisma.review.findMany({
+        where,
+        include: { reviewer: { select: { fullName: true, username: true, avatarUrl: true } } },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      }),
+      prisma.review.aggregate({ where, _avg: { rating: true }, _count: true }),
+    ])
 
-    const [agg, safeReviews] = [
-      { avg: reviews.length ? Math.round((reviews.reduce((s, r) => s + r.rating, 0) / reviews.length) * 10) / 10 : 0, count: reviews.length },
-      reviews.map(r => hidePrivateReply(r, sanitizeReview(r), viewerId)),
-    ]
-
-    return res.json({ reviews: safeReviews, avgRating: agg.avg, totalReviews: agg.count })
+    const safeReviews = reviews.map(r => hidePrivateReply(r, sanitizeReview(r), viewerId))
+    const avgRating = stats._avg.rating ? Math.round(stats._avg.rating * 10) / 10 : 0
+    return res.json({ reviews: safeReviews, avgRating, totalReviews: stats._count })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
@@ -264,19 +267,21 @@ export const getInstructorReviews = async (req: Request, res: Response) => {
     const instructorId = parseInt(req.params.instructorId as string)
     const viewerId = (req as any).userId as number | undefined
 
-    const reviews = await prisma.review.findMany({
-      where: { instructorId, targetType: 'instructor' },
-      include: {
-        reviewer: { select: { fullName: true, username: true, avatarUrl: true } }
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-    })
+    const where = { instructorId, targetType: 'instructor' as const }
+    const [reviews, stats] = await Promise.all([
+      prisma.review.findMany({
+        where,
+        include: { reviewer: { select: { fullName: true, username: true, avatarUrl: true } } },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      }),
+      prisma.review.aggregate({ where, _avg: { rating: true }, _count: true }),
+    ])
 
-    const avg = reviews.length ? Math.round((reviews.reduce((s, r) => s + r.rating, 0) / reviews.length) * 10) / 10 : 0
+    const avg = stats._avg.rating ? Math.round(stats._avg.rating * 10) / 10 : 0
     const safeReviews = reviews.map(r => hidePrivateReply(r, sanitizeReview(r), viewerId))
 
-    return res.json({ reviews: safeReviews, avgRating: avg, totalReviews: reviews.length })
+    return res.json({ reviews: safeReviews, avgRating: avg, totalReviews: stats._count })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
@@ -290,17 +295,21 @@ export const getInstructorReviews = async (req: Request, res: Response) => {
 export const getMyInstructorReviews = async (req: Request, res: Response) => {
   try {
     const instructorId = (req as any).instructorId
-    const reviews = await prisma.review.findMany({
-      where: { instructorId, targetType: 'instructor' },
-      include: { reviewer: { select: { fullName: true, username: true, avatarUrl: true } } },
-      orderBy: { createdAt: 'desc' },
-      take: 100,
-    })
-    const avg = reviews.length ? Math.round((reviews.reduce((s, r) => s + r.rating, 0) / reviews.length) * 10) / 10 : 0
+    const where = { instructorId, targetType: 'instructor' as const }
+    const [reviews, stats] = await Promise.all([
+      prisma.review.findMany({
+        where,
+        include: { reviewer: { select: { fullName: true, username: true, avatarUrl: true } } },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+      }),
+      prisma.review.aggregate({ where, _avg: { rating: true }, _count: true }),
+    ])
+    const avg = stats._avg.rating ? Math.round(stats._avg.rating * 10) / 10 : 0
     // Eğitmen kendi yanıtını görebilmeli → viewerId'yi geçmeye gerek yok, kendi yanıtı zaten public/private
     // ayrımından bağımsız kendisine ait; ama private-başkası yanıtı yok (tek reply kolonu) → sanitize yeter.
     const safeReviews = reviews.map(r => sanitizeReview(r))
-    return res.json({ reviews: safeReviews, avgRating: avg, totalReviews: reviews.length })
+    return res.json({ reviews: safeReviews, avgRating: avg, totalReviews: stats._count })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })

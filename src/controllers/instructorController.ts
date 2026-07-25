@@ -107,9 +107,11 @@ export const updateInstructor = async (req: Request, res: Response) => {
     // Metinleri sınırla (AI maliyeti + DB şişmesi)
     const sSpecialty = specialty !== undefined ? clampStr(specialty, 200) : undefined
     const sBio = bio !== undefined ? clampStr(bio, 1000) : undefined
-    // Değişen alanları yeniden çevir
-    const specialtyEn = (sSpecialty && sSpecialty !== existing.specialty) ? await translateSpecialty(sSpecialty) : undefined
-    const bioEn = (sBio && sBio !== existing.bio) ? await translateInstructorBio(sBio) : undefined
+    // EN karşılığı TR ile senkron: TEMİZLENİRSE null, dolu+değişmişse çevir, dolu+aynıysa dokunma
+    const specialtyEn = sSpecialty === undefined ? undefined
+      : (sSpecialty ? (sSpecialty !== existing.specialty ? await translateSpecialty(sSpecialty) : undefined) : null)
+    const bioEn = sBio === undefined ? undefined
+      : (sBio ? (sBio !== existing.bio ? await translateInstructorBio(sBio) : undefined) : null)
 
     const updated = await prisma.instructor.update({
       where: { id: instructorId },
