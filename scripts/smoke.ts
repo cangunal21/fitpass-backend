@@ -111,6 +111,16 @@ async function cleanup() {
   await prisma.instructor.deleteMany({ where: { venueId: { in: [990301, 990302] } } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990301 } }).catch(() => {})
   await prisma.venue.deleteMany({ where: { id: { in: [990301, 990302] } } }).catch(() => {})
+  // Oyunlaştırma follow-up regresyon kalıntıları (#3 şampiyon berabere 99031x, #2 referral reversal 99033x)
+  await prisma.userBadge.deleteMany({ where: { userId: { in: [990312, 990313] } } }).catch(() => {})
+  await prisma.booking.deleteMany({ where: { userId: { in: [990312, 990313] } } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: 990311 } }).catch(() => {})
+  await prisma.class.deleteMany({ where: { id: 990310 } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: { in: [990312, 990313] } } }).catch(() => {})
+  await prisma.neighborhood.deleteMany({ where: { id: 990310 } }).catch(() => {})
+  await prisma.rewardPoint.deleteMany({ where: { userId: { in: [990330, 990331] } } }).catch(() => {})
+  await prisma.referral.deleteMany({ where: { OR: [{ referrerId: 990330 }, { referredId: { in: [990330, 990331] } }] } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: { in: [990330, 990331] } } }).catch(() => {})
   await prisma.coupon.deleteMany({ where: { code: { startsWith: 'NEG' } } }).catch(() => {})
   // Kayıt/giriş case testi kalıntısı (usrcase01)
   {
@@ -220,8 +230,8 @@ async function cleanup() {
   await prisma.class.deleteMany({ where: { id: 990011 } }).catch(() => {})
   await prisma.venue.deleteMany({ where: { id: 990011 } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990011 } }).catch(() => {})
-  await prisma.booking.deleteMany({ where: { OR: [{ userId: U }, { sessionId: S }] } }).catch(() => {})
-  await prisma.class_Session.deleteMany({ where: { id: S } }).catch(() => {})
+  await prisma.booking.deleteMany({ where: { OR: [{ userId: U }, { sessionId: S }, { sessionId: 990002 }] } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: { in: [S, 990002] } } }).catch(() => {})
   await prisma.class.deleteMany({ where: { id: C } }).catch(() => {})
   await prisma.venue.deleteMany({ where: { id: V } }).catch(() => {})
   await prisma.userBadge.deleteMany({ where: { userId: U } }).catch(() => {})
@@ -309,13 +319,21 @@ async function run() {
     if (r.json.activities.length !== 0) throw new Error(`check-in öncesi takvim boş olmalı (gelen: ${r.json.activities.length})`)
   })
 
-  // Check-in sistemi: salon kodu doğrulayıp check-in yapıyor mu (uçtan uca)
-  await check('Check-in: salon kodu ile check-in başarılı', async () => {
-    const b = await prisma.booking.findFirst({ where: { userId: U, sessionId: S }, select: { checkInCode: true, status: true } })
-    if (!b?.checkInCode) throw new Error('checkInCode üretilmemiş')
+  // Check-in sistemi: salon kodu doğrulayıp check-in yapıyor mu (uçtan uca) + ZAMAN PENCERESİ (#5)
+  await check('Check-in: salon kodu ile check-in + gelecek seans reddi (#5)', async () => {
     const venueToken = jwt.sign({ venueId: V, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
-    const r = await http('/api/bookings/checkin', { method: 'POST', token: venueToken, body: { code: b.checkInCode } })
-    if (r.status !== 200 || !r.json?.success) throw new Error(`check-in başarısız (status=${b.status}): ${r.status} ${r.text.slice(0, 140)}`)
+    // Ders SAATİNDE (pencere içi: başlangıç−20dk .. bitiş+40dk) seans → check-in BAŞARILI
+    await prisma.class_Session.upsert({ where: { id: 990002 }, update: { classId: C, startsAt: new Date(Date.now() - 20 * 60000), endsAt: new Date(Date.now() + 40 * 60000), status: 'open', availableSpots: 20 }, create: { id: 990002, classId: C, startsAt: new Date(Date.now() - 20 * 60000), endsAt: new Date(Date.now() + 40 * 60000), availableSpots: 20, status: 'open' } })
+    const code = `CIN${Date.now() % 100000}`
+    await prisma.booking.create({ data: { userId: U, sessionId: 990002, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `CIN-${Date.now()}`, checkInCode: code, checkedIn: false } })
+    const r = await http('/api/bookings/checkin', { method: 'POST', token: venueToken, body: { code } })
+    if (r.status !== 200 || !r.json?.success) throw new Error(`check-in başarısız: ${r.status} ${r.text.slice(0, 140)}`)
+    // #5: GELECEKTEKİ seans (S, +2 gün) check-in REDDEDİLİR (streak/rozet şişirme engeli)
+    const bf = await prisma.booking.findFirst({ where: { userId: U, sessionId: S }, select: { checkInCode: true } })
+    if (bf?.checkInCode) {
+      const rf = await http('/api/bookings/checkin', { method: 'POST', token: venueToken, body: { code: bf.checkInCode } })
+      if (rf.status !== 400) throw new Error(`gelecekteki seans check-in reddedilmedi (#5): ${rf.status}`)
+    }
   })
 
   // Check-in yanlış salon token'ı ile reddedilmeli (IDOR koruması)
@@ -341,8 +359,12 @@ async function run() {
   // Review: ders henüz gerçekleşmediyse (gelecek seans) yorum 400 olmalı
   await check('Review: gerçekleşmemiş derse yorum reddediliyor (400)', async () => {
     const b = await prisma.booking.findFirst({ where: { userId: U, sessionId: S }, select: { id: true } })
+    // check-in kapısını GEÇ (checkedIn=true) ki YALNIZ "ders gerçekleşmedi" (endsAt gelecekte) kapısı sınansın.
+    // (S seansı +2 gün gelecekte olduğundan endpoint'le check-in #5 penceresine takılırdı — DB'den kuruyoruz.)
+    await prisma.booking.update({ where: { id: b!.id }, data: { checkedIn: true, checkedInAt: new Date() } })
     const r = await http('/api/reviews', { method: 'POST', token, body: { bookingId: b?.id, rating: 5, comment: 'erken yorum' } })
     if (r.status !== 400) throw new Error(`gerçekleşmemiş derse yorum yapılabildi: ${r.status}`)
+    await prisma.booking.update({ where: { id: b!.id }, data: { checkedIn: false, checkedInAt: null } }).catch(() => {})
   })
 
   // Refresh token akışı: kayıt → refresh ile yeni access token → yeni token getMe'de çalışır → logout → refresh artık 401
@@ -986,14 +1008,20 @@ async function run() {
     const gc = await http('/api/instructor/classes', { token: iTok })
     if (!(gc.json?.classes || []).some((c: any) => c.id === classId)) throw new Error('kendi dersi /classes listesinde yok')
 
-    // 5) CHECK-IN — kendi dersinin öğrencisini QR koduyla onayla + finans yok + idempotent
+    // 5) CHECK-IN — kendi dersinin öğrencisini QR koduyla onayla (ders SAATİNDE — #5 penceresi) + finans yok + idempotent
+    const nowSess = await prisma.class_Session.create({ data: { classId, startsAt: new Date(Date.now() - 20 * 60000), endsAt: new Date(Date.now() + 40 * 60000), availableSpots: 12, status: 'open' } })
     const code = `PRT${Date.now() % 100000}`
-    await prisma.booking.create({ data: { userId: IU, sessionId, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `PRTB-${Date.now()}`, checkInCode: code, checkedIn: false } })
+    await prisma.booking.create({ data: { userId: IU, sessionId: nowSess.id, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `PRTB-${Date.now()}`, checkInCode: code, checkedIn: false } })
     const ci = await http('/api/instructor/checkin', { method: 'POST', token: iTok, body: { code } })
     if (ci.status !== 200 || !ci.json?.success) throw new Error(`check-in başarısız: ${ci.status} ${ci.text.slice(0, 120)}`)
     if (/venuePayout|finalAmount|baseAmount|commission/i.test(JSON.stringify(ci.json))) throw new Error('check-in yanıtı finans sızdırdı')
     const ci2 = await http('/api/instructor/checkin', { method: 'POST', token: iTok, body: { code } })
     if (!ci2.json?.alreadyCheckedIn) throw new Error('ikinci check-in alreadyCheckedIn dönmedi')
+    // #5: GELECEKTEKİ seans (sessionId = +2 gün) check-in REDDEDİLİR (streak şişirme engeli)
+    const futCode = `FUT${Date.now() % 100000}`
+    await prisma.booking.create({ data: { userId: IU, sessionId, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `FUTB-${Date.now()}`, checkInCode: futCode, checkedIn: false } })
+    const ciFut = await http('/api/instructor/checkin', { method: 'POST', token: iTok, body: { code: futCode } })
+    if (ciFut.status !== 400) throw new Error(`gelecekteki seans check-in reddedilmedi (#5): ${ciFut.status}`)
 
     // 6) SAHİPLİK — başka hocanın (instructorId=null) dersindeki öğrenciyi check-in → 403
     const otherClass = await prisma.class.create({ data: { venueId: IV, title: 'Başka Ders', category: catName, basePrice: 100, durationMinutes: 60, capacity: 10, isActive: true, instructorId: null } })
@@ -1441,6 +1469,59 @@ async function run() {
     await prisma.class.deleteMany({ where: { id: N } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: { in: [990221, 990222] } } }).catch(() => {})
     await prisma.neighborhood.deleteMany({ where: { id: N } }).catch(() => {})
+  })
+
+  // #3: Şampiyon BERABERE — eş-skorlu kazanan ELENMEZ, ikisi de aynı derece (deterministik yarışma sıralaması)
+  await check('Sezon şampiyonu: berabere → iki kazanan da rank 1 (#3)', async () => {
+    const testNow = new Date(2026, 11, 15)
+    const cur = seasonInfo(testNow)
+    const prev = seasonInfo(new Date(cur.start.getTime() - 86400000))
+    const scat = await prisma.sportCategory.findFirst({})
+    await ensureBadges()
+    const champB = await prisma.badge.findUnique({ where: { key: 'season_champion' }, select: { id: true } })
+    if (!champB) throw new Error('season_champion yok')
+    const NT = 990310, CT = 990310, U1 = 990312, U2 = 990313
+    await prisma.neighborhood.upsert({ where: { id: NT }, update: {}, create: { id: NT, name: 'BrbMah', latitude: 41, longitude: 29, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: CT }, update: { sportCategoryId: scat?.id ?? null }, create: { id: CT, venueId: V, title: 'BrbDers', category: catName, sportCategoryId: scat?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const inPrev = (off: number) => new Date(prev.start.getTime() + off * 86400000)
+    await prisma.class_Session.upsert({ where: { id: 990311 }, update: { startsAt: inPrev(5) }, create: { id: 990311, classId: CT, startsAt: inPrev(5), endsAt: new Date(inPrev(5).getTime() + 3600000), status: 'open', availableSpots: 20 } })
+    const mkU = (id: number) => prisma.user.upsert({ where: { id }, update: { neighborhoodId: NT, activityPrivacy: 'public', banned: false }, create: { id, username: `brb_${id}`, email: `brb_${id}@x.com`, passwordHash: 'x', fullName: 'Brb', tierId: 1, tierSportCounts: {}, neighborhoodId: NT, activityPrivacy: 'public' } })
+    await mkU(U1); await mkU(U2)
+    await prisma.booking.deleteMany({ where: { userId: { in: [U1, U2] } } })
+    const bk = (id: number, uid: number) => prisma.booking.create({ data: { id, userId: uid, sessionId: 990311, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `BRB-${id}-${Date.now()}`, checkedIn: true, checkedInAt: new Date() } })
+    await bk(990314, U1); await bk(990315, U2) // ikisi de 1 ders → BERABERE
+    await prisma.userBadge.deleteMany({ where: { badgeId: champB.id, seasonKey: prev.key } }) // already-guard sıfırla
+    await awardSeasonChampions(testNow)
+    const r1 = await prisma.userBadge.findFirst({ where: { userId: U1, badgeId: champB.id, seasonKey: prev.key, scopeType: 'district', scopeId: NT } })
+    const r2 = await prisma.userBadge.findFirst({ where: { userId: U2, badgeId: champB.id, seasonKey: prev.key, scopeType: 'district', scopeId: NT } })
+    if (!r1 || !r2) throw new Error(`berabere iki kazanan da rozet almalı (u1=${!!r1} u2=${!!r2})`)
+    if (r1.rank !== 1 || r2.rank !== 1) throw new Error(`berabere ikisi de rank 1 olmalı (u1=${r1.rank} u2=${r2.rank}) — eski slice(0,3) birini elerdi`)
+    await prisma.userBadge.deleteMany({ where: { userId: { in: [U1, U2] } } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { userId: { in: [U1, U2] } } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: 990311 } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: CT } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: { in: [U1, U2] } } }).catch(() => {})
+    await prisma.neighborhood.deleteMany({ where: { id: NT } }).catch(() => {})
+  })
+
+  // #2: Hesap silme → davetlinin TAMAMLANMIŞ referral'ında davet edenin +100'ü GERİ ALINIR (farming engeli)
+  await check('Hesap silme: tamamlanmış referral +100 geri alınır (#2 farming)', async () => {
+    const RR = 990330, DD = 990331
+    await prisma.rewardPoint.deleteMany({ where: { userId: { in: [RR, DD] } } }).catch(() => {})
+    await prisma.referral.deleteMany({ where: { OR: [{ referrerId: RR }, { referredId: DD }] } }).catch(() => {})
+    await prisma.user.upsert({ where: { id: RR }, update: { rewardPoints: 250 }, create: { id: RR, username: `rr_${RR}`, email: `rr_${RR}@x.com`, passwordHash: 'x', fullName: 'Referrer', tierSportCounts: {}, rewardPoints: 250 } })
+    await prisma.user.upsert({ where: { id: DD }, update: { passwordHash: bcrypt.hashSync('DelPass123', 10) }, create: { id: DD, username: `dd_${DD}`, email: `dd_${DD}@x.com`, passwordHash: bcrypt.hashSync('DelPass123', 10), fullName: 'Referred', tierSportCounts: {} } })
+    await prisma.referral.create({ data: { referrerId: RR, referredId: DD, status: 'completed', completedAt: new Date(), referredBonusGranted: true } })
+    const dTok = jwt.sign({ userId: DD, email: `dd_${DD}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const del = await http('/api/auth/account', { method: 'DELETE', token: dTok, body: { password: 'DelPass123' } })
+    if (del.status !== 200) throw new Error(`hesap silme başarısız: ${del.status} ${del.text.slice(0, 120)}`)
+    const rr = await prisma.user.findUnique({ where: { id: RR }, select: { rewardPoints: true } })
+    if (rr?.rewardPoints !== 150) throw new Error(`davet edenin puanı geri alınmadı: ${rr?.rewardPoints} (150 bekleniyor: 250−100)`)
+    const rev = await prisma.rewardPoint.findFirst({ where: { userId: RR, source: 'referral_reversed' } })
+    if (!rev || rev.points !== -100) throw new Error(`referral_reversed ledger kaydı yok/yanlış: ${rev?.points}`)
+    await prisma.rewardPoint.deleteMany({ where: { userId: RR } }).catch(() => {})
+    await prisma.referral.deleteMany({ where: { referrerId: RR } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: RR } }).catch(() => {})
   })
 
   await check('Rozet kataloğu: streak rozetleri silinir, değerler düzeltilir, founder/referral var', async () => {

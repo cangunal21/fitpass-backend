@@ -876,23 +876,29 @@ export const checkInBooking = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Rezervasyon onaylı değil.' })
     }
 
+    // ZAMAN PENCERESİ: check-in yalnız ders saati civarında (başlangıç−1sa .. bitiş+3sa). Gelecekteki
+    // dersi bugünden check-in'leyip streak/rozet şişirme engellenir; çok geç geriye-dönük check-in de kapalı.
+    const st = booking.session?.startsAt ? new Date(booking.session.startsAt).getTime() : null
+    const en = booking.session?.endsAt ? new Date(booking.session.endsAt).getTime() : null
+    const nowMs = Date.now()
+    if (st != null && nowMs < st - 60 * 60000) return res.status(400).json({ error: 'Check-in ders saatine yakın açılır (henüz erken).' })
+    if (en != null && nowMs > en + 180 * 60000) return res.status(400).json({ error: 'Check-in süresi doldu.' })
+
+    const already = {
+      user: booking.user,
+      classTitle: booking.session?.class?.title,
+      checkedInAt: booking.checkedInAt,
+      groupSize: booking.groupSize,
+    }
     if (booking.checkedIn) {
-      return res.json({
-        alreadyCheckedIn: true,
-        message: 'Bu rezervasyon zaten check-in yapılmış.',
-        booking: {
-          user: booking.user,
-          classTitle: booking.session?.class?.title,
-          checkedInAt: booking.checkedInAt,
-          groupSize: booking.groupSize,
-        }
-      })
+      return res.json({ alreadyCheckedIn: true, message: 'Bu rezervasyon zaten check-in yapılmış.', booking: already })
     }
 
-    await prisma.booking.update({
-      where: { id: booking.id },
-      data: { checkedIn: true, checkedInAt: new Date() }
-    })
+    // ATOMİK: checkedIn=false→true çevirebilen TEK istek başarılı; eşzamanlı çift-okutma "zaten check-in" alır.
+    const claim = await prisma.booking.updateMany({ where: { id: booking.id, checkedIn: false }, data: { checkedIn: true, checkedInAt: new Date() } })
+    if (claim.count === 0) {
+      return res.json({ alreadyCheckedIn: true, message: 'Bu rezervasyon zaten check-in yapılmış.', booking: already })
+    }
 
     return res.json({
       success: true,

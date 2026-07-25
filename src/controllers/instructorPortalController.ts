@@ -197,6 +197,14 @@ export const checkInInstructorBooking = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Rezervasyon onaylı değil.' })
     }
 
+    // ZAMAN PENCERESİ: yalnız ders saati civarında (başlangıç−1sa .. bitiş+3sa) — gelecekteki dersi
+    // erkenden check-in'leyip öğrencinin streak/rozetini şişirme engellenir (salon check-in ile aynı kural).
+    const st = booking.session?.startsAt ? new Date(booking.session.startsAt).getTime() : null
+    const en = booking.session?.endsAt ? new Date(booking.session.endsAt).getTime() : null
+    const nowMs = Date.now()
+    if (st != null && nowMs < st - 60 * 60000) return res.status(400).json({ error: 'Check-in ders saatine yakın açılır (henüz erken).' })
+    if (en != null && nowMs > en + 180 * 60000) return res.status(400).json({ error: 'Check-in süresi doldu.' })
+
     const payload = {
       user: booking.user,
       classTitle: booking.session?.class?.title,

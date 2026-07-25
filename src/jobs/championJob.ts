@@ -63,15 +63,23 @@ export async function awardSeasonChampions(now: Date = new Date()) {
       const [sportStr, scopeType, scopeIdStr] = k.split('|')
       const sportCategoryId = parseInt(sportStr)
       const scopeId = parseInt(scopeIdStr)
-      const ranked = [...g.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3) // ilk 3
-      ranked.forEach(([userId], i) => {
-        toCreate.push({ userId, badgeId: champBadge.id, sportCategoryId, scopeType, scopeId, rank: i + 1, seasonKey: prev.key })
+      // DETERMİNİSTİK: skor DESC, eşitlikte userId ASC (Map-insertion sırasına bağlı kalıp keyfî eleme yapma).
+      const sorted = [...g.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])
+      // Standart yarışma sıralaması: aynı skor → aynı derece (rank = kendinden KESİN büyük skorlu sayısı + 1).
+      // İlk 3 DERECEYE kadar herkes ödül alır — eş-skorlu kazanan ELENMEZ (2 kişi 1.'yse ikisi de altın,
+      // sonraki bronz). sorted skor-azalan olduğundan rank monoton artar → rank>3'te güvenle dur.
+      for (const [userId, score] of sorted) {
+        const rank = 1 + sorted.filter(([, s]) => s > score).length
+        if (rank > 3) break
+        toCreate.push({ userId, badgeId: champBadge.id, sportCategoryId, scopeType, scopeId, rank, seasonKey: prev.key })
         winnersByUser.set(userId, (winnersByUser.get(userId) || 0) + 1)
-      })
+      }
     }
 
     if (toCreate.length === 0) return
-    await prisma.userBadge.createMany({ data: toCreate })
+    // skipDuplicates: job tekrar çalışsa/yarışsa aynı sezon-şampiyon rozetini iki kez YAZMASIN
+    // (userbadge_award_unique ifade-index'i ile ON CONFLICT DO NOTHING).
+    await prisma.userBadge.createMany({ data: toCreate, skipDuplicates: true })
 
     // Kazananlara bildirim (best-effort)
     const users = await prisma.user.findMany({ where: { id: { in: [...winnersByUser.keys()] } }, select: { id: true, pushToken: true } })

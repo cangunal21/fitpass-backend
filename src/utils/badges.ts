@@ -15,12 +15,12 @@ export async function syncUserBadges(userId: number): Promise<string[]> {
       select: {
         taggedFriends: true,
         checkedIn: true,
-        session: { select: { startsAt: true, class: { select: { category: true, venueId: true } } } },
+        session: { select: { startsAt: true, class: { select: { sportCategoryId: true, venueId: true, sportCategory: { select: { name: true } } } } } },
       },
     }),
     prisma.dropInParticipant.findMany({
       where: { userId, status: 'confirmed', checkedIn: true, slot: { startsAt: { lt: now } } },
-      select: { checkedIn: true, slot: { select: { startsAt: true, venueId: true, sportCategory: { select: { name: true } } } } },
+      select: { checkedIn: true, slot: { select: { startsAt: true, venueId: true, sportCategoryId: true, sportCategory: { select: { name: true } } } } },
     }),
     prisma.badge.findMany(),
     prisma.userBadge.findMany({ where: { userId }, select: { badgeId: true, sportCategoryId: true } }),
@@ -51,15 +51,18 @@ export async function syncUserBadges(userId: number): Promise<string[]> {
     await prisma.user.update({ where: { id: userId }, data: { recordStreak: streak } }).catch(() => {})
   }
 
-  // Spor adları (ders kategorisi metni + drop-in spor adı)
-  const sportNames = [
-    ...bookings.map(b => b.session?.class?.category),
-    ...dropins.map(d => d.slot?.sportCategory?.name),
-  ].filter(Boolean) as string[]
-  const distinctSports = new Set(sportNames).size
-
-  const sportCounts = new Map<string, number>()
-  for (const s of sportNames) sportCounts.set(s, (sportCounts.get(s) || 0) + 1)
+  // Spor kimliği FK (sportCategoryId) ile sayılır — serbest-metin `category` case/yazım farkıyla
+  // aynı sporu ikiye bölerdi ("Yoga"≠"yoga") → variety/ustalık sayımı sapardı. id→ad (rozet mesajı için).
+  const sportIdName = new Map<number, string>()
+  const sportCounts = new Map<number, number>()
+  const bumpSport = (id?: number | null, name?: string | null) => {
+    if (id == null) return
+    sportCounts.set(id, (sportCounts.get(id) || 0) + 1)
+    if (name && !sportIdName.has(id)) sportIdName.set(id, name)
+  }
+  for (const b of bookings) bumpSport(b.session?.class?.sportCategoryId, b.session?.class?.sportCategory?.name)
+  for (const d of dropins) bumpSport(d.slot?.sportCategoryId, d.slot?.sportCategory?.name)
+  const distinctSports = sportCounts.size
 
   const venueCounts = new Map<number, number>()
   for (const b of bookings) { const v = b.session?.class?.venueId; if (v) venueCounts.set(v, (venueCounts.get(v) || 0) + 1) }
@@ -80,13 +83,12 @@ export async function syncUserBadges(userId: number): Promise<string[]> {
       // Dedup YALNIZCA bu sport_master rozetine göre — şampiyon rozeti (aynı sportCategoryId'yi
       // taşır) o sporda ustalığı ENGELLEMESİN.
       const earnedMasterSports = new Set(earned.filter(e => e.badgeId === badge.id && e.sportCategoryId != null).map(e => e.sportCategoryId as number))
-      for (const [name, count] of sportCounts) {
+      for (const [scId, count] of sportCounts) {
         if (count < threshold) continue
-        const sc = await prisma.sportCategory.findFirst({ where: { name }, select: { id: true } })
-        if (sc && !earnedMasterSports.has(sc.id)) {
-          toCreate.push({ userId, badgeId: badge.id, sportCategoryId: sc.id })
-          earnedMasterSports.add(sc.id)
-          newlyAwarded.push(`${name} ustası`)
+        if (!earnedMasterSports.has(scId)) {
+          toCreate.push({ userId, badgeId: badge.id, sportCategoryId: scId })
+          earnedMasterSports.add(scId)
+          newlyAwarded.push(`${sportIdName.get(scId) || 'Spor'} ustası`)
         }
       }
       continue
@@ -120,7 +122,9 @@ export async function syncUserBadges(userId: number): Promise<string[]> {
   }
 
   if (toCreate.length) {
-    await prisma.userBadge.createMany({ data: toCreate })
+    // skipDuplicates: eşzamanlı syncUserBadges/championJob aynı rozeti iki kez YAZMASIN
+    // (ensureIndexes'teki userbadge_award_unique ifade-index'i ON CONFLICT DO NOTHING'i tetikler).
+    await prisma.userBadge.createMany({ data: toCreate, skipDuplicates: true })
   }
   return newlyAwarded
 }

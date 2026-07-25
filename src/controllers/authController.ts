@@ -473,6 +473,20 @@ export const deleteAccount = async (req: Request, res: Response) => {
       for (const rid of [...new Set(invitedBy.map(r => r.referrerId))]) {
         await tx.user.updateMany({ where: { id: rid, referralCount: { gt: 0 } }, data: { referralCount: { decrement: 1 } } })
       }
+      // FARMING ENGELİ: silinen kullanıcı DAVET EDİLEN ve referral TAMAMLANMIŞSA, davet edene verilmiş +100 puanı
+      // geri al. Aksi halde: davet-koduyla kayıt → ücretli ders (referrer +100) → hesabı sil → tekrarla = sınırsız
+      // puan farming. Puanı negatife düşürmeden (clamp) geri alınır + ledger'a negatif kayıt (izlenebilirlik).
+      const REFERRAL_POINTS = 100 // referralController ile senkron
+      const completedAsReferred = await tx.referral.findMany({ where: { referredId: userId, status: 'completed' }, select: { referrerId: true } })
+      for (const rr of completedAsReferred) {
+        const ref = await tx.user.findUnique({ where: { id: rr.referrerId }, select: { rewardPoints: true } })
+        if (!ref) continue
+        const dec = Math.min(REFERRAL_POINTS, ref.rewardPoints)
+        if (dec > 0) {
+          await tx.user.update({ where: { id: rr.referrerId }, data: { rewardPoints: { decrement: dec } } })
+          await tx.rewardPoint.create({ data: { userId: rr.referrerId, points: -dec, source: 'referral_reversed' } })
+        }
+      }
       await tx.referral.deleteMany({ where: { OR: [{ referrerId: userId }, { referredId: userId }] } })
       await tx.report.deleteMany({ where: { OR: [{ reporterUserId: userId }, { reportedUserId: userId }] } })
 
