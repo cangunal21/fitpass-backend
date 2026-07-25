@@ -1,13 +1,16 @@
 import prisma from './prisma'
+import { trYear } from './season'
 
 export async function computeCompletedLessons(userId: number): Promise<number> {
   const now = new Date()
+  // GAMING ÖNLEME: yalnız GERÇEKTEN gidilen (checkedIn) dersler sayılır — booking-and-no-show ile
+  // tier/pointRate şişirilmesin (streak/rozet/liderlik ile aynı kural).
   const [classCount, dropInCount] = await Promise.all([
     prisma.booking.count({
-      where: { userId, status: 'confirmed', session: { startsAt: { lt: now } } },
+      where: { userId, status: 'confirmed', checkedIn: true, session: { startsAt: { lt: now } } },
     }),
     prisma.dropInParticipant.count({
-      where: { userId, status: 'confirmed', slot: { startsAt: { lt: now } } },
+      where: { userId, status: 'confirmed', checkedIn: true, slot: { startsAt: { lt: now } } },
     }),
   ])
   return classCount + dropInCount
@@ -16,19 +19,17 @@ export async function computeCompletedLessons(userId: number): Promise<number> {
 // Puanları yılda bir sıfırla (lazy): ait olduğu yıl geçmişse 0'la.
 // Puan kazandırma sistemi eklenince otomatik her 1 Ocak'ta sıfırlanır.
 export async function resetYearlyPointsIfNeeded(userId: number) {
-  const currentYear = new Date().getFullYear()
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { rewardPointsYear: true },
+  const currentYear = trYear() // TR duvar-saati yılı — UTC yıl sınırı (Railway) 3 saat kayardı
+  // Koşullu + atomik (mutlak SET yerine): yıl damgası eskiyse SIFIRLA+damgala; damga yoksa yalnız damgala.
+  // İki updateMany koşulu (lt vs null) örtüşmez → idempotent, eşzamanlı çağrıda tutarlı.
+  await prisma.user.updateMany({
+    where: { id: userId, rewardPointsYear: { lt: currentYear } },
+    data: { rewardPoints: 0, rewardPointsYear: currentYear },
   })
-  if (!user) return
-  if (user.rewardPointsYear == null) {
-    // İlk kez: yıl damgasını koy, puana dokunma
-    await prisma.user.update({ where: { id: userId }, data: { rewardPointsYear: currentYear } })
-  } else if (user.rewardPointsYear < currentYear) {
-    // Yeni yıl: puanları sıfırla
-    await prisma.user.update({ where: { id: userId }, data: { rewardPoints: 0, rewardPointsYear: currentYear } })
-  }
+  await prisma.user.updateMany({
+    where: { id: userId, rewardPointsYear: null },
+    data: { rewardPointsYear: currentYear },
+  })
 }
 
 export async function syncUserTier(userId: number) {

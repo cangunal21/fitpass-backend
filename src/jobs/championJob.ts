@@ -9,7 +9,9 @@ import { sendPushNotification } from '../utils/push'
 // biten sezondaki onaylı ders sayısı; banlı/gizli hariç.
 // Lansman sezonu = Güz 2026 (1 Eyl–1 Ara 2026). İlk şampiyon ödülleri bu sezon bitince
 // (1 Aralık 2026) düşer; lansman öncesi sezonlara (Bahar/Yaz 2026) ödül verilmez.
-const LAUNCH_SEASON_START = new Date(2026, 8, 1) // 1 Eylül 2026 = Güz 2026 başlangıcı
+// 1 Eylül 2026 = Güz 2026 başlangıcı. TR (UTC+3) duvar-saatiyle — season.ts TR-tabanlı seasonStart
+// ile HİZALI olmalı (aksi halde prev.start < LAUNCH karşılaştırması 3 saatlik kaymayla yanlış olurdu).
+const LAUNCH_SEASON_START = new Date(Date.UTC(2026, 8, 1) - 3 * 3600 * 1000)
 
 export async function awardSeasonChampions(now: Date = new Date()) {
   try {
@@ -29,7 +31,9 @@ export async function awardSeasonChampions(now: Date = new Date()) {
     if (already > 0) return
 
     const bookings = await prisma.booking.findMany({
-      where: { status: 'confirmed', session: { startsAt: { gte: windowStart, lt: windowEnd } } },
+      // GAMING ÖNLEME: kalıcı şampiyon rozeti yalnızca GERÇEKTEN gidilen (checkedIn) derslerden —
+      // no-show/ücretsiz booking ile küçük bir ilçede sahte şampiyonluk kazanılmasın (liderlikle aynı).
+      where: { status: 'confirmed', checkedIn: true, session: { startsAt: { gte: windowStart, lt: windowEnd } } },
       select: {
         userId: true,
         user: { select: { banned: true, activityPrivacy: true, neighborhoodId: true, neighborhood: { select: { cityId: true } } } },

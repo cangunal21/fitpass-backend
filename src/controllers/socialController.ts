@@ -150,6 +150,7 @@ export const getUserLeaderboard = async (req: Request, res: Response) => {
     const ranked = await cached(`lb-users:${season.key}:${branch || ''}:${neighborhoodId || ''}`, 45000, async () => {
       // Liderlik her MEVSİM sıfırlanır: sadece bu sezondaki (mevsim başından beri) dersler sayılır
       const seasonStart = season.start
+      const now = new Date()
       // activityPrivacy gizli olanları hariç tut
       const users = await prisma.user.findMany({
         where: {
@@ -165,10 +166,13 @@ export const getUserLeaderboard = async (req: Request, res: Response) => {
           neighborhood: { select: { name: true } },
           tier: { select: { name: true, colorHex: true, iconUrl: true } },
           bookings: {
+            // GAMING ÖNLEME: liderlik yalnızca GERÇEKTEN gidilen (checkedIn) + geçmiş dersleri sayar —
+            // gelecek seansları toplu booklayıp/no-show ile sıralama şişirilmesin (streak liderliğiyle aynı).
             where: {
               status: 'confirmed',
+              checkedIn: true,
               session: {
-                startsAt: { gte: seasonStart },
+                startsAt: { gte: seasonStart, lt: now },
                 ...(branch ? { class: { category: branch as string } } : {}),
               },
             },

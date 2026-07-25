@@ -34,6 +34,17 @@ export const createBooking = async (req: Request, res: Response) => {
       const me = await prisma.user.findUnique({ where: { id: userId }, select: { username: true } })
       if (me?.username) cleanTags = cleanTags.filter(u => u !== me.username!.toLowerCase())
     }
+    // GAMING ÖNLEME: etiketleri GERÇEK (banlı olmayan) kullanıcılara indirge → var olmayan/banlı
+    // kullanıcı ('asdf' gibi) etiketleyip "Takım" rozeti oyunlanamaz. taggedFriends yalnız gerçek
+    // kullanıcıları tutar (bildirim döngüsüyle aynı case-insensitive eşleşme).
+    if (cleanTags.length) {
+      const realUsers = await prisma.user.findMany({
+        where: { banned: false, OR: cleanTags.map(u => ({ username: { equals: u, mode: 'insensitive' as const } })) },
+        select: { username: true },
+      })
+      const realSet = new Set(realUsers.map(u => u.username.toLowerCase()))
+      cleanTags = cleanTags.filter(u => realSet.has(u))
+    }
 
     if (!sessionId || isNaN(sessionId)) {
       return res.status(400).json({ error: 'Geçerli bir ders seansı gerekli.' })
@@ -469,6 +480,10 @@ export const cancelBooking = async (req: Request, res: Response) => {
       // Bakiyeden FAZLA düşme: yıllık puan sıfırlaması sonrası eski booking iptal edilince
       // bakiye NEGATİFE düşerdi (redemption gelince bedava kredi istismarı). min ile clamp.
       if (booking.pointsEarned > 0) {
+        // User satırını FOR UPDATE kilitle → aynı kullanıcının EŞZAMANLI iki iptali serileşir; ikincisi
+        // ilkinin düşürdüğü GÜNCEL bakiyeyi okur. Kilitsizken ikisi de stale bakiye okuyup min-clamp'i
+        // atlar ve rewardPoints NEGATİFE düşerdi.
+        await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`
         const cur = await tx.user.findUnique({ where: { id: userId }, select: { rewardPoints: true } })
         const dec = Math.min(booking.pointsEarned, cur?.rewardPoints || 0)
         if (dec > 0) {
@@ -716,10 +731,19 @@ export const transferBooking = async (req: Request, res: Response) => {
         })
         if (flip.count === 0) throw new BookingError('Rezervasyon durumu değişti, transfer yapılamadı. Lütfen tekrar deneyin.', 409)
 
-        // Puan farkını bakiyeye yansıt (ucuz derse geçişte fazla puan geri alınır) + audit satırı
+        // Puan farkını bakiyeye yansıt (ucuz derse geçişte fazla puan geri alınır) + audit satırı.
+        // NEGATİF fark bakiyeyi NEGATİFE düşürmesin (cancelBooking ile aynı invariant): kilitle + clamp.
         if (pointsDelta !== 0) {
-          await tx.user.update({ where: { id: userId }, data: { rewardPoints: { increment: pointsDelta } } })
-          await tx.rewardPoint.create({ data: { userId, points: pointsDelta, source: 'booking_transfer', bookingId } })
+          let applied = pointsDelta
+          if (pointsDelta < 0) {
+            await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`
+            const cur = await tx.user.findUnique({ where: { id: userId }, select: { rewardPoints: true } })
+            applied = -Math.min(-pointsDelta, cur?.rewardPoints || 0)
+          }
+          if (applied !== 0) {
+            await tx.user.update({ where: { id: userId }, data: { rewardPoints: { increment: applied } } })
+            await tx.rewardPoint.create({ data: { userId, points: applied, source: 'booking_transfer', bookingId } })
+          }
         }
         const updated = await tx.booking.findUnique({
           where: { id: bookingId },

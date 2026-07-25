@@ -82,15 +82,19 @@ export const applyReferralCode = async (userId: number, code: string) => {
     // NOT: Puan BURADA (kayıt anında) verilmez. Hem davet edene hem edilene puan, davet edilenin
     // İLK ÜCRETLİ DERSİNİ tamamlamasıyla verilir (bkz. completeReferral) — sahte hesap farming'i önler,
     // ödülü gerçek GMV'ye bağlar.
-    await prisma.$transaction([
-      prisma.referral.create({
-        data: { referrerId: referrer.id, referredId: userId, creditAmount: REFERRAL_POINTS }
-      }),
-      prisma.user.update({
-        where: { id: referrer.id },
-        data: { referralCount: { increment: 1 } }
-      }),
-    ])
+    // ATOMİK 3-LİMİT: referralCount<3 iken artırabilen TEK çağrı daveti oluşturur. Kilitsiz
+    // read-then-check-then-write olsaydı eşzamanlı iki kayıt limiti aşabilirdi (referrer 3'ten fazla puan).
+    await prisma.$transaction(async (tx) => {
+      const bump = await tx.user.updateMany({
+        where: { id: referrer.id, referralCount: { lt: 3 } },
+        data: { referralCount: { increment: 1 } },
+      })
+      if (bump.count === 0) return // limit dolu (yarışta kaybeden) → kayıt oluşturma
+      // Çift-referral (aynı çift) unique kısıtı → P2002 fırlatırsa tüm tx (sayaç dahil) geri alınır
+      await tx.referral.create({
+        data: { referrerId: referrer.id, referredId: userId, creditAmount: REFERRAL_POINTS },
+      })
+    })
   } catch (err) {
     console.error('Referral apply error:', err)
   }
@@ -106,24 +110,20 @@ export const completeReferral = async (userId: number) => {
     })
     if (!referral) return
 
-    await prisma.$transaction([
-      prisma.referral.update({
-        where: { id: referral.id },
-        data: { status: 'completed', completedAt: new Date(), referredBonusGranted: true }
-      }),
-      // Davet eden
-      prisma.user.update({
-        where: { id: referral.referrerId },
-        data: { rewardPoints: { increment: REFERRAL_POINTS } }
-      }),
-      prisma.rewardPoint.create({ data: { userId: referral.referrerId, points: REFERRAL_POINTS, source: 'referral_completed' } }),
-      // Davet edilen
-      prisma.user.update({
-        where: { id: referral.referredId },
-        data: { rewardPoints: { increment: REFERRAL_POINTS } }
-      }),
-      prisma.rewardPoint.create({ data: { userId: referral.referredId, points: REFERRAL_POINTS, source: 'referral_completed' } }),
-    ])
+    // CAS: pending→completed geçişini yapabilen TEK çağrı puanı verir. Kilitsiz findFirst+update
+    // olsaydı, davet edilenin eşzamanlı iki ücretli booking'i aynı pending referral'ı görüp ÇİFT +100
+    // dağıtırdı. updateMany(where status='pending') count===0 → başka çağrı zaten tamamlamış.
+    await prisma.$transaction(async (tx) => {
+      const flip = await tx.referral.updateMany({
+        where: { id: referral.id, status: 'pending' },
+        data: { status: 'completed', completedAt: new Date(), referredBonusGranted: true },
+      })
+      if (flip.count === 0) return
+      await tx.user.update({ where: { id: referral.referrerId }, data: { rewardPoints: { increment: REFERRAL_POINTS } } })
+      await tx.rewardPoint.create({ data: { userId: referral.referrerId, points: REFERRAL_POINTS, source: 'referral_completed' } })
+      await tx.user.update({ where: { id: referral.referredId }, data: { rewardPoints: { increment: REFERRAL_POINTS } } })
+      await tx.rewardPoint.create({ data: { userId: referral.referredId, points: REFERRAL_POINTS, source: 'referral_completed' } })
+    })
   } catch (err) {
     console.error('Referral complete error:', err)
   }

@@ -9,15 +9,17 @@ export async function syncUserBadges(userId: number): Promise<string[]> {
 
   const [bookings, dropins, badges, earned, user, completedReferrals] = await Promise.all([
     prisma.booking.findMany({
-      where: { userId, status: 'confirmed', session: { startsAt: { lt: now } } },
+      // GAMING ÖNLEME: TÜM rozet sayaçları (ders/sport/venue/takım/streak) yalnızca GERÇEKTEN
+      // gidilen (checkedIn) derslerden — booking-and-no-show ile rozet kazanılmasın.
+      where: { userId, status: 'confirmed', checkedIn: true, session: { startsAt: { lt: now } } },
       select: {
         taggedFriends: true,
-        checkedIn: true, // streak yalnızca check-in'li günlerden hesaplanır (count/sport confirmed kalır)
+        checkedIn: true,
         session: { select: { startsAt: true, class: { select: { category: true, venueId: true } } } },
       },
     }),
     prisma.dropInParticipant.findMany({
-      where: { userId, status: 'confirmed', slot: { startsAt: { lt: now } } },
+      where: { userId, status: 'confirmed', checkedIn: true, slot: { startsAt: { lt: now } } },
       select: { checkedIn: true, slot: { select: { startsAt: true, venueId: true, sportCategory: { select: { name: true } } } } },
     }),
     prisma.badge.findMany(),

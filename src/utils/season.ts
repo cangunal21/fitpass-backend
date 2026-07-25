@@ -1,23 +1,36 @@
 // Sezonluk liderlik: tablo her mevsim başında otomatik sıfırlanır (depolanan state yok —
 // pencere kaydığı için geçmiş sezon aktiviteleri sayımdan düşer).
 // 1 Aralık → Kış, 1 Mart → İlkbahar, 1 Haziran → Yaz, 1 Eylül → Sonbahar.
-// Not: sınırlar sunucu yerel saatiyle (Railway = UTC) hesaplanır; mevsim dönümünde ~3 saatlik
-// kayma olabilir, liderlik için önemsiz.
+// Sınırlar TR (UTC+3) DUVAR-SAATİNE göre hesaplanır — streak/istanbulDayKey ile tutarlı, sunucu
+// TZ'inden (Railway=UTC) bağımsız. Böylece TR 1 Ara 01:30'daki seans (=30 Kas 22:30 UTC) doğru
+// (Kış) sezona düşer; UTC hesabı yanlış sezona koyardı (streak-sezon uyumsuzluğu).
+const TR_OFFSET_MS = 3 * 3600 * 1000
+// Bir UTC anının TR'deki yıl/ay'ını verir
+function trParts(d: Date): { y: number; m: number } {
+  const t = new Date(d.getTime() + TR_OFFSET_MS)
+  return { y: t.getUTCFullYear(), m: t.getUTCMonth() }
+}
+// TR-yerel (y, ay, 1) 00:00'ın UTC anı
+function trMonthStart(y: number, m: number): Date {
+  return new Date(Date.UTC(y, m, 1) - TR_OFFSET_MS)
+}
+// TR duvar-saatine göre yıl (yıllık puan reseti vb. için)
+export function trYear(now: Date = new Date()): number {
+  return trParts(now).y
+}
 
 export function seasonStart(now: Date = new Date()): Date {
-  const y = now.getFullYear()
-  const m = now.getMonth() // 0-11
-  if (m === 11) return new Date(y, 11, 1)      // Aralık → Kış (bu yıl başladı)
-  if (m <= 1) return new Date(y - 1, 11, 1)    // Ocak, Şubat → Kış (geçen Aralık başladı)
-  if (m <= 4) return new Date(y, 2, 1)         // Mart-Mayıs → İlkbahar
-  if (m <= 7) return new Date(y, 5, 1)         // Haziran-Ağustos → Yaz
-  return new Date(y, 8, 1)                      // Eylül-Kasım → Sonbahar
+  const { y, m } = trParts(now)
+  if (m === 11) return trMonthStart(y, 11)      // Aralık → Kış (bu yıl başladı)
+  if (m <= 1) return trMonthStart(y - 1, 11)    // Ocak, Şubat → Kış (geçen Aralık başladı)
+  if (m <= 4) return trMonthStart(y, 2)         // Mart-Mayıs → İlkbahar
+  if (m <= 7) return trMonthStart(y, 5)         // Haziran-Ağustos → Yaz
+  return trMonthStart(y, 8)                      // Eylül-Kasım → Sonbahar
 }
 
 export function seasonInfo(now: Date = new Date()) {
   const start = seasonStart(now)
-  const sm = start.getMonth()
-  const sy = start.getFullYear()
+  const { y: sy, m: sm } = trParts(start) // start TR-gece-yarısı → TR parçaları doğru ay/yıl verir
   const name = sm === 11 ? 'Kış' : sm === 2 ? 'Bahar' : sm === 5 ? 'Yaz' : 'Güz'
   const nameEn = sm === 11 ? 'Winter' : sm === 2 ? 'Spring' : sm === 5 ? 'Summer' : 'Fall'
   // Kış Aralık→Şubat iki takvim yılına yayılır → "Kış 2025-2026"
