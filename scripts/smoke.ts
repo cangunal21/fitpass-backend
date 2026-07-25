@@ -132,6 +132,12 @@ async function cleanup() {
   await prisma.class.deleteMany({ where: { venueId: { in: econVenues } } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: { in: econUsers } } }).catch(() => {})
   await prisma.venue.deleteMany({ where: { id: { in: econVenues } } }).catch(() => {})
+  // Gizlilik-modeli liderlik regresyon kalıntısı (9935x)
+  await prisma.booking.deleteMany({ where: { userId: 990350 } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: 990350 } }).catch(() => {})
+  await prisma.class.deleteMany({ where: { id: 990350 } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: 990350 } }).catch(() => {})
+  await prisma.neighborhood.deleteMany({ where: { id: 990350 } }).catch(() => {})
   await prisma.coupon.deleteMany({ where: { code: { startsWith: 'NEG' } } }).catch(() => {})
   // Kayıt/giriş case testi kalıntısı (usrcase01)
   {
@@ -679,11 +685,15 @@ async function run() {
     if (upd.status !== 200) throw new Error(`updateInstructor: ${upd.status}`)
     if ('passwordHash' in (upd.json?.instructor || {})) throw new Error('updateInstructor passwordHash döndürüyor (salon→hoca realm sızıntısı)')
 
-    // 6) private profil — activityPrivacy=private iken agregat/rozet gizli
+    // 6) AKTİVİTE GİZLİ (profil AÇIK): gidilen dersler (activities) GİZLİ; ama rozet + istatistik HERKESE açık
+    // (kullanıcı kararı: "rozet ve tier'ı herkes görür"). Yabancı (anonim) bakışı.
     await prisma.user.update({ where: { id: GU }, data: { activityPrivacy: 'private' } })
     const prof = await expectOk(`/api/public/users/greg_${GU}`)
+    if (prof.json?.activities !== null) throw new Error('aktivite-gizli: gidilen dersler (activities) null olmalı')
     const pu = prof.json?.user || {}
-    for (const k of ['totalLessonsCompleted', 'recordStreak', 'preferredSports', 'badges']) if (k in pu) throw new Error(`private profil '${k}' sızdırıyor (aktivite gizliliği)`)
+    if (!('badges' in pu) || !Array.isArray(pu.badges)) throw new Error('aktivite-gizli: rozetler GÖRÜNMELİ (yeni model)')
+    // totalLessonsCompleted getUserActivities'te syncUserTier ile yeniden hesaplanır → sabit değere güvenme; VARLIĞI yeter
+    if (!('totalLessonsCompleted' in pu)) throw new Error('aktivite-gizli: istatistik alanı görünmeli (gizlenmemeli)')
 
     // Temizlik
     await prisma.booking.deleteMany({ where: { userId: GU } }).catch(() => {})
@@ -1202,6 +1212,28 @@ async function run() {
     await prisma.neighborhood.deleteMany({ where: { id: N } }).catch(() => {})
   })
 
+  // YENİ GİZLİLİK MODELİ: aktivite-gizli kullanıcı da LİDERLİKTE görünür (Instagram sıralama mantığı — yalnız banlı hariç)
+  await check('Liderlik: aktivite-gizli kullanıcı da sıralamada görünür (yeni model)', async () => {
+    const N = 990350, PU = 990350, SS = 990350
+    const scat = await prisma.sportCategory.findFirst({ select: { id: true } })
+    await prisma.neighborhood.upsert({ where: { id: N }, update: {}, create: { id: N, name: 'LbGizliMah', latitude: 41, longitude: 29, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: N }, update: { sportCategoryId: scat?.id ?? null }, create: { id: N, venueId: V, title: 'LbGizliDers', category: catName, sportCategoryId: scat?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const past = new Date(Date.now() - 86400000) // güncel sezon içi + geçmiş → liderlik sayar
+    await prisma.class_Session.upsert({ where: { id: SS }, update: { startsAt: past, classId: N }, create: { id: SS, classId: N, startsAt: past, endsAt: new Date(past.getTime() + 3600000), status: 'open', availableSpots: 20 } })
+    await prisma.user.upsert({ where: { id: PU }, update: { neighborhoodId: N, activityPrivacy: 'private', banned: false }, create: { id: PU, username: `lbgiz_${PU}`, email: `lbgiz_${PU}@x.com`, passwordHash: 'x', fullName: 'LbGizli', tierId: 1, tierSportCounts: {}, neighborhoodId: N, activityPrivacy: 'private' } })
+    await prisma.booking.deleteMany({ where: { userId: PU } })
+    await prisma.booking.create({ data: { userId: PU, sessionId: SS, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `LBG-${Date.now()}`, checkedIn: true, checkedInAt: new Date() } })
+    const r = await http(`/api/social/leaderboard/users?neighborhoodId=${N}`)
+    const me = (r.json?.leaderboard || []).find((u: any) => u.id === PU)
+    if (!me) throw new Error('aktivite-gizli kullanıcı liderlikte GÖRÜNMÜYOR (yeni model: sıralama herkese açık)')
+    if (me.username !== `lbgiz_${PU}`) throw new Error('liderlikte username dönmedi')
+    await prisma.booking.deleteMany({ where: { userId: PU } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: SS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: N } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: PU } }).catch(() => {})
+    await prisma.neighborhood.deleteMany({ where: { id: N } }).catch(() => {})
+  })
+
   // ---- Bekleme listesi (waitlist) UÇTAN UCA ----
   await check('Waitlist: dolu seans → sıra → iptalde bildirim → rezervasyonda listeden çık', async () => {
     const WS = 990041, UA = 990041, UB = 990042, UC = 990043
@@ -1691,7 +1723,10 @@ async function run() {
     if (r2.json?.status !== 'pending') throw new Error(`gizli status ${r2.json?.status} (pending)`)
     if ((await prisma.notification.count({ where: { userId: B, type: 'follow_request' } })) < 1) throw new Error('istek bildirimi yok')
     const st2 = await http(`/api/social/status/fb_${B}`, { token: tokA })
-    if (st2.json?.followers !== 0 || st2.json?.followStatus !== 'pending') throw new Error(`pending sayaç/status ${st2.json?.followers}/${st2.json?.followStatus}`)
+    // Yeni model: gizli profile PENDING olan (henüz kabul değil) yabancı sayılır → sayaç GİZLİ (null) + isProfilePrivate.
+    // Takip durumu (buton için) yine 'pending' döner. ("sadece kimlik + takip isteği")
+    if (st2.json?.followStatus !== 'pending') throw new Error(`gizli-pending status ${st2.json?.followStatus} (pending bekleniyor)`)
+    if (st2.json?.followers !== null || !st2.json?.isProfilePrivate) throw new Error(`gizli profilde pending'e sayaç gizlenmeli (followers=${st2.json?.followers}, isProfilePrivate=${st2.json?.isProfilePrivate})`)
     // Kabul → accepted + follow_accept bildirimi
     const acc = await http(`/api/social/follow-requests/fa_${A}/accept`, { method: 'POST', token: tokB })
     if (acc.status !== 200) throw new Error(`kabul ${acc.status}`)

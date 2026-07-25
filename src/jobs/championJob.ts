@@ -50,7 +50,7 @@ export async function awardSeasonChampions(now: Date = new Date()) {
     }
     for (const b of bookings) {
       const u = b.user
-      if (!u || u.banned || u.activityPrivacy === 'private') continue // liderlikle aynı filtre
+      if (!u || u.banned) continue // liderlikle aynı: sıralama HERKESE açık, yalnız banlı hariç (gizli de şampiyon olabilir; rozet herkese görünür)
       const sport = b.session?.class?.sportCategoryId
       if (!sport) continue
       if (u.neighborhoodId) bump(sport, 'district', u.neighborhoodId, b.userId)

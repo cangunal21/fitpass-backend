@@ -519,8 +519,9 @@ export const getUserActivities = async (req: Request, res: Response) => {
     if (user.banned) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
     delete (user as any).banned
 
-    // GİZLİ HESAP (profilePrivacy=private): içeriği yalnızca SAHİBİ veya ONAYLI TAKİPÇİ görür.
-    // Diğerlerine sadece temel kimlik (isim/avatar/tier/ilçe) + "gizli" işareti döner.
+    // GİZLİ PROFİL (profilePrivacy=private): içeriği yalnızca SAHİBİ veya ONAYLI TAKİPÇİ görür.
+    // Yabancıya SADECE KİMLİK (isim/avatar) + "gizli" işareti döner — tier/rozet/ilçe/liste/aktivite HİÇBİRİ
+    // (Instagram mantığı: tıkla, takip isteği gönder). Kimlik olmadan takip isteği atılamazdı.
     const viewerId = (req as any).userId
     const isOwner = !!viewerId && viewerId === user.id
     let isAcceptedFollower = false
@@ -533,7 +534,7 @@ export const getUserActivities = async (req: Request, res: Response) => {
     }
     if (user.profilePrivacy === 'private' && !isOwner && !isAcceptedFollower) {
       return res.json({
-        user: { id: user.id, username: user.username, fullName: user.fullName, avatarUrl: user.avatarUrl, tier: user.tier, neighborhood: user.neighborhood, profilePrivacy: 'private' },
+        user: { id: user.id, username: user.username, fullName: user.fullName, avatarUrl: user.avatarUrl, profilePrivacy: 'private' },
         isProfilePrivate: true,
         activities: null,
       })
@@ -558,19 +559,11 @@ export const getUserActivities = async (req: Request, res: Response) => {
       }
     }
 
-    // If private, return user info only (no activities).
-    // DİKKAT: `user` objesi totalLessonsCompleted / recordStreak / preferredSports / badges taşıyor;
-    // bunlar aktivite-türevi (ör. sport_master_40 = 40 ders, season_champion = liderlik ilk-3). Gizli
-    // aktivitede timeline kadar bu agregatlar da GİZLENMELİ — yalnızca temel kimlik (isim/avatar/tier/ilçe) döner.
-    if (user.activityPrivacy === 'private') {
-      return res.json({
-        user: {
-          id: user.id, username: user.username, fullName: user.fullName, avatarUrl: user.avatarUrl,
-          tier: user.tier, neighborhood: user.neighborhood, activityPrivacy: 'private',
-        },
-        activities: null,
-        isPrivate: true,
-      })
+    // AKTİVİTE GİZLİ (activityPrivacy=private): yalnız gidilen dersler/takvim (activities) GİZLENİR — SAHİBİ hariç.
+    // Rozet + tier + istatistik (toplam ders/streak) + takipçi/takip listeleri HERKESE açık kalır (kullanıcı kararı:
+    // "rozet ve tier'ı herkes görür"). Sahip kendi aktivitesini görür (isOwner). Tam `user` objesi (rozetler dahil) döner.
+    if (user.activityPrivacy === 'private' && !isOwner) {
+      return res.json({ user, activities: null, isPrivate: true })
     }
 
     // Fetch bookings — YALNIZCA gösterim alanları (checkInCode/finansal alanlar public'e SIZMAMALI)

@@ -91,10 +91,15 @@ export const getFollowStatus = async (req: Request, res: Response) => {
   try {
     const followerId = (req as any).userId
     const username = String(req.params.username)
-    const target = await prisma.user.findUnique({ where: { username }, select: { id: true } })
+    const target = await prisma.user.findUnique({ where: { username }, select: { id: true, profilePrivacy: true } })
     if (!target) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
 
     const follow = await prisma.follow.findUnique({ where: { followerId_followingId: { followerId, followingId: target.id } } })
+    // GİZLİ PROFİL + yabancı: takipçi/takip SAYAÇLARI da gösterilmez (yalnız kimlik). Buton için takip durumu döner.
+    const canView = target.profilePrivacy !== 'private' || followerId === target.id || follow?.status === 'accepted'
+    if (!canView) {
+      return res.json({ isFollowing: false, followStatus: follow?.status || 'none', followers: null, following: null, isProfilePrivate: true })
+    }
     // Sayaçlar SADECE kabul edilmiş (accepted) ilişkileri sayar — pending istekler dahil değil
     const followers = await prisma.follow.count({ where: { followingId: target.id, status: 'accepted' } })
     const following = await prisma.follow.count({ where: { followerId: target.id, status: 'accepted' } })
@@ -153,11 +158,11 @@ export const getUserLeaderboard = async (req: Request, res: Response) => {
       // Liderlik her MEVSİM sıfırlanır: sadece bu sezondaki (mevsim başından beri) dersler sayılır
       const seasonStart = season.start
       const now = new Date()
-      // activityPrivacy gizli olanları hariç tut
+      // Sıralama HERKESE açık (Instagram mantığı): profili/aktivitesi gizli olsa da username+avatarla görünür,
+      // tıklanıp takip isteği atılabilir. Yalnız BANLI hariç. Gizlilik yalnız profil-detayında/aktivitede uygulanır.
       const users = await prisma.user.findMany({
         where: {
           banned: false,
-          activityPrivacy: { not: 'private' },
           ...(neighborhoodId ? { neighborhoodId: parseInt(neighborhoodId as string) } : {}),
         },
         select: {
@@ -207,8 +212,8 @@ export const getStreakLeaderboard = async (req: Request, res: Response) => {
     const ranked = await cached(`lb-streak:${season.key}:${branch || ''}:${neighborhoodId || ''}`, 45000, async () => {
     const users = await prisma.user.findMany({
       where: {
+        // Streak sıralaması da HERKESE açık (yalnız banlı hariç) — liderlikle aynı Instagram mantığı.
         banned: false,
-        activityPrivacy: { not: 'private' },
         ...(neighborhoodId ? { neighborhoodId: parseInt(neighborhoodId as string) } : {}),
       },
       select: {
