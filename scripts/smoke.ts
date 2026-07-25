@@ -101,6 +101,16 @@ async function cleanup() {
   await prisma.booking.deleteMany({ where: { userId: { in: [990281, 990283] } } }).catch(() => {})
   await prisma.class_Session.deleteMany({ where: { id: 990283 } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: { in: [990281, 990283] } } }).catch(() => {})
+  // Gizlilik/IDOR regresyon kalıntıları (9903xx) — FK sırası: booking→session→class→instructor→venue
+  await prisma.booking.deleteMany({ where: { OR: [{ userId: 990301 }, { session: { class: { venueId: { in: [990301, 990302] } } } }] } }).catch(() => {})
+  await prisma.rewardPoint.deleteMany({ where: { userId: 990301 } }).catch(() => {})
+  await prisma.refreshToken.deleteMany({ where: { userId: 990301 } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { class: { venueId: { in: [990301, 990302] } } } }).catch(() => {})
+  await prisma.class.updateMany({ where: { venueId: { in: [990301, 990302] } }, data: { instructorId: null } }).catch(() => {})
+  await prisma.class.deleteMany({ where: { venueId: { in: [990301, 990302] } } }).catch(() => {})
+  await prisma.instructor.deleteMany({ where: { venueId: { in: [990301, 990302] } } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: 990301 } }).catch(() => {})
+  await prisma.venue.deleteMany({ where: { id: { in: [990301, 990302] } } }).catch(() => {})
   await prisma.coupon.deleteMany({ where: { code: { startsWith: 'NEG' } } }).catch(() => {})
   // Kayıt/giriş case testi kalıntısı (usrcase01)
   {
@@ -578,6 +588,81 @@ async function run() {
     const inList = (list.json?.venues || []).find((x: any) => x.id === V)
     if (inList) for (const k of leakKeys) if (k in inList) throw new Error(`venue LİSTE '${k}' sızdırıyor`)
     await prisma.venue.update({ where: { id: V }, data: { iban: null, identityNumber: null, taxNumber: null, payoutGsm: null, contactName: null, contactSurname: null, legalCompanyTitle: null, iyzicoSubMerchantKey: null, subMerchantStatus: 'none', kycDocs: {} } }).catch(() => {})
+  })
+
+  // ---- KRİTİK gizlilik/IDOR regresyonu (privacy-authz denetimi, 18 bulgu) ----
+  // Eğitmen passwordHash/email/phone public sızmaz · salon finansal getMyBookings'te sızmaz ·
+  // yabancı hoca dersе bağlanamaz · updateInstructor passwordHash döndürmez · private profil agregat gizler.
+  await check('Gizlilik/IDOR: eğitmen PII + salon finansal + yabancı-hoca + private-agregat', async () => {
+    const GV = 990301, GV2 = 990302, GI = 990301, GI2 = 990302, GC = 990301, GS = 990301, GU = 990301
+    const nb = await prisma.neighborhood.findFirst({ select: { id: true, cityId: true } })
+    const anyCat = await prisma.sportCategory.findFirst({ select: { id: true, name: true } })
+    if (!nb || !anyCat) throw new Error('seed (neighborhood/sportCategory) yok')
+    const email = `greg_${GU}@x.com`
+    const INSTR_SECRET = { passwordHash: 'HASH-SIZMAMALI', email: 'hoca-gizli@x.com', phone: '5551234567' }
+    // Kurulum
+    await prisma.venue.upsert({ where: { id: GV }, update: { isApproved: true, isActive: true, iban: 'TR999', identityNumber: '22222222222', taxNumber: '9998887766', iyzicoSubMerchantKey: 'sk-secret', kycDocs: { kimlik: 'u' } }, create: { id: GV, name: 'GVenue', email: `gv${GV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: nb.id, cityId: nb.cityId, iban: 'TR999', identityNumber: '22222222222', taxNumber: '9998887766', iyzicoSubMerchantKey: 'sk-secret', kycDocs: { kimlik: 'u' } } })
+    await prisma.venue.upsert({ where: { id: GV2 }, update: { isApproved: true, isActive: true }, create: { id: GV2, name: 'GVenue2', email: `gv${GV2}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: nb.id, cityId: nb.cityId } })
+    await prisma.instructor.upsert({ where: { id: GI }, update: { venueId: GV, isActive: true, inviteStatus: 'active', ...INSTR_SECRET }, create: { id: GI, venueId: GV, fullName: 'Gizli Hoca', specialty: 'Yoga', isActive: true, inviteStatus: 'active', ...INSTR_SECRET } })
+    await prisma.instructor.upsert({ where: { id: GI2 }, update: { venueId: GV2, isActive: true }, create: { id: GI2, venueId: GV2, fullName: 'Yabanci Hoca', isActive: true } })
+    await prisma.class.upsert({ where: { id: GC }, update: { venueId: GV, instructorId: GI, isActive: true }, create: { id: GC, venueId: GV, title: 'GClass', category: anyCat.name, sportCategoryId: anyCat.id, basePrice: 100, durationMinutes: 60, capacity: 20, instructorId: GI, isActive: true } })
+    await prisma.class_Session.upsert({ where: { id: GS }, update: { status: 'open', availableSpots: 20, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000) }, create: { id: GS, classId: GC, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.user.upsert({ where: { id: GU }, update: { activityPrivacy: 'public', banned: false }, create: { id: GU, username: `greg_${GU}`, email, passwordHash: 'x', fullName: 'Greg User', tierSportCounts: {}, totalLessonsCompleted: 7, recordStreak: 4 } })
+    const gvTok = jwt.sign({ venueId: GV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const guTok = jwt.sign({ userId: GU, email }, JWT_SECRET, { expiresIn: '1h' })
+    const INSTR_LEAK = ['passwordHash', 'email', 'phone', 'inviteStatus', 'userId']
+    const VENUE_FIN = ['iban', 'identityNumber', 'taxNumber', 'iyzicoSubMerchantKey', 'kycDocs']
+
+    // 1) public eğitmen detayı — passwordHash/email/phone SIZMAZ (kimlik-doğrulamasız uç)
+    const insDet = await expectOk(`/api/public/instructors/${GI}`)
+    const insObj = insDet.json?.instructor || {}
+    for (const k of INSTR_LEAK) if (k in insObj) throw new Error(`public instructor '${k}' sızdırıyor (hesap ele geçirme!)`)
+
+    // 2) public venue detayı — iç içe instructors[] + classes[].instructor de temiz
+    const vDet = await expectOk(`/api/public/venues/${GV}`)
+    const nestedIns = (vDet.json?.venue?.instructors || []).find((i: any) => i.id === GI)
+    if (!nestedIns) throw new Error('venue.instructors[] içinde hoca yok (kurulum)')
+    for (const k of INSTR_LEAK) if (k in nestedIns) throw new Error(`venue.instructors[] '${k}' sızdırıyor`)
+    const nestedCls = (vDet.json?.venue?.classes || []).find((c: any) => c.id === GC)
+    if (nestedCls?.instructor) for (const k of INSTR_LEAK) if (k in nestedCls.instructor) throw new Error(`venue.classes[].instructor '${k}' sızdırıyor`)
+
+    // 3) getMyBookings — salonun IBAN/TCKN/İyzico/KYC'si müşteriye SIZMAZ
+    const bkRes = await http('/api/bookings', { method: 'POST', token: guTok, body: { sessionId: GS } })
+    if (bkRes.status !== 201) throw new Error(`booking oluşmadı: ${bkRes.status}`)
+    const my = await expectOk('/api/bookings/my', { token: guTok })
+    const myBk = (my.json?.bookings || []).find((b: any) => b.sessionId === GS)
+    const myVenue = myBk?.session?.class?.venue || {}
+    for (const k of VENUE_FIN) if (k in myVenue) throw new Error(`getMyBookings venue '${k}' sızdırıyor (KVKK/finansal!)`)
+
+    // 4) createClass — YABANCI hoca (başka salonun) reddedilir (403), kendi hocan kabul (201)
+    const foreign = await http('/api/venue/classes', { method: 'POST', token: gvTok, body: { title: 'X', category: anyCat.name, basePrice: 100, duration: 60, capacity: 10, instructorId: GI2 } })
+    if (foreign.status !== 403) throw new Error(`yabancı instructorId 403 beklenirken ${foreign.status} (cross-tenant yazma!)`)
+    const own = await http('/api/venue/classes', { method: 'POST', token: gvTok, body: { title: 'X', category: anyCat.name, basePrice: 100, duration: 60, capacity: 10, instructorId: GI } })
+    if (own.status !== 201) throw new Error(`kendi hoca ile ders 201 beklenirken ${own.status}`)
+    const ownClassId = own.json?.class?.id
+
+    // 5) updateInstructor — salon sahibine passwordHash DÖNMEZ
+    const upd = await http(`/api/venue/instructors/${GI}`, { method: 'PUT', token: gvTok, body: { phone: '5550001122' } })
+    if (upd.status !== 200) throw new Error(`updateInstructor: ${upd.status}`)
+    if ('passwordHash' in (upd.json?.instructor || {})) throw new Error('updateInstructor passwordHash döndürüyor (salon→hoca realm sızıntısı)')
+
+    // 6) private profil — activityPrivacy=private iken agregat/rozet gizli
+    await prisma.user.update({ where: { id: GU }, data: { activityPrivacy: 'private' } })
+    const prof = await expectOk(`/api/public/users/greg_${GU}`)
+    const pu = prof.json?.user || {}
+    for (const k of ['totalLessonsCompleted', 'recordStreak', 'preferredSports', 'badges']) if (k in pu) throw new Error(`private profil '${k}' sızdırıyor (aktivite gizliliği)`)
+
+    // Temizlik
+    await prisma.booking.deleteMany({ where: { userId: GU } }).catch(() => {})
+    await prisma.rewardPoint.deleteMany({ where: { userId: GU } }).catch(() => {})
+    await prisma.refreshToken.deleteMany({ where: { userId: GU } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: ownClassId ? { in: [ownClassId] } : { in: [] } } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: GS } }).catch(() => {})
+    await prisma.class.updateMany({ where: { id: GC }, data: { instructorId: null } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: GC } }).catch(() => {})
+    await prisma.instructor.deleteMany({ where: { id: { in: [GI, GI2] } } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: GU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: { in: [GV, GV2] } } }).catch(() => {})
   })
 
   // ---- Girdi cap: aşırı uzun kullanıcı metni kırpılır (DB şişmesi/AI maliyeti önlenir) ----

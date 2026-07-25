@@ -6,6 +6,7 @@ import { sendPushNotification } from '../utils/push'
 import { completeReferral } from './referralController'
 import { resetYearlyPointsIfNeeded } from '../utils/tier'
 import { clampStr } from '../utils/validate'
+import { stripVenueSensitive } from '../utils/sanitize'
 
 class BookingError extends Error {
   status: number
@@ -345,12 +346,14 @@ export const getMyBookings = async (req: Request, res: Response) => {
         ...b.session,
         class: b.session.class ? {
           ...b.session.class,
-          venue: b.session.class.venue ? (({ passwordHash, ...v }) => v)(b.session.class.venue) : null,
+          // ÖNCEDEN yalnız passwordHash siliniyordu → IBAN/TCKN/vergi no/İyzico alt-üye anahtarı/KYC
+          // müşteriye SIZIYORDU. stripVenueSensitive TÜM ödeme/KYC alanlarını temizler.
+          venue: b.session.class.venue ? stripVenueSensitive(b.session.class.venue) : null,
         } : null,
       } : null,
       dropInSlot: b.dropInSlot ? {
         ...b.dropInSlot,
-        venue: b.dropInSlot.venue ? (({ passwordHash, ...v }) => v)(b.dropInSlot.venue) : null,
+        venue: b.dropInSlot.venue ? stripVenueSensitive(b.dropInSlot.venue) : null,
       } : null,
       // Geriye dönük uyum: eski istemci `review` (tekil, salon yorumu) bekliyor + yeni `reviewed` bayrağı
       review: (b as any).reviews?.find((r: any) => r.targetType === 'venue') || null,

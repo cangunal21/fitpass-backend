@@ -119,7 +119,8 @@ export const getFollowers = async (req: Request, res: Response) => {
     if (!(await canViewProfile((req as any).userId, user))) return res.json({ followers: [], isProfilePrivate: true })
 
     const follows = await prisma.follow.findMany({
-      where: { followingId: user.id, status: 'accepted' },
+      // banlı hesap listede görünmesin (searchUsers/getUserActivities ile aynı kural)
+      where: { followingId: user.id, status: 'accepted', follower: { banned: false } },
       include: { follower: { select: { id: true, username: true, fullName: true, avatarUrl: true, tier: { select: { name: true, colorHex: true, iconUrl: true } } } } }
     })
     return res.json({ followers: follows.map(f => f.follower) })
@@ -134,7 +135,8 @@ export const getFollowing = async (req: Request, res: Response) => {
     if (!(await canViewProfile((req as any).userId, user))) return res.json({ following: [], isProfilePrivate: true })
 
     const follows = await prisma.follow.findMany({
-      where: { followerId: user.id, status: 'accepted' },
+      // banlı hesap listede görünmesin (searchUsers/getUserActivities ile aynı kural)
+      where: { followerId: user.id, status: 'accepted', following: { banned: false } },
       include: { following: { select: { id: true, username: true, fullName: true, avatarUrl: true, tier: { select: { name: true, colorHex: true, iconUrl: true } } } } }
     })
     return res.json({ following: follows.map(f => f.following) })
@@ -439,7 +441,9 @@ export const getFeed = async (req: Request, res: Response) => {
     ))
     const taggedUsers = allTaggedUsernames.length > 0
       ? await prisma.user.findMany({
-          where: { username: { in: allTaggedUsernames, mode: 'insensitive' } },
+          // Yalnız gizli-değil + banlı-değil kullanıcılar çözülür; private/banlı etiketlenenler
+          // feed'de HİÇ gösterilmez (gerçek ad + ders katılımı sızmasın — feed owner filtresiyle aynı).
+          where: { username: { in: allTaggedUsernames, mode: 'insensitive' }, activityPrivacy: { not: 'private' }, banned: false },
           select: { username: true, fullName: true },
         })
       : []
@@ -486,11 +490,10 @@ export const getFeed = async (req: Request, res: Response) => {
     const feed = [
       ...bookings.map(b => {
         const tags = (Array.isArray(b.taggedFriends) ? (b.taggedFriends as string[]) : [])
-          .map(u => {
-            const key = String(u).replace(/^@/, '').toLowerCase()
-            const found = taggedMap.get(key)
-            return found ? { username: found.username, fullName: found.fullName } : { username: key, fullName: key }
-          })
+          .map(u => taggedMap.get(String(u).replace(/^@/, '').toLowerCase()))
+          // Çözülemeyen (private/banlı/olmayan) etiket feed'de gösterilmez — ham username bile sızmaz
+          .filter((f): f is { username: string; fullName: string } => !!f)
+          .map(f => ({ username: f.username, fullName: f.fullName }))
         return {
           id: `b-${b.id}`,
           type: 'booking' as const,
@@ -757,7 +760,7 @@ export const getNotifications = async (req: Request, res: Response) => {
     // İlgili kullanıcıyı ekle (bildirimden profile gidilebilsin + avatar)
     const relIds = [...new Set(notifications.map(n => n.relatedUserId).filter(Boolean))] as number[]
     const relUsers = relIds.length
-      ? await prisma.user.findMany({ where: { id: { in: relIds } }, select: { id: true, username: true, fullName: true, avatarUrl: true } })
+      ? await prisma.user.findMany({ where: { id: { in: relIds }, banned: false }, select: { id: true, username: true, fullName: true, avatarUrl: true } })
       : []
     const uMap = new Map(relUsers.map(u => [u.id, u]))
     // follow_request bildirimi hâlâ bekliyor mu? (kabul/ret sonrası buton gösterme)

@@ -85,8 +85,8 @@ export const getUserFavorites = async (req: Request, res: Response) => {
     const user = await prisma.user.findUnique({ where: { username } })
     if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
 
-    // Gizlilik kontrolü
-    if (user.activityPrivacy === 'private') {
+    // Gizlilik kontrolü — banlı hesap da (searchUsers/getUserActivities ile aynı) enumerasyona kapalı
+    if (user.banned || user.activityPrivacy === 'private') {
       return res.json({ favorites: [], private: true })
     }
 

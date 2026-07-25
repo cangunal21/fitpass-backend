@@ -313,6 +313,20 @@ export const createClass = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Tüm zorunlu alanları doldurun.' })
     }
 
+    // SAHİPLİK: instructorId gövdeden geliyor — YALNIZ bu salona ait bir hoca bağlanabilir. Aksi halde
+    // salon A, rakip salon B'nin hocasını dersine iliştirir (B'nin puanı kirlenir, B kendi portalında
+    // A'nın dersini görüp seans ekleyebilir). Her diğer hoca mutasyonu venueId eşitliği kontrol ediyor.
+    let safeInstructorId: number | null = null
+    if (instructorId !== undefined && instructorId !== null && instructorId !== '') {
+      const instId = parseInt(String(instructorId), 10)
+      if (isNaN(instId)) return res.status(400).json({ error: 'Geçersiz hoca.' })
+      const inst = await prisma.instructor.findUnique({ where: { id: instId }, select: { venueId: true } })
+      if (!inst || inst.venueId !== venueId) {
+        return res.status(403).json({ error: 'Bu hocayı dersinize ekleme yetkiniz yok.' })
+      }
+      safeInstructorId = instId
+    }
+
     // Kategori adından sportCategoryId'yi bul (ilişki tutarlılığı için)
     const sportCat = await prisma.sportCategory.findFirst({
       where: { name: { equals: category, mode: 'insensitive' } },
@@ -336,7 +350,7 @@ export const createClass = async (req: Request, res: Response) => {
         durationMinutes: parseInt(duration),
         capacity: parseInt(capacity),
         venueId,
-        instructorId: instructorId || null,
+        instructorId: safeInstructorId,
         isActive: true,
       }
     })

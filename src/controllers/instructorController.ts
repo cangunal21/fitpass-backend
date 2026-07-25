@@ -124,7 +124,13 @@ export const updateInstructor = async (req: Request, res: Response) => {
         email: emailUpdate,
         ...(specialtyEn !== undefined ? { specialtyEn } : {}),
         ...(bioEn !== undefined ? { bioEn } : {}),
-      }
+      },
+      // select (include DEĞİL) → passwordHash salon sahibine SIZMASIN (getVenueInstructors ile aynı shape)
+      select: {
+        id: true, fullName: true, specialty: true, specialtyEn: true, bio: true, bioEn: true,
+        avatarUrl: true, phone: true, email: true, inviteStatus: true,
+        avgRating: true, totalReviews: true, isActive: true, verified: true, createdAt: true,
+      },
     })
 
     return res.json({ message: 'Hoca güncellendi!', instructor: updated })

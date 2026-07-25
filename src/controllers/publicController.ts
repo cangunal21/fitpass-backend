@@ -6,22 +6,7 @@ import { cached } from '../utils/cache'
 import { parseIntSafe, parseDateSafe } from '../utils/validate'
 import { sanitizeReview, hidePrivateReply } from '../utils/reviews'
 import { seasonLabelsFromKey } from '../utils/season'
-
-// Venue'de public'e ASLA çıkmaması gereken hassas alanlar (şifre, ödeme/KYC: IBAN, TCKN,
-// vergi no, kimlik belgeleri, alt-üye anahtarı, ödeme telefonu...) + onay-öncesi pending görseller.
-// Blacklist yerine whitelist zor (ilişkili include'lar var); bu liste TÜM hassas alanları kapsar.
-const VENUE_SENSITIVE_FIELDS = [
-  'passwordHash', 'email', 'pendingImages', 'pendingCoverImageUrl', 'imagesPendingReview',
-  'iban', 'taxOffice', 'taxNumber', 'identityNumber', 'iyzicoSubMerchantKey',
-  'subMerchantType', 'legalCompanyTitle', 'contactName', 'contactSurname', 'payoutGsm',
-  'ibanMatchConsent', 'subMerchantStatus', 'subMerchantSubmittedAt', 'subMerchantApprovedAt',
-  'subMerchantRejection', 'kycDocs',
-] as const
-function stripVenueSensitive<T extends Record<string, any>>(venue: T): Partial<T> {
-  const v: any = { ...venue }
-  for (const k of VENUE_SENSITIVE_FIELDS) delete v[k]
-  return v
-}
+import { stripVenueSensitive, stripInstructorSensitive } from '../utils/sanitize'
 
 // GET /api/public/sessions
 export const getSessions = async (req: Request, res: Response) => {
@@ -360,7 +345,17 @@ export const getVenueById = async (req: Request, res: Response) => {
 
     if (!venue) return res.status(404).json({ error: 'Salon bulunamadı.' })
 
-    return res.json({ venue: stripVenueSensitive(venue) })
+    // stripVenueSensitive YALNIZ üst-düzey venue kolonlarını siler; iç içe gelen eğitmen objeleri
+    // (instructors[] ve classes[].instructor) tam satır taşır → passwordHash/email/phone SIZAR.
+    // Her nested eğitmeni ayrıca temizle.
+    const safe: any = stripVenueSensitive(venue)
+    if (Array.isArray(safe.instructors)) safe.instructors = safe.instructors.map(stripInstructorSensitive)
+    if (Array.isArray(safe.classes)) {
+      safe.classes = safe.classes.map((c: any) =>
+        c && c.instructor ? { ...c, instructor: stripInstructorSensitive(c.instructor) } : c
+      )
+    }
+    return res.json({ venue: safe })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
@@ -401,7 +396,10 @@ export const getDropInSlotById = async (req: Request, res: Response) => {
         venue: { select: { id: true, name: true, address: true } },
         sportCategory: { select: { name: true, colorHex: true, iconUrl: true } },
         participants: {
-          where: { status: 'confirmed' },
+          // Roster public (kimlik-doğrulamasız uç). Gizli (activityPrivacy=private) ve banlı kullanıcılar
+          // roster'da GÖSTERİLMEZ — aksi halde kişinin gerçek adı + nerede/ne zaman olacağı sızardı
+          // (liderlik/feed ile aynı filtre). currentPlayers sayacı stored olduğundan sayı etkilenmez.
+          where: { status: 'confirmed', user: { activityPrivacy: { not: 'private' }, banned: false } },
           select: {
             id: true,
             team: true,
@@ -560,9 +558,19 @@ export const getUserActivities = async (req: Request, res: Response) => {
       }
     }
 
-    // If private, return user info only (no activities)
+    // If private, return user info only (no activities).
+    // DİKKAT: `user` objesi totalLessonsCompleted / recordStreak / preferredSports / badges taşıyor;
+    // bunlar aktivite-türevi (ör. sport_master_40 = 40 ders, season_champion = liderlik ilk-3). Gizli
+    // aktivitede timeline kadar bu agregatlar da GİZLENMELİ — yalnızca temel kimlik (isim/avatar/tier/ilçe) döner.
     if (user.activityPrivacy === 'private') {
-      return res.json({ user, activities: null, isPrivate: true })
+      return res.json({
+        user: {
+          id: user.id, username: user.username, fullName: user.fullName, avatarUrl: user.avatarUrl,
+          tier: user.tier, neighborhood: user.neighborhood, activityPrivacy: 'private',
+        },
+        activities: null,
+        isPrivate: true,
+      })
     }
 
     // Fetch bookings — YALNIZCA gösterim alanları (checkInCode/finansal alanlar public'e SIZMAMALI)
@@ -710,7 +718,9 @@ export const getInstructorById = async (req: Request, res: Response) => {
 
     return res.json({
       instructor: {
-        ...instructor,
+        // stripInstructorSensitive: passwordHash/email/phone/userId/inviteStatus public'e SIZMASIN
+        // (bu uç optionalAuth = kimlik-doğrulamasız; id enumerasyonuyla tüm eğitmen hash'leri toplanabilirdi).
+        ...stripInstructorSensitive(instructor),
         reviews: safeReviews,
         // avgRating/totalReviews: SAKLI değerler (createReview'da tüm yorumlardan tutulur).
         // Buradaki reviews `take:20` ile sınırlı olduğundan slice'tan hesaplamak SAPARDI.
