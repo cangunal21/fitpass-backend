@@ -1,8 +1,10 @@
 import { Request, Response, NextFunction } from 'express'
 import crypto from 'crypto'
 
-const ADMIN_SECRET = process.env.ADMIN_SECRET || 'fitpass-admin-2024'
-const SECRET_CONFIGURED = !!process.env.ADMIN_SECRET
+// Kaynağa GÖMÜLÜ varsayılan YOK — repo'ya commit'lenen bir default (ör. 'fitpass-admin-2024') NODE_ENV
+// yanlış/eksik olan herhangi bir deploy'da admin'i herkese açardı. Secret yoksa aşağıda HER ortamda reddedilir.
+const ADMIN_SECRET = process.env.ADMIN_SECRET || ''
+const SECRET_CONFIGURED = ADMIN_SECRET.length > 0
 
 // Uzunluk-güvenli + zamanlama-güvenli karşılaştırma (timing attack yüzeyini kapatır)
 function safeEqual(a: string, b: string): boolean {
@@ -13,9 +15,9 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 export const adminAuthMiddleware = (req: Request, res: Response, next: NextFunction) => {
-  // Prod'da ADMIN_SECRET set edilmemişse zayıf VARSAYILAN geçerli olur → admin fiilen herkese açık
-  // kalır. Bu durumda tüm admin erişimini reddet (operatörü gerçek secret koymaya zorla).
-  if (process.env.NODE_ENV === 'production' && !SECRET_CONFIGURED) {
+  // ADMIN_SECRET set DEĞİLSE HER ortamda admin erişimini reddet (NODE_ENV'e bağlı değil — yanlış/eksik
+  // NODE_ENV'li bir deploy'da gömülü default'la admin açığa çıkmasın). Operatörü gerçek secret koymaya zorlar.
+  if (!SECRET_CONFIGURED) {
     return res.status(503).json({ error: 'Admin yapılandırılmamış.' })
   }
   const secret = req.headers['x-admin-secret']

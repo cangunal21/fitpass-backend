@@ -111,6 +111,17 @@ const chatLimiter = rateLimit({
   message: { error: 'Çok fazla mesaj gönderildi. Lütfen bir dakika bekleyin.' },
 })
 
+// Kupon doğrulama (auth'suz) — kod enumerasyonunu yavaşlat (kullanıcı/IP başına dakikada 15)
+const couponLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: rlKey,
+  skip: skipRateLimit,
+  message: { error: 'Çok fazla kupon denemesi. Lütfen bir dakika bekleyin.' },
+})
+
 app.use('/api', generalLimiter)
 app.use('/api/auth/login', authLimiter)
 app.use('/api/auth/register', authLimiter)
@@ -124,6 +135,7 @@ app.use('/api/instructor/forgot-password', authLimiter)
 app.use('/api/instructor/set-password', authLimiter)
 // Şikayet/iletişim uçları (biri auth'suz) — admin posta kutusu/şikayet listesi flood'una karşı
 app.use('/api/public/complaint', authLimiter)
+app.use('/api/public/validate-coupon', couponLimiter)
 app.use('/api/social/report', authLimiter)
 app.use('/api/chat', chatLimiter)
 

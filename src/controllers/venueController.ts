@@ -24,8 +24,15 @@ async function purgeBookingsForSessions(tx: any, sessionIds: number[]) {
   const ids = bookings.map((b: any) => b.id)
   for (const b of bookings) {
     if (b.pointsEarned > 0 && (b.status === 'confirmed' || b.status === 'pending')) {
-      await tx.user.update({ where: { id: b.userId }, data: { rewardPoints: { decrement: b.pointsEarned } } })
-      await tx.rewardPoint.create({ data: { userId: b.userId, points: -b.pointsEarned, source: 'session_removed', bookingId: b.id } })
+      // CLAMP: bakiyeyi NEGATİFE düşürme (yıllık reset/redemption sonrası pointsEarned > güncel bakiye olabilir).
+      // cancelBooking/transferBooking ile aynı invariant — User FOR UPDATE + Math.min.
+      await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${b.userId} FOR UPDATE`
+      const cur = await tx.user.findUnique({ where: { id: b.userId }, select: { rewardPoints: true } })
+      const dec = Math.min(b.pointsEarned, cur?.rewardPoints || 0)
+      if (dec > 0) {
+        await tx.user.update({ where: { id: b.userId }, data: { rewardPoints: { decrement: dec } } })
+        await tx.rewardPoint.create({ data: { userId: b.userId, points: -dec, source: 'session_removed', bookingId: b.id } })
+      }
     }
   }
   // FK kısıtlı alt kayıtlar (onDelete tanımsız = Restrict) → önce sil

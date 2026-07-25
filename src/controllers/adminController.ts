@@ -163,8 +163,14 @@ export const deleteVenue = async (req: Request, res: Response) => {
           if (b.status === 'confirmed' || b.status === 'pending') {
             affected.add(b.userId) // aktif rezervasyonu olan kullanıcı → bilgilendirilecek
             if (b.pointsEarned > 0) {
-              await tx.user.update({ where: { id: b.userId }, data: { rewardPoints: { decrement: b.pointsEarned } } })
-              await tx.rewardPoint.create({ data: { userId: b.userId, points: -b.pointsEarned, source: 'venue_removed', bookingId: b.id } })
+              // CLAMP: bakiyeyi NEGATİFE düşürme (cancelBooking ile aynı invariant — FOR UPDATE + Math.min)
+              await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${b.userId} FOR UPDATE`
+              const cur = await tx.user.findUnique({ where: { id: b.userId }, select: { rewardPoints: true } })
+              const dec = Math.min(b.pointsEarned, cur?.rewardPoints || 0)
+              if (dec > 0) {
+                await tx.user.update({ where: { id: b.userId }, data: { rewardPoints: { decrement: dec } } })
+                await tx.rewardPoint.create({ data: { userId: b.userId, points: -dec, source: 'venue_removed', bookingId: b.id } })
+              }
             }
           }
         }

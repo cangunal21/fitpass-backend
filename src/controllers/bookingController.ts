@@ -81,6 +81,10 @@ export const createBooking = async (req: Request, res: Response) => {
         if (!session.class.venue || !session.class.venue.isActive || !session.class.venue.isApproved) {
           throw new BookingError('Bu salon şu anda rezervasyona kapalı.', 400)
         }
+        // Salon KAPATTIĞI ders (isActive=false) ya da kapalı seans hâlâ ayakta olan sessionId'siyle booklanamaz —
+        // aksi halde tüm listelerden gizlenen ders eski/enumerate edilmiş linkle rezerve edilir (kapasite yanar + puan kazanılır).
+        if (!session.class.isActive) throw new BookingError('Bu ders şu anda rezervasyona kapalı.', 400)
+        if (session.status !== 'open') throw new BookingError('Bu seans rezervasyona kapalı.', 400)
 
         // Kapasite = onaylı/bekleyen rezervasyonların groupSize TOPLAMI
         // (satır sayısı değil — bir rezervasyon birden çok kişilik olabilir, grup rezervasyonunda overbooking olmasın diye)
@@ -144,7 +148,7 @@ export const createBooking = async (req: Request, res: Response) => {
             status: 'confirmed',
             notes: clampStr(notes, 500) || null,
             groupSize,
-            baseAmount: basePrice,
+            baseAmount: money(basePrice), // money() ile yuvarla (finalAmount/venuePayout gibi) — grup×ondalık fiyatta float tozu kalmasın
             discountAmount: couponDiscount,
             commissionAmount: 0,
             userCommission: 0,
@@ -388,6 +392,15 @@ export const joinDropIn = async (req: Request, res: Response) => {
           throw new BookingError('Bu salon şu anda rezervasyona kapalı.', 400)
         }
         if (slot.status !== 'open') throw new BookingError('Bu slot artık açık değil.', 400)
+        if (new Date(slot.startsAt) <= new Date()) throw new BookingError('Bu slot başlamış, katılım yapılamaz.', 400)
+        // ÖZEL slot: yalnız geçerli davet koduyla katılınır. Aksi halde herkes slotId enumerate edip
+        // özel maça (privateCode hiç sorulmadan) girebiliyordu — listeleme gizliyor ama join kontrolü yoktu.
+        if (slot.visibility === 'private') {
+          const code = String(req.body?.privateCode || req.body?.code || '').trim().toUpperCase()
+          if (!slot.privateCode || code !== slot.privateCode.toUpperCase()) {
+            throw new BookingError('Bu özel maça katılmak için geçerli davet kodu gerekli.', 403)
+          }
+        }
         if (slot.currentPlayers >= slot.totalPlayers) throw new BookingError('Slot dolu.', 400)
 
         const existing = await tx.dropInParticipant.findFirst({ where: { slotId, userId } })
@@ -701,8 +714,21 @@ export const transferBooking = async (req: Request, res: Response) => {
           throw new BookingError('Hedef derste yeterli yer yok.', 400)
         }
 
-        // Finansal yeniden hesap (salon kuponu korunur)
-        const couponDiscount = money(Math.max(0, oldBase - booking.venuePayout))
+        // Finansal yeniden hesap — kuponu TİPİYLE yeni baza uygula. ESKİ kod indirimi MUTLAK
+        // (oldBase − venuePayout) alıp küçük yeni baza uyguluyordu → YÜZDE kuponu dev mutlak indirime donup
+        // salonu eksik ödüyor, kullanıcıyı fazla iade ediyordu (üst üste transferde bedava derse kadar).
+        let couponDiscount = 0
+        if (booking.couponId) {
+          const bc = await tx.coupon.findUnique({ where: { id: booking.couponId }, select: { discountType: true, discountValue: true } })
+          if (bc) {
+            couponDiscount = bc.discountType === 'percent'
+              ? money(newBase * (bc.discountValue / 100))
+              : Math.min(bc.discountValue, newBase)
+          } else if (oldBase > 0) {
+            // kupon satırı silinmiş (nadir) → eski EFEKTİF oranı koru (yüzde-eşdeğeri)
+            couponDiscount = money(newBase * (Math.max(0, oldBase - booking.venuePayout) / oldBase))
+          }
+        }
         const newVenuePayout = money(Math.max(0, newBase - couponDiscount))
         const newFinalAmount = money(Math.max(0, newBase - couponDiscount))
         // İade = ÖDENEN (finalAmount) − yeni borç (newFinalAmount); baz farkı DEĞİL, yoksa kupon
@@ -724,7 +750,7 @@ export const transferBooking = async (req: Request, res: Response) => {
           where: { id: bookingId, status: 'confirmed', sessionId: booking.sessionId, checkedIn: false },
           data: {
             sessionId: targetSessionId,
-            baseAmount: newBase,
+            baseAmount: money(newBase),
             venuePayout: newVenuePayout,
             finalAmount: newFinalAmount,
             discountAmount: couponDiscount,

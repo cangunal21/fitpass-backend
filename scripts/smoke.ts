@@ -121,6 +121,17 @@ async function cleanup() {
   await prisma.rewardPoint.deleteMany({ where: { userId: { in: [990330, 990331] } } }).catch(() => {})
   await prisma.referral.deleteMany({ where: { OR: [{ referrerId: 990330 }, { referredId: { in: [990330, 990331] } }] } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: { in: [990330, 990331] } } }).catch(() => {})
+  // Ekonomik regresyon kalıntıları (9934x + test kupon kodları)
+  const econVenues = [990340, 990341, 990342, 990343]
+  const econUsers = [990340, 990342, 990343]
+  await prisma.coupon.deleteMany({ where: { code: { in: ['HALF50TEST', 'ORCL10'] } } }).catch(() => {})
+  await prisma.rewardPoint.deleteMany({ where: { userId: { in: econUsers } } }).catch(() => {})
+  await prisma.booking.deleteMany({ where: { OR: [{ userId: { in: econUsers } }, { session: { class: { venueId: { in: econVenues } } } }] } }).catch(() => {})
+  await prisma.coupon.deleteMany({ where: { venueId: { in: econVenues } } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { class: { venueId: { in: econVenues } } } }).catch(() => {})
+  await prisma.class.deleteMany({ where: { venueId: { in: econVenues } } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: { in: econUsers } } }).catch(() => {})
+  await prisma.venue.deleteMany({ where: { id: { in: econVenues } } }).catch(() => {})
   await prisma.coupon.deleteMany({ where: { code: { startsWith: 'NEG' } } }).catch(() => {})
   // Kayıt/giriş case testi kalıntısı (usrcase01)
   {
@@ -1414,6 +1425,100 @@ async function run() {
     if (r.status !== 400) throw new Error(`negatif fixed kupon ${r.status} (400 bekleniyor)`)
   })
 
+  // #ECON-A: transfer YÜZDE kuponu mutlak indirime DONMAZ — yeni baza göre yeniden hesaplanır (salon eksik ödenmez)
+  await check('Ekonomik: transfer yüzde-kuponu yeni baza göre hesaplar (#A)', async () => {
+    const EV = 990340, CA = 990340, CB = 990341, SA = 990340, SB = 990341, EU = 990340
+    await prisma.venue.upsert({ where: { id: EV }, update: { isApproved: true, isActive: true }, create: { id: EV, name: 'EconV', email: `ev${EV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: CA }, update: { basePrice: 200, isActive: true, venueId: EV }, create: { id: CA, venueId: EV, title: 'Pahalı', category: catName, basePrice: 200, durationMinutes: 60, capacity: 20, isActive: true } })
+    await prisma.class.upsert({ where: { id: CB }, update: { basePrice: 100, isActive: true, venueId: EV }, create: { id: CB, venueId: EV, title: 'Ucuz', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const fut = new Date(Date.now() + 2 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: SA }, update: { classId: CA, startsAt: fut, status: 'open', availableSpots: 20 }, create: { id: SA, classId: CA, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: SB }, update: { classId: CB, startsAt: fut, status: 'open', availableSpots: 20 }, create: { id: SB, classId: CB, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.user.upsert({ where: { id: EU }, update: {}, create: { id: EU, username: `econ_${EU}`, email: `econ_${EU}@x.com`, passwordHash: 'x', fullName: 'Econ', tierId: 1, tierSportCounts: {} } })
+    await prisma.booking.deleteMany({ where: { userId: EU } })
+    await prisma.coupon.deleteMany({ where: { code: 'HALF50TEST' } })
+    await prisma.coupon.create({ data: { venueId: EV, code: 'HALF50TEST', discountType: 'percent', discountValue: 50, isActive: true } })
+    const euTok = jwt.sign({ userId: EU, email: `econ_${EU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const bk = await http('/api/bookings', { method: 'POST', token: euTok, body: { sessionId: SA, couponCode: 'HALF50TEST' } })
+    if (bk.status !== 201) throw new Error(`booking: ${bk.status} ${bk.text.slice(0, 120)}`)
+    const bid = bk.json?.booking?.id
+    const b0 = await prisma.booking.findUnique({ where: { id: bid }, select: { finalAmount: true, venuePayout: true } })
+    if (b0?.finalAmount !== 100 || b0?.venuePayout !== 100) throw new Error(`kurulum final/payout 100 bekleniyor (${b0?.finalAmount}/${b0?.venuePayout})`)
+    const tr = await http(`/api/bookings/${bid}/transfer`, { method: 'PUT', token: euTok, body: { targetSessionId: SB } })
+    if (tr.status !== 200) throw new Error(`transfer: ${tr.status} ${tr.text.slice(0, 120)}`)
+    const b1 = await prisma.booking.findUnique({ where: { id: bid }, select: { finalAmount: true, venuePayout: true } })
+    if (b1?.venuePayout !== 50 || b1?.finalAmount !== 50) throw new Error(`transfer sonrası final/payout 50 olmalı (%50 yeni baz 100), geldi ${b1?.finalAmount}/${b1?.venuePayout} — eski bug 0/0`)
+    await prisma.booking.deleteMany({ where: { userId: EU } }).catch(() => {})
+    await prisma.rewardPoint.deleteMany({ where: { userId: EU } }).catch(() => {})
+    await prisma.coupon.deleteMany({ where: { code: 'HALF50TEST' } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: { in: [SA, SB] } } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: { in: [CA, CB] } } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: EU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: EV } }).catch(() => {})
+  })
+
+  // #ECON-C: ders/salon silmede puan geri-alma bakiyeyi NEGATİFE düşürmez (clamp)
+  await check('Ekonomik: ders silmede puan geri-alma clamp\'li (#C)', async () => {
+    const EV = 990342, CC = 990342, SC = 990342, EU = 990342
+    await prisma.venue.upsert({ where: { id: EV }, update: { isApproved: true, isActive: true }, create: { id: EV, name: 'EconV2', email: `ev${EV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: CC }, update: { venueId: EV, isActive: true }, create: { id: CC, venueId: EV, title: 'D', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const fut = new Date(Date.now() + 2 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: SC }, update: { classId: CC, startsAt: fut }, create: { id: SC, classId: CC, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.user.upsert({ where: { id: EU }, update: { rewardPoints: 30 }, create: { id: EU, username: `econc_${EU}`, email: `econc_${EU}@x.com`, passwordHash: 'x', fullName: 'EconC', tierSportCounts: {}, rewardPoints: 30 } })
+    await prisma.booking.deleteMany({ where: { userId: EU } }); await prisma.rewardPoint.deleteMany({ where: { userId: EU } })
+    // Bakiye 30 ama booking pointsEarned 50 (yıllık reset sonrası senaryosu) → clamp min(50,30)=30 → 0, NEGATİF değil
+    await prisma.booking.create({ data: { userId: EU, sessionId: SC, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, pointsEarned: 50, bookingNumber: `ECC-${Date.now()}`, checkInCode: `ECC${Date.now() % 100000}` } })
+    const vtok = jwt.sign({ venueId: EV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const del = await http(`/api/venue/classes/${CC}`, { method: 'DELETE', token: vtok })
+    if (del.status >= 400) throw new Error(`ders silme: ${del.status} ${del.text.slice(0, 120)}`)
+    const u = await prisma.user.findUnique({ where: { id: EU }, select: { rewardPoints: true } })
+    if ((u?.rewardPoints ?? -1) !== 0) throw new Error(`puan clamp: 0 bekleniyor, geldi ${u?.rewardPoints} — eski bug −20`)
+    await prisma.rewardPoint.deleteMany({ where: { userId: EU } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { userId: EU } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: SC } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: CC } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: EU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: EV } }).catch(() => {})
+  })
+
+  // #ECON-E: salon KAPATTIĞI (isActive=false) dersin ayakta seansı sessionId ile booklanamaz
+  await check('Ekonomik: kapalı dersin seansı booklanamaz (#E)', async () => {
+    const EV = 990343, CD = 990343, SD = 990343, EU = 990343
+    await prisma.venue.upsert({ where: { id: EV }, update: { isApproved: true, isActive: true }, create: { id: EV, name: 'EconV3', email: `ev${EV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: CD }, update: { venueId: EV, isActive: false }, create: { id: CD, venueId: EV, title: 'Kapalı', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: false } })
+    const fut = new Date(Date.now() + 2 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: SD }, update: { classId: CD, startsAt: fut, status: 'open' }, create: { id: SD, classId: CD, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.user.upsert({ where: { id: EU }, update: {}, create: { id: EU, username: `econe_${EU}`, email: `econe_${EU}@x.com`, passwordHash: 'x', fullName: 'EconE', tierSportCounts: {} } })
+    const euTok = jwt.sign({ userId: EU, email: `econe_${EU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const bk = await http('/api/bookings', { method: 'POST', token: euTok, body: { sessionId: SD } })
+    if (bk.status !== 400) throw new Error(`kapalı ders booklandı: ${bk.status} (400 bekleniyor)`)
+    await prisma.booking.deleteMany({ where: { userId: EU } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: SD } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: CD } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: EU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: EV } }).catch(() => {})
+  })
+
+  // #ECON-H: non-numeric percent discountValue reddedilir (NaN money kolonuna yazılmasın)
+  await check('Ekonomik: createCoupon non-numeric değeri reddeder (#H)', async () => {
+    const vtok = jwt.sign({ venueId: V, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http('/api/venue/coupons', { method: 'POST', token: vtok, body: { code: `NAN${Date.now()}`, discountType: 'percent', discountValue: 'abc' } })
+    if (r.status !== 400) throw new Error(`non-numeric kupon ${r.status} (400 bekleniyor)`)
+  })
+
+  // #ECON-B: validateCoupon enumeration oracle vermez (yok/yanlış-salon aynı yanıt); geçerli indirimi döner
+  await check('Ekonomik: validateCoupon oracle vermez (#B)', async () => {
+    await prisma.coupon.deleteMany({ where: { code: 'ORCL10' } })
+    await prisma.coupon.create({ data: { venueId: V, code: 'ORCL10', discountType: 'percent', discountValue: 10, isActive: true } })
+    const notFound = await http('/api/public/validate-coupon', { method: 'POST', body: { code: 'YOKBOYLE_X', venueId: V } })
+    const wrongVenue = await http('/api/public/validate-coupon', { method: 'POST', body: { code: 'ORCL10', venueId: V + 99999 } })
+    if (notFound.status !== wrongVenue.status) throw new Error(`oracle: yok(${notFound.status}) ≠ yanlış-salon(${wrongVenue.status})`)
+    if (notFound.json?.valid !== false || wrongVenue.json?.valid !== false) throw new Error('geçersiz kupon valid:false dönmeli')
+    const ok = await http('/api/public/validate-coupon', { method: 'POST', body: { code: 'ORCL10', venueId: V } })
+    if (!ok.json?.valid || ok.json?.coupon?.discountValue !== 10) throw new Error(`geçerli kupon indirimi dönmedi: ${ok.text.slice(0, 120)}`)
+    await prisma.coupon.deleteMany({ where: { code: 'ORCL10' } }).catch(() => {})
+  })
+
   await check('Rekor seri: 3 gün üst üste check-in → getMe recordStreak 3', async () => {
     const RU = 990231
     await prisma.user.upsert({ where: { id: RU }, update: { recordStreak: 0 }, create: { id: RU, username: `rec_${RU}`, email: `rec_${RU}@x.com`, passwordHash: 'x', fullName: 'Rekor User', tierId: 1, tierSportCounts: {} } })
@@ -1716,7 +1821,7 @@ async function main() {
   try {
     let serverLog = ''
     server = spawn('npx', ['ts-node', 'src/index.ts'], {
-      env: { ...process.env, PORT: String(PORT), DISABLE_RATE_LIMIT: 'true' },
+      env: { ...process.env, PORT: String(PORT), DISABLE_RATE_LIMIT: 'true', ADMIN_SECRET },
       detached: true,
     })
     server.stdout?.on('data', d => { serverLog += d })

@@ -7,18 +7,20 @@ export const createCoupon = async (req: Request, res: Response) => {
     const venueId = (req as any).venueId
     const { code, discountType, discountValue, maxUses, perUserLimit, expiresAt } = req.body
 
-    if (!code || !discountType || !discountValue) {
+    if (!code || !discountType || discountValue == null) {
       return res.status(400).json({ error: 'Kod, indirim tipi ve değeri zorunludur.' })
     }
     if (!['percent', 'fixed'].includes(discountType)) {
       return res.status(400).json({ error: 'İndirim tipi "percent" veya "fixed" olmalıdır.' })
     }
-    if (discountType === 'percent' && (discountValue <= 0 || discountValue > 100)) {
-      return res.status(400).json({ error: 'Yüzde indirim 1-100 arasında olmalıdır.' })
+    // SAYISAL doğrula: 'abc' gibi non-numeric değer parseFloat→NaN olup booking'de money kolonlarına NaN
+    // yazardı (gevşek </> karşılaştırmaları NaN'ı geçiriyordu). Number.isFinite + pozitiflik ile kesin kapat.
+    const dv = parseFloat(discountValue)
+    if (!Number.isFinite(dv) || dv <= 0) {
+      return res.status(400).json({ error: 'İndirim değeri geçerli, 0’dan büyük bir sayı olmalıdır.' })
     }
-    // Sabit (fixed) indirim pozitif olmalı — negatif değer fiyatı artırırdı (finalAmount = base − discount)
-    if (discountType === 'fixed' && !(discountValue > 0)) {
-      return res.status(400).json({ error: 'Sabit indirim 0’dan büyük olmalıdır.' })
+    if (discountType === 'percent' && dv > 100) {
+      return res.status(400).json({ error: 'Yüzde indirim 1-100 arasında olmalıdır.' })
     }
 
     const existing = await prisma.coupon.findUnique({ where: { code: code.toUpperCase() } })
@@ -29,7 +31,7 @@ export const createCoupon = async (req: Request, res: Response) => {
         venueId,
         code: code.toUpperCase(),
         discountType,
-        discountValue: parseFloat(discountValue),
+        discountValue: dv,
         maxUses: maxUses ? parseInt(maxUses) : null,
         perUserLimit: perUserLimit != null && perUserLimit !== '' && parseInt(perUserLimit) > 0 ? parseInt(perUserLimit) : null,
         expiresAt: expiresAt ? new Date(expiresAt) : null,
@@ -82,10 +84,14 @@ export const validateCoupon = async (req: Request, res: Response) => {
 
     const coupon = await prisma.coupon.findUnique({ where: { code: String(code).toUpperCase() } })
 
-    if (!coupon || !coupon.isActive) return res.status(404).json({ error: 'Geçersiz kupon kodu.' })
-    if (coupon.venueId !== parseInt(venueId)) return res.status(400).json({ error: 'Bu kupon bu salona ait değil.' })
-    if (coupon.expiresAt && coupon.expiresAt < new Date()) return res.status(400).json({ error: 'Kupon süresi dolmuş.' })
-    if (coupon.maxUses && coupon.usedCount >= coupon.maxUses) return res.status(400).json({ error: 'Kupon kullanım limiti dolmuş.' })
+    // ENUMERASYON/ORACLE ENGELİ: kod-yok · yanlış-salon · süresi-dolmuş · limit-dolmuş AYIRT EDİLMEZ →
+    // hepsi tek "geçersiz" döner. Aksi halde 404-vs-400 farkı platform-genelinde "bu kod var mı?" oracle'ı
+    // olur ve başka salonun kupon VARLIĞI sızardı. Yalnız kod+salon+aktif+geçerli tam eşleşirse indirim döner.
+    const invalid = () => res.status(400).json({ valid: false, error: 'Geçersiz veya kullanılamaz kupon kodu.' })
+    if (!coupon || !coupon.isActive) return invalid()
+    if (coupon.venueId !== parseInt(venueId)) return invalid()
+    if (coupon.expiresAt && coupon.expiresAt < new Date()) return invalid()
+    if (coupon.maxUses && coupon.usedCount >= coupon.maxUses) return invalid()
 
     return res.json({
       valid: true,
