@@ -302,6 +302,7 @@ export const getVenues = async (req: Request, res: Response) => {
         _count: { select: { classes: true } },
       },
       orderBy: { createdAt: 'desc' },
+      take: 500, // tüm salon kataloğu tek yanıtta dökülmesin (pagination lansmanda)
     })
 
     return res.json({ venues: venues.map(stripVenueSensitive) })
@@ -373,6 +374,7 @@ export const getDropInSlots = async (req: Request, res: Response) => {
         participants: { select: { id: true } },
       },
       orderBy: { startsAt: 'asc' },
+      take: 200, // açık drop-in slotları sınırsız yüklenmesin
     })
     return res.json({ slots })
   } catch (err) {
@@ -652,7 +654,7 @@ export const submitComplaint = async (req: Request, res: Response) => {
 // Kullanıcı arama (etiketleme için autocomplete)
 export const searchUsers = async (req: Request, res: Response) => {
   try {
-    const q = (req.query.q as string || '').trim().replace(/^@/, '')
+    const q = (req.query.q as string || '').trim().replace(/^@/, '').slice(0, 80) // uzunluk sınırı (ILIKE girdi hijyeni)
     if (!q || q.length < 2) return res.json({ users: [] })
 
     const users = await prisma.user.findMany({

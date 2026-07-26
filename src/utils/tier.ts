@@ -33,17 +33,24 @@ export async function resetYearlyPointsIfNeeded(userId: number) {
 }
 
 export async function syncUserTier(userId: number) {
-  const [count, tiers] = await Promise.all([
+  const [count, tiers, current] = await Promise.all([
     computeCompletedLessons(userId),
     prisma.tier.findMany({ orderBy: { minLessons: 'desc' } }),
+    prisma.user.findUnique({ where: { id: userId }, select: { totalLessonsCompleted: true, tierId: true } }),
   ])
 
   const tier = tiers.find(t => count >= t.minLessons) ?? tiers[tiers.length - 1] ?? null
+  const newTierId = tier?.id ?? null
 
-  await prisma.user.update({
-    where: { id: userId },
-    data: { totalLessonsCompleted: count, tierId: tier?.id ?? null },
-  })
+  // DIRTY-CHECK: değer değişmediyse YAZMA. getUserActivities her (anonim) public profil görüntülemede bunu
+  // çağırıyordu → her istekte gereksiz User UPDATE'i = yazma amplifikasyonu + satır kilidi. Yalnız gerçekten
+  // değişince güncelle.
+  if (!current || current.totalLessonsCompleted !== count || current.tierId !== newTierId) {
+    await prisma.user.update({
+      where: { id: userId },
+      data: { totalLessonsCompleted: count, tierId: newTierId },
+    })
+  }
 
   return { count, tier }
 }

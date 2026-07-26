@@ -342,6 +342,7 @@ export const getMyBookings = async (req: Request, res: Response) => {
         reviews: true, // salon + hoca ayrı satır (targetType)
       },
       orderBy: { createdAt: 'desc' },
+      take: 200, // tüm ömür-boyu booking geçmişi derin include'la tek yanıtta yüklenmesin
     })
 
     const safeBookings = bookings.map(b => ({
@@ -608,6 +609,7 @@ export const getTransferOptions = async (req: Request, res: Response) => {
       },
       include: { class: { select: { title: true, basePrice: true, capacity: true } } },
       orderBy: { startsAt: 'asc' },
+      take: 100, // seans başına 2 sorgu döngüsü var → aday seans sayısını sınırla (N+1 patlamasını kes)
     })
 
     // Her seans için doluluk hesapla (groupSize toplamı) ve %50 + grup sığma filtresini uygula

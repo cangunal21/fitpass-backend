@@ -4,6 +4,18 @@ import { sendPushNotification } from '../utils/push'
 import { longestDailyStreak, currentDailyStreak, currentWeeklyStreak } from '../utils/streak'
 import { cached } from '../utils/cache'
 import { seasonInfo } from '../utils/season'
+import { parseIntSafe } from '../utils/validate'
+
+// Liderlik/sıralama sorgu paramlarını NORMALIZE et. Aksi halde doğrulanmamış ?branch=<rastgele> her istekte
+// YENİ cache anahtarı üretip 45sn cache'i baypas ediyor + tüm-kullanıcı taramasını tetikliyordu (DoS + bellek).
+// branch yalnız GERÇEK bir kategori adıysa geçer (yoksa yok sayılır → aynı cache anahtarı); neighborhoodId sayısal.
+async function normalizeLbParams(req: Request): Promise<{ branch?: string; neighborhoodId?: number }> {
+  const cats = await cached('cat-names', 300000, () => prisma.sportCategory.findMany({ select: { name: true } })) as { name: string }[]
+  const b = typeof req.query.branch === 'string' ? req.query.branch : undefined
+  const branch = b && cats.some(c => c.name === b) ? b : undefined
+  const nid = parseIntSafe(req.query.neighborhoodId)
+  return { branch, neighborhoodId: nid && nid > 0 ? nid : undefined }
+}
 
 export const followUser = async (req: Request, res: Response) => {
   try {
@@ -70,6 +82,7 @@ export const getFollowRequests = async (req: Request, res: Response) => {
       where: { followingId: userId, status: 'pending' },
       include: { follower: { select: { id: true, username: true, fullName: true, avatarUrl: true, tier: { select: { name: true, colorHex: true, iconUrl: true } } } } },
       orderBy: { createdAt: 'desc' },
+      take: 300, // bekleyen istek listesi sınırsız yüklenmesin (spam istek seli)
     })
     return res.json({ requests: reqs.map(r => r.follower) })
   } catch (err) { return res.status(500).json({ error: 'Sunucu hatası.' }) }
@@ -126,7 +139,8 @@ export const getFollowers = async (req: Request, res: Response) => {
     const follows = await prisma.follow.findMany({
       // banlı hesap listede görünmesin (searchUsers/getUserActivities ile aynı kural)
       where: { followingId: user.id, status: 'accepted', follower: { banned: false } },
-      include: { follower: { select: { id: true, username: true, fullName: true, avatarUrl: true, tier: { select: { name: true, colorHex: true, iconUrl: true } } } } }
+      include: { follower: { select: { id: true, username: true, fullName: true, avatarUrl: true, tier: { select: { name: true, colorHex: true, iconUrl: true } } } } },
+      take: 500, // sınırsız takipçi grafiği tek yanıtta dökülmesin (pagination lansmanda; 500 makul üst sınır)
     })
     return res.json({ followers: follows.map(f => f.follower) })
   } catch (err) { return res.status(500).json({ error: 'Sunucu hatası.' }) }
@@ -142,7 +156,8 @@ export const getFollowing = async (req: Request, res: Response) => {
     const follows = await prisma.follow.findMany({
       // banlı hesap listede görünmesin (searchUsers/getUserActivities ile aynı kural)
       where: { followerId: user.id, status: 'accepted', following: { banned: false } },
-      include: { following: { select: { id: true, username: true, fullName: true, avatarUrl: true, tier: { select: { name: true, colorHex: true, iconUrl: true } } } } }
+      include: { following: { select: { id: true, username: true, fullName: true, avatarUrl: true, tier: { select: { name: true, colorHex: true, iconUrl: true } } } } },
+      take: 500, // sınırsız takip listesi tek yanıtta dökülmesin
     })
     return res.json({ following: follows.map(f => f.following) })
   } catch (err) { return res.status(500).json({ error: 'Sunucu hatası.' }) }
@@ -151,7 +166,7 @@ export const getFollowing = async (req: Request, res: Response) => {
 // Kullanıcı liderlik tablosu
 export const getUserLeaderboard = async (req: Request, res: Response) => {
   try {
-    const { branch, neighborhoodId } = req.query
+    const { branch, neighborhoodId } = await normalizeLbParams(req)
     const season = seasonInfo()
 
     const ranked = await cached(`lb-users:${season.key}:${branch || ''}:${neighborhoodId || ''}`, 45000, async () => {
@@ -163,7 +178,7 @@ export const getUserLeaderboard = async (req: Request, res: Response) => {
       const users = await prisma.user.findMany({
         where: {
           banned: false,
-          ...(neighborhoodId ? { neighborhoodId: parseInt(neighborhoodId as string) } : {}),
+          ...(neighborhoodId ? { neighborhoodId } : {}),
         },
         select: {
           id: true,
@@ -205,7 +220,7 @@ export const getUserLeaderboard = async (req: Request, res: Response) => {
 // Filtre: branch (spor kategorisi) + neighborhoodId (ilçe; yoksa şehir geneli)
 export const getStreakLeaderboard = async (req: Request, res: Response) => {
   try {
-    const { branch, neighborhoodId } = req.query
+    const { branch, neighborhoodId } = await normalizeLbParams(req)
     const now = new Date()
     const season = seasonInfo(now)
 
@@ -214,7 +229,7 @@ export const getStreakLeaderboard = async (req: Request, res: Response) => {
       where: {
         // Streak sıralaması da HERKESE açık (yalnız banlı hariç) — liderlikle aynı Instagram mantığı.
         banned: false,
-        ...(neighborhoodId ? { neighborhoodId: parseInt(neighborhoodId as string) } : {}),
+        ...(neighborhoodId ? { neighborhoodId } : {}),
       },
       select: {
         id: true,
@@ -322,12 +337,12 @@ export const getMyCalendar = async (req: Request, res: Response) => {
 // Salon liderlik tablosu
 export const getVenueLeaderboard = async (req: Request, res: Response) => {
   try {
-    const { branch, neighborhoodId } = req.query
+    const { branch, neighborhoodId } = await normalizeLbParams(req)
 
     const venues = await cached(`lb-venue:${branch || ''}:${neighborhoodId || ''}`, 45000, () => prisma.venue.findMany({
       where: {
         isApproved: true,
-        ...(neighborhoodId ? { neighborhoodId: parseInt(neighborhoodId as string) } : {}),
+        ...(neighborhoodId ? { neighborhoodId } : {}),
         ...(branch ? {
           sportCategories: {
             some: { sportCategory: { name: branch as string } }
@@ -660,6 +675,7 @@ export const getActivityComments = async (req: Request, res: Response) => {
       where: { feedKey },
       include: { user: { select: { username: true, fullName: true, avatarUrl: true } } },
       orderBy: { createdAt: 'asc' },
+      take: 500, // tek aktivitedeki yorumlar sınırsız yüklenip her okumada JS'te ağaç kurulmasın
     })
     const topLevel = all.filter(c => !c.parentId)
     const repliesByParent = new Map<number, typeof all>()

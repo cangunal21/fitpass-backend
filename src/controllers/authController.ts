@@ -571,6 +571,11 @@ export const resendVerification = async (req: Request & { userId?: number }, res
     if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
     if (user.isEmailVerified) return res.status(400).json({ error: 'Email zaten doğrulanmış.' })
 
+    // COOLDOWN: son 2 dk içinde token üretildiyse tekrar GÖNDERME — self-servis mail seli + token satır şişmesi
+    // engeli (authLimiter'a ek). Kullanıcı akışını bozmaz (zaten gönderildi mesajı döner).
+    const recent = await prisma.emailVerificationToken.findFirst({ where: { userId: req.userId!, createdAt: { gt: new Date(Date.now() - 2 * 60 * 1000) } }, select: { id: true } })
+    if (recent) return res.json({ message: 'Doğrulama emaili yakın zamanda gönderildi. Birkaç dakika sonra tekrar deneyin.' })
+
     const verifyToken = crypto.randomBytes(32).toString('hex')
     const verifyExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000)
     await prisma.emailVerificationToken.create({ data: { userId: req.userId!, token: verifyToken, expiresAt: verifyExpiresAt } })

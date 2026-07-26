@@ -122,6 +122,25 @@ const couponLimiter = rateLimit({
   message: { error: 'Çok fazla kupon denemesi. Lütfen bir dakika bekleyin.' },
 })
 
+// Sosyal YAZMA (takip/takipten çık) — kurbanı bildirim/push seliyle boğma + Notification satır şişmesi engeli
+const socialWriteLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 30,
+  standardHeaders: true, legacyHeaders: false, keyGenerator: rlKey, skip: skipRateLimit,
+  message: { error: 'Çok fazla işlem. Lütfen bir dakika bekleyin.' },
+})
+// Feed (gezinme + beğeni + yorum) — yorum/beğeni spam'ini 200→60'a indir (gezinmeye yeter)
+const feedLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 60,
+  standardHeaders: true, legacyHeaders: false, keyGenerator: rlKey, skip: skipRateLimit,
+  message: { error: 'Çok fazla istek. Lütfen bir dakika bekleyin.' },
+})
+// Pahalı okuma (liderlik hesap + kullanıcı arama ILIKE taraması) — dakikada 40
+const heavyReadLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 40,
+  standardHeaders: true, legacyHeaders: false, keyGenerator: rlKey, skip: skipRateLimit,
+  message: { error: 'Çok fazla istek. Lütfen bir dakika bekleyin.' },
+})
+
 app.use('/api', generalLimiter)
 app.use('/api/auth/login', authLimiter)
 app.use('/api/auth/register', authLimiter)
@@ -137,6 +156,12 @@ app.use('/api/instructor/set-password', authLimiter)
 app.use('/api/public/complaint', authLimiter)
 app.use('/api/public/validate-coupon', couponLimiter)
 app.use('/api/social/report', authLimiter)
+app.use('/api/auth/resend-verification', authLimiter) // self-servis doğrulama-maili seli engeli
+app.use('/api/social/follow', socialWriteLimiter)     // takip bildirim bombası engeli
+app.use('/api/social/unfollow', socialWriteLimiter)
+app.use('/api/social/feed', feedLimiter)              // yorum/beğeni spam + feed okuma
+app.use('/api/social/leaderboard', heavyReadLimiter)  // liderlik tam-tablo hesabı
+app.use('/api/public/users-search', heavyReadLimiter) // ILIKE tam-tablo taraması
 app.use('/api/chat', chatLimiter)
 
 // Routes

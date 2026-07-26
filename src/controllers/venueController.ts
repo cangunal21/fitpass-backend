@@ -118,7 +118,10 @@ export const venueRegister = async (req: Request, res: Response) => {
     })
 
     if (sportCategories && Array.isArray(sportCategories)) {
-      for (const catName of sportCategories) {
+      // SINIRLA: tekrarsız (Set) + string + en çok 30 kategori. Aksi halde ~14k elemanlık dizi 14k sıralı
+      // findFirst + 14k duplikat venueSportCategory insert'e dönüşüyordu (amplifikasyon + çöp satır).
+      const uniqueCats = [...new Set((sportCategories as any[]).filter((c) => typeof c === 'string').map((c) => c.trim()).filter(Boolean))].slice(0, 30)
+      for (const catName of uniqueCats) {
         const cat = await prisma.sportCategory.findFirst({ where: { name: { equals: catName, mode: 'insensitive' } } })
         if (cat) {
           await prisma.venueSportCategory.create({ data: { venueId: venue.id, sportCategoryId: cat.id } })
@@ -465,6 +468,10 @@ export const createRecurringSessions = async (req: Request, res: Response) => {
     if (!time || !capacity || !weekDays || !Array.isArray(weekDays) || weekDays.length === 0 || !weeks) {
       return res.status(400).json({ error: 'Saat, kapasite, günler ve hafta sayısı zorunludur.' })
     }
+    // weekDays'i SINIRLA: yalnız 0-6 tam sayı + tekrarsız (Set). Aksi halde ~50k elemanlık dizi
+    // haftalar×N sıralı findFirst sorgusuna dönüşüp DB bağlantı havuzunu kilitliyordu (DoS). En çok 7 gün.
+    const days = [...new Set((weekDays as any[]).map((d) => parseInt(d)).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6))]
+    if (days.length === 0) return res.status(400).json({ error: 'Geçerli gün seçin (Pazar=0 … Cumartesi=6).' })
 
     const cls = await prisma.class.findUnique({ where: { id: classId } })
     if (!cls || cls.venueId !== venueId) {
@@ -482,7 +489,7 @@ export const createRecurringSessions = async (req: Request, res: Response) => {
     startDate.setHours(0, 0, 0, 0)
 
     for (let w = 0; w < totalWeeks; w++) {
-      for (const day of weekDays) {
+      for (const day of days) {
         const date = new Date(startDate)
         // Bu haftanın başı (Pazartesi)
         const dayOfWeek = date.getDay()

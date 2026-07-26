@@ -1227,6 +1227,10 @@ async function run() {
     const me = (r.json?.leaderboard || []).find((u: any) => u.id === PU)
     if (!me) throw new Error('aktivite-gizli kullanıcı liderlikte GÖRÜNMÜYOR (yeni model: sıralama herkese açık)')
     if (me.username !== `lbgiz_${PU}`) throw new Error('liderlikte username dönmedi')
+    // DAYANIKLILIK: geçersiz ?branch=<rastgele> YOK SAYILIR (gerçek kategori değil) → aynı sonuç.
+    // Aksi halde her rastgele branch cache-bust edip tüm-tablo taraması tetikliyordu (DoS).
+    const rGarbage = await http(`/api/social/leaderboard/users?neighborhoodId=${N}&branch=YOKBOYLE_BRANCH_XYZ`)
+    if (!(rGarbage.json?.leaderboard || []).some((u: any) => u.id === PU)) throw new Error('geçersiz branch sıralamayı bozdu — normalize edilmeli (cache-bust DoS)')
     await prisma.booking.deleteMany({ where: { userId: PU } }).catch(() => {})
     await prisma.class_Session.deleteMany({ where: { id: SS } }).catch(() => {})
     await prisma.class.deleteMany({ where: { id: N } }).catch(() => {})
