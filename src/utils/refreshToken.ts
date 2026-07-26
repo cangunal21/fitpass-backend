@@ -10,6 +10,9 @@ const REFRESH_DAYS = 180
 export async function issueRefreshToken(userId: number): Promise<string> {
   const token = crypto.randomBytes(48).toString('hex')
   const expiresAt = new Date(Date.now() + REFRESH_DAYS * 86400000)
+  // Süresi geçmiş/iptal edilmiş eski token'ları temizle — kullanıcı başına sınırsız birikmesin (tablo şişmesi
+  // + her biri bağımsız çalınabilir 180-günlük kimlik bilgisi olan hurda satırlar). Yeni token'dan önce süpür.
+  await prisma.refreshToken.deleteMany({ where: { userId, OR: [{ expiresAt: { lt: new Date() } }, { revoked: true }] } }).catch(() => {})
   await prisma.refreshToken.create({ data: { token, userId, expiresAt } })
   return token
 }

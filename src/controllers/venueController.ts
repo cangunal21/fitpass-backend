@@ -1,5 +1,6 @@
 import { Request, Response } from 'express'
 import bcrypt from 'bcryptjs'
+const VENUE_DUMMY_HASH = bcrypt.hashSync('sipsakspor-venue-timing-guard', 12) // login enumeration timing oracle guard
 import prisma from '../utils/prisma'
 import { translateClassTitle } from '../utils/translate'
 import { generateToken } from '../utils/jwt'
@@ -174,6 +175,7 @@ export const venueLogin = async (req: Request, res: Response) => {
 
     const venue = await prisma.venue.findUnique({ where: { email } })
     if (!venue || !venue.passwordHash) {
+      await bcrypt.compare(String(password), VENUE_DUMMY_HASH).catch(() => {}) // timing'i eşitle (enumeration önleme)
       return res.status(401).json({ error: 'Email veya şifre hatalı.' })
     }
 
@@ -293,8 +295,8 @@ export const changeVenuePassword = async (req: Request, res: Response) => {
     if (!currentPassword || !newPassword) {
       return res.status(400).json({ error: 'Mevcut ve yeni şifre gerekli.' })
     }
-    if (newPassword.length < 6) {
-      return res.status(400).json({ error: 'Yeni şifre en az 6 karakter olmalı.' })
+    if (newPassword.length < MIN_PASSWORD) {
+      return res.status(400).json({ error: `Yeni şifre en az ${MIN_PASSWORD} karakter olmalı.` })
     }
 
     const venue = await prisma.venue.findUnique({ where: { id: venueId } })
@@ -787,8 +789,8 @@ export const venueForgotPassword = async (req: Request, res: Response) => {
 export const venueResetPassword = async (req: Request, res: Response) => {
   try {
     const { token, password } = req.body
-    if (!token || !password || password.length < 6) {
-      return res.status(400).json({ error: 'Geçersiz istek.' })
+    if (!token || typeof token !== 'string' || !password || password.length < MIN_PASSWORD) {
+      return res.status(400).json({ error: 'Geçersiz istek veya şifre çok kısa.' })
     }
     const resetToken = await prisma.venuePasswordResetToken.findFirst({
       where: { token, used: false, expiresAt: { gt: new Date() } }

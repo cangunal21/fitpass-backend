@@ -118,6 +118,7 @@ export const suspendVenue = async (req: Request, res: Response) => {
       where: { id: venueId },
       data: { isSuspended: suspend, isActive: !suspend },
     })
+    invalidate(`venueState:${venueId}`) // venueAuthMiddleware 60sn cache'ini hemen düşür → askıya alma anında etki eder
     const { passwordHash, ...safeVenue } = venue
     return res.json({ message: suspend ? 'Salon donduruldu.' : 'Salon aktif edildi.', venue: safeVenue })
   } catch (err) {

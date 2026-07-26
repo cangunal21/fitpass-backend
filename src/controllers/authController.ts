@@ -111,6 +111,8 @@ export const register = async (req: Request, res: Response) => {
 }
 
 // GİRİŞ YAP
+const DUMMY_HASH = bcrypt.hashSync('sipsakspor-timing-guard', 12) // hesap-enumerasyonu timing oracle'ını kapatır
+
 export const login = async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body
@@ -122,6 +124,7 @@ export const login = async (req: Request, res: Response) => {
     const user = await prisma.user.findFirst({ where: { email: { equals: String(email).trim(), mode: 'insensitive' } } })
 
     if (!user) {
+      await bcrypt.compare(String(password), DUMMY_HASH).catch(() => {}) // timing'i eşitle (enumeration önleme — eğitmen realm'iyle aynı)
       return res.status(401).json({ error: 'E-posta veya şifre hatalı.' })
     }
 

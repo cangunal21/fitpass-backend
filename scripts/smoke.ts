@@ -19,6 +19,7 @@ const PORT = 3199
 const BASE = `http://localhost:${PORT}`
 const JWT_SECRET = process.env.JWT_SECRET || 'fitpass-secret-key-change-in-production'
 const ADMIN_SECRET = process.env.ADMIN_SECRET || 'fitpass-admin-2024'
+const CRON_SECRET = process.env.CRON_SECRET || 'cron-secret-2024'
 
 // Çakışmayı önlemek için yüksek ID aralığı
 const V = 990001, C = 990001, S = 990001, U = 990001
@@ -138,6 +139,8 @@ async function cleanup() {
   await prisma.class.deleteMany({ where: { id: 990350 } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990350 } }).catch(() => {})
   await prisma.neighborhood.deleteMany({ where: { id: 990350 } }).catch(() => {})
+  // Auth regresyon test venue kalıntıları (990013 other-venue, 990014 suspend)
+  await prisma.venue.deleteMany({ where: { id: { in: [990013, 990014] } } }).catch(() => {})
   await prisma.coupon.deleteMany({ where: { code: { startsWith: 'NEG' } } }).catch(() => {})
   // Kayıt/giriş case testi kalıntısı (usrcase01)
   {
@@ -356,9 +359,40 @@ async function run() {
   // Check-in yanlış salon token'ı ile reddedilmeli (IDOR koruması)
   await check('Check-in: başka salon reddediliyor (403)', async () => {
     const b = await prisma.booking.findFirst({ where: { userId: U, sessionId: S }, select: { checkInCode: true } })
-    const otherVenueToken = jwt.sign({ venueId: V + 7777, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    // GERÇEK ama farklı bir salon (venueAuth artık salon-durumu doğruluyor → olmayan salon 401 verirdi).
+    // Aktif başka salonun token'ı venueAuth'u geçer, checkInBooking sahiplik kontrolünde 403 alır.
+    const OV = 990013
+    await prisma.venue.upsert({ where: { id: OV }, update: { isApproved: true, isActive: true, isSuspended: false }, create: { id: OV, name: 'OtherV', email: `ov${OV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    const otherVenueToken = jwt.sign({ venueId: OV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
     const r = await http('/api/bookings/checkin', { method: 'POST', token: otherVenueToken, body: { code: b?.checkInCode } })
     if (r.status !== 403) throw new Error(`başka salon check-in yapabildi: ${r.status}`)
+    await prisma.venue.deleteMany({ where: { id: OV } }).catch(() => {})
+  })
+
+  // AUTH: askıya alınan salon token'ı OKUMA uçlarında da reddedilir (venueAuthMiddleware per-request recheck + cache invalidate)
+  await check('Auth: askıya alınan salon token okuma uçlarında 403 (recheck)', async () => {
+    const SV = 990014
+    await prisma.venue.upsert({ where: { id: SV }, update: { isApproved: true, isActive: true, isSuspended: false }, create: { id: SV, name: 'SuspV', email: `sv${SV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    const svTok = jwt.sign({ venueId: SV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    if ((await http('/api/venue/stats', { token: svTok })).status !== 200) throw new Error('aktif salon /stats okuyamadı (kurulum)')
+    const susp = await http(`/api/admin/venues/${SV}/suspend`, { method: 'PUT', admin: true, body: { suspend: true } })
+    if (susp.status !== 200) throw new Error(`suspend başarısız: ${susp.status}`)
+    if ((await http('/api/venue/stats', { token: svTok })).status !== 403) throw new Error('askıya alınan salon token ile OKUMA yapabildi — venueAuth recheck çalışmıyor')
+    await prisma.venue.deleteMany({ where: { id: SV } }).catch(() => {})
+  })
+
+  // AUTH: cron reminders secret'siz/yanlış-secret 401 (gömülü default kaldırıldı; smoke sunucusuna CRON_SECRET verildi)
+  await check('Auth: cron reminders secret gerektirir (401)', async () => {
+    const noHdr = await fetch(BASE + '/api/cron/reminders').then(r => r.status).catch(() => 0)
+    if (noHdr !== 401) throw new Error(`cron secret'siz ${noHdr} (401 bekleniyor)`)
+    const wrong = await fetch(BASE + '/api/cron/reminders', { headers: { 'x-cron-secret': 'yanlis-secret' } }).then(r => r.status).catch(() => 0)
+    if (wrong !== 401) throw new Error(`cron yanlış secret ${wrong} (401 bekleniyor)`)
+  })
+
+  // AUTH: venue şifre sıfırlama MIN_PASSWORD (8) uygular — 7 karakter reddedilir (önceden 6'ya izin veriyordu)
+  await check('Auth: venue reset-password kısa şifreyi reddeder (min 8)', async () => {
+    const r = await http('/api/venue/reset-password', { method: 'POST', body: { token: 'dummy-token', password: '1234567' } })
+    if (r.status !== 400) throw new Error(`7-karakter venue şifresi ${r.status} (400 bekleniyor)`)
   })
 
   // Takvim check-in SONRASI aktiviteyi göstermeli + streak alanları dönmeli
@@ -1860,7 +1894,7 @@ async function main() {
   try {
     let serverLog = ''
     server = spawn('npx', ['ts-node', 'src/index.ts'], {
-      env: { ...process.env, PORT: String(PORT), DISABLE_RATE_LIMIT: 'true', ADMIN_SECRET },
+      env: { ...process.env, PORT: String(PORT), DISABLE_RATE_LIMIT: 'true', ADMIN_SECRET, CRON_SECRET },
       detached: true,
     })
     server.stdout?.on('data', d => { serverLog += d })

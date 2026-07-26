@@ -41,7 +41,7 @@ export const sendWelcomeEmail = async (to: string, fullName: string) => {
     to,
     subject: 'Şipşakspor\'a Hoş Geldin!',
     html: baseTemplate(`
-      <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0 0 8px;">Merhaba ${fullName}! 👋</h2>
+      <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0 0 8px;">Merhaba ${esc(fullName)}! 👋</h2>
       <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
         Şipşakspor ailesine hoş geldin! Artık İstanbul'un en iyi spor derslerine tek platformdan erişebilirsin.
       </p>
@@ -71,7 +71,7 @@ export const sendPasswordResetEmail = async (to: string, fullName: string, reset
     html: baseTemplate(`
       <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0 0 8px;">Şifre Sıfırlama</h2>
       <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
-        Merhaba ${fullName}, şifre sıfırlama talebinde bulundun. Aşağıdaki butona tıklayarak yeni şifreni belirleyebilirsin.
+        Merhaba ${esc(fullName)}, şifre sıfırlama talebinde bulundun. Aşağıdaki butona tıklayarak yeni şifreni belirleyebilirsin.
       </p>
       <div style="text-align: center; margin-bottom: 24px;">
         <a href="${resetUrl}" style="display: inline-block; padding: 14px 32px; background: ${BRAND_COLOR}; color: #fff; border-radius: 14px; text-decoration: none; font-size: 15px; font-weight: 700;">Şifremi Sıfırla →</a>
@@ -169,7 +169,7 @@ export const sendBookingConfirmationEmail = async (
         <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0;">Rezervasyon Onaylandı!</h2>
       </div>
       <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
-        Merhaba ${fullName}, rezervasyonun başarıyla oluşturuldu!
+        Merhaba ${esc(fullName)}, rezervasyonun başarıyla oluşturuldu!
       </p>
       <div style="background: #FAFAFA; border-radius: 16px; padding: 20px; margin-bottom: 24px; border: 1px solid #F0F0F0;">
         <p style="font-size: 17px; font-weight: 700; color: #111; margin: 0 0 16px;">${classTitle}</p>
@@ -217,7 +217,7 @@ export const sendCancellationEmail = async (
         <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0;">Rezervasyon İptal Edildi</h2>
       </div>
       <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
-        Merhaba ${fullName}, aşağıdaki rezervasyonun iptal edildi.
+        Merhaba ${esc(fullName)}, aşağıdaki rezervasyonun iptal edildi.
       </p>
       <div style="background: #FAFAFA; border-radius: 16px; padding: 20px; margin-bottom: 24px; border: 1px solid #F0F0F0;">
         <p style="font-size: 17px; font-weight: 700; color: #111; margin: 0 0 16px;">${classTitle}</p>
@@ -266,7 +266,7 @@ export const sendVenueCancellationEmail = async (
         <div style="display: flex; gap: 24px; flex-wrap: wrap;">
           <div>
             <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Müşteri</p>
-            <p style="font-size: 14px; font-weight: 600; color: #111; margin: 0;">${customerName}</p>
+            <p style="font-size: 14px; font-weight: 600; color: #111; margin: 0;">${esc(customerName)}</p>
           </div>
           <div>
             <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Tarih</p>
@@ -320,7 +320,7 @@ export const sendVenueBookingNotificationEmail = async (
         <div style="display: flex; gap: 24px; flex-wrap: wrap;">
           <div>
             <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Müşteri</p>
-            <p style="font-size: 14px; font-weight: 600; color: #111; margin: 0;">${customerName}</p>
+            <p style="font-size: 14px; font-weight: 600; color: #111; margin: 0;">${esc(customerName)}</p>
           </div>
           <div>
             <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Tarih</p>
@@ -395,7 +395,7 @@ export const sendReminderEmail = async (to: string, fullName: string, classTitle
     subject: `⏰ Dersiniz 2 saat sonra başlıyor — ${classTitle}`,
     html: baseTemplate(`
       <h2 style="font-size:22px;font-weight:800;color:#1a1a1a;margin:0 0 8px;">Dersiniz yaklaşıyor! ⏰</h2>
-      <p style="color:#555;font-size:15px;margin:0 0 24px;">Merhaba <strong>${fullName}</strong>, bugünkü dersinizi hatırlatmak istedik.</p>
+      <p style="color:#555;font-size:15px;margin:0 0 24px;">Merhaba <strong>${esc(fullName)}</strong>, bugünkü dersinizi hatırlatmak istedik.</p>
       <div style="background:#F5F3FF;border-radius:12px;padding:20px 24px;margin-bottom:24px;">
         <p style="margin:0 0 8px;font-size:16px;font-weight:700;color:#4F46E5;">${classTitle}</p>
         <p style="margin:0 0 4px;color:#555;font-size:14px;">📍 ${venueName}</p>
@@ -413,7 +413,7 @@ export const sendWaitlistNotificationEmail = async (to: string, fullName: string
     subject: `🎉 Yer açıldı! ${classTitle} dersine katılabilirsiniz`,
     html: baseTemplate(`
       <h2 style="font-size:22px;font-weight:800;color:#1a1a1a;margin:0 0 8px;">Yer açıldı! 🎉</h2>
-      <p style="color:#555;font-size:15px;margin:0 0 24px;">Merhaba <strong>${fullName}</strong>, bekleme listesinde olduğunuz ders için yer açıldı!</p>
+      <p style="color:#555;font-size:15px;margin:0 0 24px;">Merhaba <strong>${esc(fullName)}</strong>, bekleme listesinde olduğunuz ders için yer açıldı!</p>
       <div style="background:#F0FDF4;border-radius:12px;padding:20px 24px;margin-bottom:24px;">
         <p style="margin:0 0 8px;font-size:16px;font-weight:700;color:#16a34a;">${classTitle}</p>
         <p style="margin:0;color:#555;font-size:14px;">🗓 ${date} · ⏰ ${time}</p>
@@ -514,7 +514,7 @@ export const sendCashbackEmail = async (
         <h2 style="font-size:22px;font-weight:800;color:#111;margin:0;">${amount} Puan Kazandın!</h2>
       </div>
       <p style="font-size:15px;color:#555;line-height:1.7;margin:0 0 20px;">
-        Merhaba ${fullName}, <strong>${classTitle}</strong> rezervasyonundan <strong>${amount} puan</strong> kazandın. Puanlarını biriktirip ödüllerde kullanabilirsin.
+        Merhaba ${esc(fullName)}, <strong>${classTitle}</strong> rezervasyonundan <strong>${amount} puan</strong> kazandın. Puanlarını biriktirip ödüllerde kullanabilirsin.
       </p>
       <div style="background:#F0FDF4;border-radius:16px;padding:20px;margin-bottom:24px;border:1px solid #BBF7D0;text-align:center;">
         <p style="font-size:13px;color:#15803D;margin:0 0 4px;">Güncel puanın</p>
@@ -548,7 +548,7 @@ export const sendTransferEmail = async (
         <h2 style="font-size:22px;font-weight:800;color:#111;margin:0;">Rezervasyonun Taşındı</h2>
       </div>
       <p style="font-size:15px;color:#555;line-height:1.7;margin:0 0 20px;">
-        Merhaba ${fullName}, rezervasyonun başarıyla yeni derse taşındı.
+        Merhaba ${esc(fullName)}, rezervasyonun başarıyla yeni derse taşındı.
       </p>
       <div style="background:#FAFAFA;border-radius:16px;padding:20px;margin-bottom:20px;border:1px solid #F0F0F0;">
         <p style="font-size:17px;font-weight:700;color:#111;margin:0 0 12px;">${newClassTitle}</p>
@@ -598,7 +598,7 @@ export const sendStreakNudgeEmail = async (
         <p style="font-size:32px;font-weight:800;color:#F97316;margin:0;">${streakCount} ${unit}</p>
       </div>
       <p style="font-size:15px;color:#555;line-height:1.7;margin:0 0 24px;text-align:center;">
-        Merhaba ${fullName}, ${body}
+        Merhaba ${esc(fullName)}, ${body}
       </p>
       <div style="text-align:center;">
         <a href="${SITE_URL}" style="display:inline-block;padding:14px 30px;background:${BRAND_COLOR};color:#fff;border-radius:12px;text-decoration:none;font-size:15px;font-weight:700;">Hemen Ders Bul →</a>
@@ -624,7 +624,7 @@ export const sendBadgeEmail = async (
         <h2 style="font-size:22px;font-weight:800;color:#111;margin:0;">${single ? 'Yeni Rozet Kazandın!' : `${badgeNames.length} Yeni Rozet!`}</h2>
       </div>
       <p style="font-size:15px;color:#555;line-height:1.7;margin:0 0 20px;text-align:center;">
-        Merhaba ${fullName}, tebrikler! Şu rozetleri kazandın:
+        Merhaba ${esc(fullName)}, tebrikler! Şu rozetleri kazandın:
       </p>
       <div style="background:#EEF2FF;border:1px solid #C7D2FE;border-radius:16px;padding:18px 20px;margin-bottom:24px;">
         ${badgeNames.map(n => `<p style="margin:6px 0;font-size:15px;font-weight:700;color:#4F46E5;">🏅 ${n}</p>`).join('')}
@@ -769,7 +769,7 @@ export const sendEmailVerificationEmail = async (to: string, fullName: string, t
     html: baseTemplate(`
       <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0 0 8px;">Email Doğrulama</h2>
       <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
-        Merhaba ${fullName}! Hesabınızı aktifleştirmek için aşağıdaki butona tıklayın.
+        Merhaba ${esc(fullName)}! Hesabınızı aktifleştirmek için aşağıdaki butona tıklayın.
       </p>
       <div style="text-align: center; margin-bottom: 24px;">
         <a href="${verifyUrl}" style="display: inline-block; padding: 14px 32px; background: ${BRAND_COLOR}; color: #fff; border-radius: 14px; text-decoration: none; font-size: 15px; font-weight: 700;">Emailimi Doğrula →</a>

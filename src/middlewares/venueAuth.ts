@@ -1,8 +1,9 @@
 import { Request, Response, NextFunction } from 'express'
 import { verifyToken } from '../utils/jwt'
 import prisma from '../utils/prisma'
+import { cached } from '../utils/cache'
 
-export const venueAuthMiddleware = (req: Request, res: Response, next: NextFunction) => {
+export const venueAuthMiddleware = async (req: Request, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Yetkilendirme token\'ı gerekli.' })
@@ -19,6 +20,15 @@ export const venueAuthMiddleware = (req: Request, res: Response, next: NextFunct
     if (!decoded || decoded.role !== 'venue' || !decoded.venueId) {
       return res.status(401).json({ error: 'Geçersiz token.' })
     }
+    // HESAP-DURUMU TAZELE (instructorAuth ile aynı): venue token'ı 7 gün geçerli → login anındaki
+    // duruma güvenme. Askıya alınan/pasif/silinen salonun token'ı OKUMA uçlarında (gelir/IBAN/TCKN/
+    // rezervasyon) süresi dolana kadar kalmasın. 60sn cache (ucuz). suspendVenue cache'i geçersiz kılar.
+    const state = await cached(`venueState:${decoded.venueId}`, 60000, async () => {
+      const v = await prisma.venue.findUnique({ where: { id: decoded.venueId }, select: { isActive: true, isSuspended: true } })
+      return v ? ((v.isSuspended || v.isActive === false) ? 'inactive' : 'active') : 'missing'
+    })
+    if (state === 'missing') return res.status(401).json({ error: 'Geçersiz token.' })
+    if (state === 'inactive') return res.status(403).json({ error: 'Salonunuz askıya alınmış veya pasif.' })
     ;(req as any).venueId = decoded.venueId
     next()
   } catch {
