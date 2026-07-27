@@ -8,14 +8,15 @@ import { sendPushNotification } from '../utils/push'
 // İstatistikler
 export const getStats = async (req: Request, res: Response) => {
   try {
-    const [userCount, venueCount, bookingCount, pendingVenues] = await Promise.all([
+    const [userCount, venueCount, instructorCount, bookingCount, pendingVenues] = await Promise.all([
       prisma.user.count(),
       prisma.venue.count(),
+      prisma.instructor.count(),
       prisma.booking.count(),
       prisma.venue.count({ where: { isApproved: false } }),
     ])
 
-    return res.json({ stats: { userCount, venueCount, bookingCount, pendingVenues } })
+    return res.json({ stats: { userCount, venueCount, instructorCount, bookingCount, pendingVenues } })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
