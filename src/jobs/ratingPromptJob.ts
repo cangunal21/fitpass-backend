@@ -17,6 +17,7 @@ export const sendRatingPrompts = async () => {
         status: 'confirmed',
         checkedIn: true,                              // yalnızca derse KATILANA sor (no-show'u rahatsız etme)
         ratingPromptSent: false,
+        user: { banned: false },                      // banlı kullanıcıya "puanla" hatırlatması gitmesin
         reviews: { none: { targetType: 'venue' } },   // zaten puanladıysa hatırlatma gönderme
         session: { endsAt: { lte: twoHoursAgo, gte: floor } }, // drop-in (sessionId null) doğal dışlanır
       },

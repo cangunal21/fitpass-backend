@@ -1,5 +1,6 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
+import { parseIntSafe, parseDateSafe } from '../utils/validate'
 
 // Salon: kupon oluştur
 export const createCoupon = async (req: Request, res: Response) => {
@@ -23,6 +24,21 @@ export const createCoupon = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Yüzde indirim 1-100 arasında olmalıdır.' })
     }
 
+    // maxUses / expiresAt güvenli ayrıştır — 'abc'→NaN Prisma 500'ünü ve negatif maxUses'in kuponu
+    // kalıcı brick'lemesini (0 >= -5 → "limit dolmuş" sonsuza dek) önle.
+    let maxUsesVal: number | null = null
+    if (maxUses != null && maxUses !== '') {
+      const m = parseIntSafe(maxUses)
+      if (m === undefined) return res.status(400).json({ error: 'Maksimum kullanım geçerli, pozitif bir tamsayı olmalıdır.' })
+      maxUsesVal = m
+    }
+    let expiresAtVal: Date | null = null
+    if (expiresAt) {
+      const d = parseDateSafe(expiresAt)
+      if (d === undefined) return res.status(400).json({ error: 'Son kullanım tarihi geçersiz.' })
+      expiresAtVal = d
+    }
+
     const existing = await prisma.coupon.findUnique({ where: { code: code.toUpperCase() } })
     if (existing) return res.status(400).json({ error: 'Bu kupon kodu zaten kullanılıyor.' })
 
@@ -32,9 +48,9 @@ export const createCoupon = async (req: Request, res: Response) => {
         code: code.toUpperCase(),
         discountType,
         discountValue: dv,
-        maxUses: maxUses ? parseInt(maxUses) : null,
+        maxUses: maxUsesVal,
         perUserLimit: perUserLimit != null && perUserLimit !== '' && parseInt(perUserLimit) > 0 ? parseInt(perUserLimit) : null,
-        expiresAt: expiresAt ? new Date(expiresAt) : null,
+        expiresAt: expiresAtVal,
         isActive: true,
       }
     })

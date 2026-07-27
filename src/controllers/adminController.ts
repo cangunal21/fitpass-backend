@@ -18,6 +18,7 @@ export const getStats = async (req: Request, res: Response) => {
 
     return res.json({ stats: { userCount, venueCount, instructorCount, bookingCount, pendingVenues } })
   } catch (err) {
+    if (handlePrismaErr(err, res)) return
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
@@ -36,16 +37,27 @@ export const getAllVenues = async (req: Request, res: Response) => {
     })
     return res.json({ venues })
   } catch (err) {
+    if (handlePrismaErr(err, res)) return
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
+}
+
+// Prisma "kayıt bulunamadı" (P2025) → 404, FK ihlali (P2003) → 400 eşle; değilse false (çağıran 500 döner).
+// Geçersiz/silinmiş ID veya kullanımdaki kayıt admin mutasyonlarında artık 500 yerine doğru durum kodu döner.
+function handlePrismaErr(err: any, res: Response): boolean {
+  if (err?.code === 'P2025') { res.status(404).json({ error: 'Kayıt bulunamadı.' }); return true }
+  if (err?.code === 'P2003') { res.status(400).json({ error: 'Kayıt başka verilerle ilişkili — işlem yapılamadı.' }); return true }
+  return false
 }
 
 // Salon onayla / reddet
 export const approveVenue = async (req: Request, res: Response) => {
   try {
     const venueId = parseInt(req.params.id as string)
+    if (!venueId || isNaN(venueId)) return res.status(400).json({ error: 'Geçersiz salon.' })
     const { approve } = req.body
+    if (typeof approve !== 'boolean') return res.status(400).json({ error: 'approve alanı boolean olmalı.' })
 
     const venue = await prisma.venue.update({
       where: { id: venueId },
@@ -66,6 +78,7 @@ export const approveVenue = async (req: Request, res: Response) => {
     const { passwordHash, ...safeVenue } = venue
     return res.json({ message: approve ? 'Salon onaylandı.' : 'Salon reddedildi.', venue: safeVenue })
   } catch (err) {
+    if (handlePrismaErr(err, res)) return
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
@@ -84,6 +97,7 @@ export const getAllUsers = async (req: Request, res: Response) => {
     })
     return res.json({ users })
   } catch (err) {
+    if (handlePrismaErr(err, res)) return
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
@@ -104,6 +118,7 @@ export const getAllBookings = async (req: Request, res: Response) => {
     })
     return res.json({ bookings })
   } catch (err) {
+    if (handlePrismaErr(err, res)) return
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
@@ -113,7 +128,11 @@ export const getAllBookings = async (req: Request, res: Response) => {
 export const suspendVenue = async (req: Request, res: Response) => {
   try {
     const venueId = parseInt(req.params.id as string)
+    if (!venueId || isNaN(venueId)) return res.status(400).json({ error: 'Geçersiz salon.' })
     const { suspend } = req.body
+    // suspend boolean değilse (ör. boş gövde → undefined), Prisma isSuspended'ı atlar ama isActive:!undefined=true
+    // olurdu → askıdaki salon isSuspended=true kalıp isActive=true olur, public listelerde geri belirir (moderasyon-bypass).
+    if (typeof suspend !== 'boolean') return res.status(400).json({ error: 'suspend alanı boolean olmalı.' })
 
     const venue = await prisma.venue.update({
       where: { id: venueId },
@@ -123,6 +142,7 @@ export const suspendVenue = async (req: Request, res: Response) => {
     const { passwordHash, ...safeVenue } = venue
     return res.json({ message: suspend ? 'Salon donduruldu.' : 'Salon aktif edildi.', venue: safeVenue })
   } catch (err) {
+    if (handlePrismaErr(err, res)) return
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
@@ -235,6 +255,7 @@ export const deleteVenue = async (req: Request, res: Response) => {
 
     return res.json({ message: 'Salon ve tüm bağlı kayıtları silindi.' })
   } catch (err) {
+    if (handlePrismaErr(err, res)) return
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
@@ -251,6 +272,7 @@ export const banUser = async (req: Request, res: Response) => {
     const { passwordHash, ...safeUser } = user
     return res.json({ message: ban ? 'Kullanıcı banlandı.' : 'Kullanıcı aktif edildi.', user: safeUser })
   } catch (err) {
+    if (handlePrismaErr(err, res)) return
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
@@ -270,6 +292,7 @@ export const getPendingVenueImages = async (req: Request, res: Response) => {
     })
     return res.json({ venues })
   } catch (err) {
+    if (handlePrismaErr(err, res)) return
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
@@ -309,6 +332,7 @@ export const reviewVenueImages = async (req: Request, res: Response) => {
       return res.json({ message: 'Salon resimleri reddedildi.' })
     }
   } catch (err) {
+    if (handlePrismaErr(err, res)) return
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
@@ -323,6 +347,7 @@ export const getAllCoupons = async (req: Request, res: Response) => {
     })
     return res.json({ coupons })
   } catch (err) {
+    if (handlePrismaErr(err, res)) return
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
@@ -340,6 +365,7 @@ export const adminDeleteCoupon = async (req: Request, res: Response) => {
     })
     return res.json({ message: 'Kupon silindi.' })
   } catch (err) {
+    if (handlePrismaErr(err, res)) return
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
@@ -394,6 +420,7 @@ export const deleteCategory = async (req: Request, res: Response) => {
     invalidate('categories')
     return res.json({ message: 'Kategori silindi.' })
   } catch (err) {
+    if (handlePrismaErr(err, res)) return
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
@@ -448,6 +475,7 @@ export const getAllInstructors = async (req: Request, res: Response) => {
     })
     return res.json({ instructors })
   } catch (err) {
+    if (handlePrismaErr(err, res)) return
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
@@ -462,6 +490,7 @@ export const getComplaints = async (req: Request, res: Response) => {
     })
     return res.json({ complaints })
   } catch (err) {
+    if (handlePrismaErr(err, res)) return
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
@@ -475,6 +504,7 @@ export const resolveComplaint = async (req: Request, res: Response) => {
     await prisma.complaint.update({ where: { id }, data: { status: 'resolved', resolvedAt: new Date() } })
     return res.json({ message: 'Mesaj çözüldü olarak işaretlendi.' })
   } catch (err) {
+    if (handlePrismaErr(err, res)) return
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
@@ -493,6 +523,7 @@ export const verifyInstructor = async (req: Request, res: Response) => {
     })
     return res.json({ message: verified ? 'Hoca doğrulandı.' : 'Doğrulama kaldırıldı.', instructor })
   } catch (err) {
+    if (handlePrismaErr(err, res)) return
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }

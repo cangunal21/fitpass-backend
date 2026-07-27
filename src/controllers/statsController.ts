@@ -7,18 +7,22 @@ export const getVenueStats = async (req: Request, res: Response) => {
     const venueId = (req as any).venueId
     const now = new Date()
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+    // Üst sınır: istatistikler yalnızca son-30-gün geçmişi + yaklaşan-7-gün + top-5 seansı kullanıyor.
+    // ~90 günlük pencere tüm çıktıları kapsar; salon çok ileriye seans açsa da sorgu sınırsız büyümesin.
+    const ninetyDaysAhead = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000)
 
-    // Tüm seansları al (son 30 gün + gelecek)
+    // Seansları al (son 30 gün + gelecek 90 gün, en fazla 2000 satır — bellek/CPU sınırı)
     const sessions = await prisma.class_Session.findMany({
       where: {
         class: { venueId },
-        startsAt: { gte: thirtyDaysAgo }
+        startsAt: { gte: thirtyDaysAgo, lte: ninetyDaysAhead }
       },
       include: {
         class: { select: { title: true, basePrice: true } },
         bookings: { where: { status: 'confirmed' }, select: { id: true, finalAmount: true, groupSize: true } }
       },
-      orderBy: { startsAt: 'asc' }
+      orderBy: { startsAt: 'asc' },
+      take: 2000
     })
 
     // Doluluk = KOLTUK sayısı: grup rezervasyonu tek kayıt ama groupSize kadar koltuk doldurur.

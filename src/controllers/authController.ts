@@ -176,7 +176,13 @@ export const refreshAccessToken = async (req: Request, res: Response) => {
 export const logout = async (req: Request, res: Response) => {
   try {
     const { refreshToken } = req.body
-    if (refreshToken) await revokeRefreshToken(String(refreshToken))
+    if (refreshToken) {
+      // Cihazın push token'ını sahibinden temizle — çıkış sonrası bu cihaza bildirim gitmesin
+      // (ve sonraki kullanıcı girip kendi token'ını kaydedene kadar boşta kalsın).
+      const rt = await prisma.refreshToken.findUnique({ where: { token: String(refreshToken) }, select: { userId: true } }).catch(() => null)
+      if (rt?.userId) await prisma.user.update({ where: { id: rt.userId }, data: { pushToken: null } }).catch(() => {})
+      await revokeRefreshToken(String(refreshToken))
+    }
     return res.json({ message: 'Çıkış yapıldı.' })
   } catch {
     return res.json({ message: 'Çıkış yapıldı.' })
@@ -619,6 +625,9 @@ export const registerPushToken = async (req: Request, res: Response) => {
     if (!pushToken || typeof pushToken !== 'string') {
       return res.status(400).json({ error: 'pushToken gerekli.' })
     }
+    // Aynı Expo token başka hesaba bağlıysa onu kopar — bir cihaz-token'ı TEK sahibe ait olmalı.
+    // Yoksa paylaşılan cihazda A çıkıp B girince A'nın özel push bildirimleri B'nin cihazına düşer (çapraz-hesap sızıntısı).
+    await prisma.user.updateMany({ where: { pushToken, NOT: { id: userId } }, data: { pushToken: null } })
     await prisma.user.update({ where: { id: userId }, data: { pushToken } })
     return res.json({ message: 'Push token kaydedildi.' })
   } catch (err) {

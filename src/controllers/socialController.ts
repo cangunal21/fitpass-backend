@@ -621,18 +621,27 @@ export const likeActivity = async (req: Request, res: Response) => {
     const ownerId = activity.ownerId
     if (ownerId && ownerId !== userId) {
       try {
-        const liker = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } })
-        await prisma.notification.create({
-          data: {
-            userId: ownerId,
-            type: 'like',
-            message: `${liker?.fullName || 'Bir kullanıcı'} aktiviteni beğendi.`,
-            relatedUserId: userId,
-          },
+        // Bildirim seli önlemi: aynı beğenen→sahip çifti için son 1 saatte 'like' bildirimi varsa tekrar
+        // oluşturma/push atma. like→unlike→like döngüsü existing-like guard'ını her turda geçtiğinden,
+        // dedup olmadan Notification tablosu şişer + sahibin cihazına push seli gider (feedLimiter yalnızca yavaşlatır).
+        const recentLike = await prisma.notification.findFirst({
+          where: { userId: ownerId, type: 'like', relatedUserId: userId, createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) } },
+          select: { id: true },
         })
-        const owner = await prisma.user.findUnique({ where: { id: ownerId }, select: { pushToken: true } })
-        if (owner?.pushToken) {
-          sendPushNotification(owner.pushToken, 'Yeni beğeni ❤️', `${liker?.fullName || 'Bir kullanıcı'} aktiviteni beğendi.`).catch(() => {})
+        if (!recentLike) {
+          const liker = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } })
+          await prisma.notification.create({
+            data: {
+              userId: ownerId,
+              type: 'like',
+              message: `${liker?.fullName || 'Bir kullanıcı'} aktiviteni beğendi.`,
+              relatedUserId: userId,
+            },
+          })
+          const owner = await prisma.user.findUnique({ where: { id: ownerId }, select: { pushToken: true } })
+          if (owner?.pushToken) {
+            sendPushNotification(owner.pushToken, 'Yeni beğeni ❤️', `${liker?.fullName || 'Bir kullanıcı'} aktiviteni beğendi.`).catch(() => {})
+          }
         }
       } catch (notifyErr) {
         console.error('like notify error:', notifyErr)

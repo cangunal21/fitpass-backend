@@ -12,6 +12,7 @@ export const sendRemindersJob = async () => {
       where: {
         status: 'confirmed',
         reminderSent: false,
+        user: { banned: false }, // banlı kullanıcıya hatırlatma push/mail gitmesin
         session: { startsAt: { gte: from, lte: to } }
       },
       include: {

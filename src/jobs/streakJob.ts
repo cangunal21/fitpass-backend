@@ -39,9 +39,9 @@ export const sendStreakNudges = async () => {
       try {
         const user = await prisma.user.findUnique({
           where: { id: userId },
-          select: { email: true, fullName: true, emailReminders: true, lastStreakNudgeAt: true, pushToken: true },
+          select: { email: true, fullName: true, emailReminders: true, lastStreakNudgeAt: true, pushToken: true, banned: true },
         })
-        if (!user?.email || user.emailReminders === false) continue
+        if (!user?.email || user.emailReminders === false || user.banned) continue // banlı kullanıcıya push/mail gitmesin
         if (user.lastStreakNudgeAt && user.lastStreakNudgeAt > guardWindow) continue
 
         // Onaylı dersler + drop-in'ler (son 60 gün, gelecekteki bu hafta dahil)

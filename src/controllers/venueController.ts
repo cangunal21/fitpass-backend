@@ -215,7 +215,8 @@ export const getVenueMe = async (req: Request, res: Response) => {
       where: { id: venueId },
       select: {
         id: true, name: true, email: true, phone: true, address: true,
-        description: true, isApproved: true, avgRating: true, totalReviews: true, createdAt: true,
+        description: true, website: true, neighborhoodId: true,
+        isApproved: true, avgRating: true, totalReviews: true, createdAt: true,
         coverImageUrl: true, images: true,
         pendingCoverImageUrl: true, pendingImages: true, imagesPendingReview: true,
         // İyzico alt-üye (sub-merchant) durumu
