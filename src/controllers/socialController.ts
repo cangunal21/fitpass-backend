@@ -114,8 +114,10 @@ export const getFollowStatus = async (req: Request, res: Response) => {
       return res.json({ isFollowing: false, followStatus: follow?.status || 'none', followers: null, following: null, isProfilePrivate: true })
     }
     // Sayaçlar SADECE kabul edilmiş (accepted) ilişkileri sayar — pending istekler dahil değil
-    const followers = await prisma.follow.count({ where: { followingId: target.id, status: 'accepted' } })
-    const following = await prisma.follow.count({ where: { followerId: target.id, status: 'accepted' } })
+    // banned:false — sayaçlar getFollowers/getFollowing LİSTELERİYLE tutarlı olmalı (listeler banlıyı eler);
+    // aksi halde banlı takipçi sayaçta kalıp "10 takipçi ama listede 9" tutarsızlığı oluşurdu.
+    const followers = await prisma.follow.count({ where: { followingId: target.id, status: 'accepted', follower: { banned: false } } })
+    const following = await prisma.follow.count({ where: { followerId: target.id, status: 'accepted', following: { banned: false } } })
     return res.json({ isFollowing: follow?.status === 'accepted', followStatus: follow?.status || 'none', followers, following })
   } catch (err) { return res.status(500).json({ error: 'Sunucu hatası.' }) }
 }
@@ -595,17 +597,19 @@ const resolveFeedActivity = async (feedKey: string): Promise<{ ownerId: number; 
   const prefix = feedKey.slice(0, dash)
   const id = parseInt(feedKey.slice(dash + 1), 10)
   if (!id || Number.isNaN(id)) return null
+  // banned kontrolü: banlı sahibin aktivitesi feed'den zaten eleniyor ama feedKey enumerasyonuyla
+  // like/comment edilip banlı sahibe bildirim/push gidebiliyordu → banlı sahibe null dön (etkileşim 404).
   if (prefix === 'b') {
-    const b = await prisma.booking.findUnique({ where: { id }, select: { user: { select: { id: true, activityPrivacy: true } } } })
-    return b?.user ? { ownerId: b.user.id, privacy: b.user.activityPrivacy } : null
+    const b = await prisma.booking.findUnique({ where: { id }, select: { user: { select: { id: true, activityPrivacy: true, banned: true } } } })
+    return b?.user && !b.user.banned ? { ownerId: b.user.id, privacy: b.user.activityPrivacy } : null
   }
   if (prefix === 'd') {
-    const d = await prisma.dropInParticipant.findUnique({ where: { id }, select: { user: { select: { id: true, activityPrivacy: true } } } })
-    return d?.user ? { ownerId: d.user.id, privacy: d.user.activityPrivacy } : null
+    const d = await prisma.dropInParticipant.findUnique({ where: { id }, select: { user: { select: { id: true, activityPrivacy: true, banned: true } } } })
+    return d?.user && !d.user.banned ? { ownerId: d.user.id, privacy: d.user.activityPrivacy } : null
   }
   if (prefix === 'bg') {
-    const bg = await prisma.userBadge.findUnique({ where: { id }, select: { user: { select: { id: true, activityPrivacy: true } } } })
-    return bg?.user ? { ownerId: bg.user.id, privacy: bg.user.activityPrivacy } : null
+    const bg = await prisma.userBadge.findUnique({ where: { id }, select: { user: { select: { id: true, activityPrivacy: true, banned: true } } } })
+    return bg?.user && !bg.user.banned ? { ownerId: bg.user.id, privacy: bg.user.activityPrivacy } : null
   }
   return null
 }

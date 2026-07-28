@@ -93,7 +93,7 @@ export const sendVenuePasswordResetEmail = async (to: string, venueName: string,
     html: baseTemplate(`
       <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0 0 8px;">Salon Şifresi Sıfırlama</h2>
       <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
-        Merhaba <strong>${venueName}</strong>, salon paneliniz için şifre sıfırlama talebinde bulunuldu. Aşağıdaki butona tıklayarak yeni şifrenizi belirleyebilirsiniz.
+        Merhaba <strong>${esc(venueName)}</strong>, salon paneliniz için şifre sıfırlama talebinde bulunuldu. Aşağıdaki butona tıklayarak yeni şifrenizi belirleyebilirsiniz.
       </p>
       <div style="text-align: center; margin-bottom: 24px;">
         <a href="${resetUrl}" style="display: inline-block; padding: 14px 32px; background: ${BRAND_COLOR}; color: #fff; border-radius: 14px; text-decoration: none; font-size: 15px; font-weight: 700;">Şifremi Sıfırla →</a>
@@ -172,7 +172,7 @@ export const sendBookingConfirmationEmail = async (
         Merhaba ${esc(fullName)}, rezervasyonun başarıyla oluşturuldu!
       </p>
       <div style="background: #FAFAFA; border-radius: 16px; padding: 20px; margin-bottom: 24px; border: 1px solid #F0F0F0;">
-        <p style="font-size: 17px; font-weight: 700; color: #111; margin: 0 0 16px;">${classTitle}</p>
+        <p style="font-size: 17px; font-weight: 700; color: #111; margin: 0 0 16px;">${esc(classTitle)}</p>
         <div style="display: flex; gap: 24px;">
           <div>
             <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Tarih</p>
@@ -220,7 +220,7 @@ export const sendCancellationEmail = async (
         Merhaba ${esc(fullName)}, aşağıdaki rezervasyonun iptal edildi.
       </p>
       <div style="background: #FAFAFA; border-radius: 16px; padding: 20px; margin-bottom: 24px; border: 1px solid #F0F0F0;">
-        <p style="font-size: 17px; font-weight: 700; color: #111; margin: 0 0 16px;">${classTitle}</p>
+        <p style="font-size: 17px; font-weight: 700; color: #111; margin: 0 0 16px;">${esc(classTitle)}</p>
         <div style="display: flex; gap: 24px;">
           <div>
             <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Tarih</p>
@@ -262,7 +262,7 @@ export const sendVenueCancellationEmail = async (
         <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0;">Bir rezervasyon iptal edildi</h2>
       </div>
       <div style="background: #FAFAFA; border-radius: 16px; padding: 20px; margin-bottom: 24px; border: 1px solid #F0F0F0;">
-        <p style="font-size: 17px; font-weight: 700; color: #111; margin: 0 0 16px;">${classTitle}</p>
+        <p style="font-size: 17px; font-weight: 700; color: #111; margin: 0 0 16px;">${esc(classTitle)}</p>
         <div style="display: flex; gap: 24px; flex-wrap: wrap;">
           <div>
             <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Müşteri</p>
@@ -316,7 +316,7 @@ export const sendVenueBookingNotificationEmail = async (
         <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0;">Yeni bir rezervasyon aldınız!</h2>
       </div>
       <div style="background: #FAFAFA; border-radius: 16px; padding: 20px; margin-bottom: 24px; border: 1px solid #F0F0F0;">
-        <p style="font-size: 17px; font-weight: 700; color: #111; margin: 0 0 16px;">${classTitle}</p>
+        <p style="font-size: 17px; font-weight: 700; color: #111; margin: 0 0 16px;">${esc(classTitle)}</p>
         <div style="display: flex; gap: 24px; flex-wrap: wrap;">
           <div>
             <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Müşteri</p>
@@ -361,23 +361,23 @@ export const sendVenueRegistrationAdminEmail = async (
         <p style="font-size: 14px; color: #DC2626; margin: 8px 0 0;">Yeni bir salon kayıt başvurusunda bulundu.</p>
       </div>
       <div style="background: #FEF2F2; border-radius: 16px; padding: 20px; margin-bottom: 24px; border: 1px solid #FECACA;">
-        <p style="font-size: 16px; font-weight: 700; color: #111; margin: 0 0 16px;">${venueName}</p>
+        <p style="font-size: 16px; font-weight: 700; color: #111; margin: 0 0 16px;">${esc(venueName)}</p>
         <div style="display: flex; flex-direction: column; gap: 10px;">
           <div>
             <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 2px;">E-posta</p>
-            <p style="font-size: 14px; color: #111; margin: 0;">${venueEmail}</p>
+            <p style="font-size: 14px; color: #111; margin: 0;">${esc(venueEmail)}</p>
           </div>
           <div>
             <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 2px;">Telefon</p>
-            <p style="font-size: 14px; color: #111; margin: 0;">${venuePhone}</p>
+            <p style="font-size: 14px; color: #111; margin: 0;">${esc(venuePhone)}</p>
           </div>
           <div>
             <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 2px;">Adres</p>
-            <p style="font-size: 14px; color: #111; margin: 0;">${venueAddress}</p>
+            <p style="font-size: 14px; color: #111; margin: 0;">${esc(venueAddress)}</p>
           </div>
           <div>
             <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 2px;">Spor Kategorileri</p>
-            <p style="font-size: 14px; color: #111; margin: 0;">${sportCategories.join(', ') || '—'}</p>
+            <p style="font-size: 14px; color: #111; margin: 0;">${esc(sportCategories.join(', ')) || '—'}</p>
           </div>
         </div>
       </div>
@@ -397,8 +397,8 @@ export const sendReminderEmail = async (to: string, fullName: string, classTitle
       <h2 style="font-size:22px;font-weight:800;color:#1a1a1a;margin:0 0 8px;">Dersiniz yaklaşıyor! ⏰</h2>
       <p style="color:#555;font-size:15px;margin:0 0 24px;">Merhaba <strong>${esc(fullName)}</strong>, bugünkü dersinizi hatırlatmak istedik.</p>
       <div style="background:#F5F3FF;border-radius:12px;padding:20px 24px;margin-bottom:24px;">
-        <p style="margin:0 0 8px;font-size:16px;font-weight:700;color:#4F46E5;">${classTitle}</p>
-        <p style="margin:0 0 4px;color:#555;font-size:14px;">📍 ${venueName}</p>
+        <p style="margin:0 0 8px;font-size:16px;font-weight:700;color:#4F46E5;">${esc(classTitle)}</p>
+        <p style="margin:0 0 4px;color:#555;font-size:14px;">📍 ${esc(venueName)}</p>
         <p style="margin:0;color:#555;font-size:14px;">🗓 ${date} · ⏰ ${time}</p>
       </div>
       <p style="color:#888;font-size:13px;">Unutma: derse 12 saatten az kaldığında iptal yapılamaz.</p>
@@ -415,7 +415,7 @@ export const sendWaitlistNotificationEmail = async (to: string, fullName: string
       <h2 style="font-size:22px;font-weight:800;color:#1a1a1a;margin:0 0 8px;">Yer açıldı! 🎉</h2>
       <p style="color:#555;font-size:15px;margin:0 0 24px;">Merhaba <strong>${esc(fullName)}</strong>, bekleme listesinde olduğunuz ders için yer açıldı!</p>
       <div style="background:#F0FDF4;border-radius:12px;padding:20px 24px;margin-bottom:24px;">
-        <p style="margin:0 0 8px;font-size:16px;font-weight:700;color:#16a34a;">${classTitle}</p>
+        <p style="margin:0 0 8px;font-size:16px;font-weight:700;color:#16a34a;">${esc(classTitle)}</p>
         <p style="margin:0;color:#555;font-size:14px;">🗓 ${date} · ⏰ ${time}</p>
       </div>
       <p style="color:#888;font-size:13px;">Hemen rezervasyon yap, yer dolmadan önce!</p>
@@ -551,7 +551,7 @@ export const sendTransferEmail = async (
         Merhaba ${esc(fullName)}, rezervasyonun başarıyla yeni derse taşındı.
       </p>
       <div style="background:#FAFAFA;border-radius:16px;padding:20px;margin-bottom:20px;border:1px solid #F0F0F0;">
-        <p style="font-size:17px;font-weight:700;color:#111;margin:0 0 12px;">${newClassTitle}</p>
+        <p style="font-size:17px;font-weight:700;color:#111;margin:0 0 12px;">${esc(newClassTitle)}</p>
         <p style="font-size:14px;color:#555;margin:0;">${date} · ${time}</p>
       </div>
       ${priceRefund > 0 ? `
@@ -627,7 +627,7 @@ export const sendBadgeEmail = async (
         Merhaba ${esc(fullName)}, tebrikler! Şu rozetleri kazandın:
       </p>
       <div style="background:#EEF2FF;border:1px solid #C7D2FE;border-radius:16px;padding:18px 20px;margin-bottom:24px;">
-        ${badgeNames.map(n => `<p style="margin:6px 0;font-size:15px;font-weight:700;color:#4F46E5;">🏅 ${n}</p>`).join('')}
+        ${badgeNames.map(n => `<p style="margin:6px 0;font-size:15px;font-weight:700;color:#4F46E5;">🏅 ${esc(n)}</p>`).join('')}
       </div>
       <div style="text-align:center;">
         <a href="${SITE_URL}/profil" style="display:inline-block;padding:14px 30px;background:${BRAND_COLOR};color:#fff;border-radius:12px;text-decoration:none;font-size:15px;font-weight:700;">Rozetlerimi Gör →</a>
@@ -652,7 +652,7 @@ export const sendVenueApprovedEmail = async (
         <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0;">Tebrikler!</h2>
       </div>
       <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
-        <strong>${venueName}</strong> salonunuz Şipşakspor'da yayında! Artık derslerinizi ve seanslarınızı ekleyebilirsiniz.
+        <strong>${esc(venueName)}</strong> salonunuz Şipşakspor'da yayında! Artık derslerinizi ve seanslarınızı ekleyebilirsiniz.
       </p>
       <div style="background: #F0FDF4; border-radius: 16px; padding: 20px; margin-bottom: 28px; border: 1px solid #BBF7D0;">
         <p style="font-size: 14px; color: #166534; font-weight: 700; margin: 0 0 10px;">Sonraki adımlar:</p>
@@ -692,11 +692,11 @@ export const sendGroupTagNotificationEmail = async (
         <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0;">Birlikte spora davetlisin!</h2>
       </div>
       <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
-        Merhaba ${taggedName}, <strong>${bookerName}</strong> seni bir grup rezervasyonuna ekledi.
+        Merhaba ${esc(taggedName)}, <strong>${esc(bookerName)}</strong> seni bir grup rezervasyonuna ekledi.
       </p>
       <div style="background: #FAFAFA; border-radius: 16px; padding: 20px; margin-bottom: 24px; border: 1px solid #F0F0F0;">
-        <p style="font-size: 17px; font-weight: 700; color: #111; margin: 0 0 8px;">${classTitle}</p>
-        <p style="font-size: 13px; color: #888; margin: 0 0 16px;">${venueName}</p>
+        <p style="font-size: 17px; font-weight: 700; color: #111; margin: 0 0 8px;">${esc(classTitle)}</p>
+        <p style="font-size: 13px; color: #888; margin: 0 0 16px;">${esc(venueName)}</p>
         <div style="display: flex; gap: 24px;">
           <div>
             <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Tarih</p>
@@ -736,11 +736,11 @@ export const sendGroupInviteEmail = async (
         <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0;">Spor yapmaya davetlisin!</h2>
       </div>
       <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
-        <strong>${bookerName}</strong> seni <strong>${classTitle}</strong> dersine davet etti.
+        <strong>${esc(bookerName)}</strong> seni <strong>${esc(classTitle)}</strong> dersine davet etti.
       </p>
       <div style="background: #FAFAFA; border-radius: 16px; padding: 20px; margin-bottom: 24px; border: 1px solid #F0F0F0;">
-        <p style="font-size: 17px; font-weight: 700; color: #111; margin: 0 0 8px;">${classTitle}</p>
-        <p style="font-size: 13px; color: #888; margin: 0 0 16px;">${venueName}</p>
+        <p style="font-size: 17px; font-weight: 700; color: #111; margin: 0 0 8px;">${esc(classTitle)}</p>
+        <p style="font-size: 13px; color: #888; margin: 0 0 16px;">${esc(venueName)}</p>
         <div style="display: flex; gap: 24px;">
           <div>
             <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Tarih</p>

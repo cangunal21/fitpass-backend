@@ -98,12 +98,16 @@ export const notifyFirstWaitlistUser = async (sessionId: number) => {
     // hak edene hiç bildirim gitmemesine yol açıyordu. En eski 'waiting' satırı FOR UPDATE SKIP LOCKED
     // ile atomik "sahiplenilir" → ikinci çağrı kilitli satırı atlayıp SIRADAKİ bekleyeni alır.
     const first = await prisma.$transaction(async (tx) => {
+      // banned=false: banlı bekleyen sırayı BAŞTAN kapıp tek "yer açıldı" bildirimini tüketir ama
+      // authMiddleware 403 verdiğinden hiç rezerve edemez → sıradaki gerçek bekleyen hiç haber almaz.
+      // Yalnız Waitlist satırını kilitle (FOR UPDATE OF w) — join'lenen User satırını değil.
       const rows = await tx.$queryRaw<{ id: number }[]>`
-        SELECT id FROM "Waitlist"
-        WHERE "sessionId" = ${sessionId} AND status = 'waiting'
-        ORDER BY "createdAt" ASC
+        SELECT w.id FROM "Waitlist" w
+        JOIN "User" u ON u.id = w."userId"
+        WHERE w."sessionId" = ${sessionId} AND w.status = 'waiting' AND u.banned = false
+        ORDER BY w."createdAt" ASC
         LIMIT 1
-        FOR UPDATE SKIP LOCKED`
+        FOR UPDATE OF w SKIP LOCKED`
       if (!rows.length) return null
       return tx.waitlist.update({
         where: { id: rows[0].id },
