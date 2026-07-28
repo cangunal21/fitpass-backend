@@ -35,12 +35,16 @@ export async function purgeUserReviews(tx: any, userId: number): Promise<number>
 
   await tx.review.deleteMany({ where: { reviewerUserId: userId } })
 
+  // FOR UPDATE satır kilidi: createReview + recomputeVenueRating aynı kilidi alır. Kilitsiz olsaydı
+  // eşzamanlı bir puanlama (henüz commit'lenmemiş) sayımdan düşer → avgRating/totalReviews lost-update ile sapardı.
   for (const vId of venueIds) {
+    await tx.$executeRaw`SELECT id FROM "Venue" WHERE id = ${vId} FOR UPDATE`
     const rest = await tx.review.findMany({ where: { venueId: vId }, select: { rating: true } })
     const avg = rest.length ? rest.reduce((s: number, r: any) => s + r.rating, 0) / rest.length : 0
     await tx.venue.update({ where: { id: vId }, data: { avgRating: Math.round(avg * 10) / 10, totalReviews: rest.length } })
   }
   for (const iId of instructorIds) {
+    await tx.$executeRaw`SELECT id FROM "Instructor" WHERE id = ${iId} FOR UPDATE`
     const rest = await tx.review.findMany({ where: { instructorId: iId }, select: { rating: true } })
     const avg = rest.length ? rest.reduce((s: number, r: any) => s + r.rating, 0) / rest.length : 0
     await tx.instructor.update({ where: { id: iId }, data: { avgRating: Math.round(avg * 10) / 10, totalReviews: rest.length } })

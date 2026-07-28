@@ -1085,7 +1085,8 @@ async function run() {
     const code2 = `OTH${Date.now() % 100000}`
     await prisma.booking.create({ data: { userId: IU, sessionId: otherSess.id, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `OTHB-${Date.now()}`, checkInCode: code2, checkedIn: false } })
     const ciOther = await http('/api/instructor/checkin', { method: 'POST', token: iTok, body: { code: code2 } })
-    if (ciOther.status !== 403) throw new Error(`başka hocanın öğrencisini check-in yapabildi: ${ciOther.status}`)
+    // Sahip-olunmayan kod, BULUNAMAYAN kodla AYNI 404 döner (existence-oracle kapatıldı — denetim turu 7 #8)
+    if (ciOther.status !== 404) throw new Error(`başka hocanın öğrencisini check-in yapabildi: ${ciOther.status}`)
 
     // 7) ONAY KAPISI — salon onaysızsa eğitmen ders ekleyemez (403)
     await prisma.venue.update({ where: { id: IV }, data: { isApproved: false } })

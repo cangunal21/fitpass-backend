@@ -518,6 +518,32 @@ export const cancelBooking = async (req: Request, res: Response) => {
         })
       }
 
+      // FARMING ENGELİ (iptal-tarafı): completeReferral ödülü davet edilenin İLK ÜCRETLİ dersinde iki tarafa
+      // +100 verir. Bu ders iptal edilip kullanıcının başka (iptal edilmemiş) ücretli booking'i KALMADIYSA ödül
+      // artık GMV'ye bağlı değil → iki taraftan da +100 geri alınır ve referral 'pending'e döner (ileride gerçek
+      // ücretli derste yeniden hak edilir). Hesap-silmedeki referral_reversed ile simetrik; iptal-tarafı eksikti.
+      if ((booking.finalAmount || 0) > 0) {
+        const otherPaid = await tx.booking.count({ where: { userId, finalAmount: { gt: 0 }, status: { not: 'cancelled' }, id: { not: bookingId } } })
+        if (otherPaid === 0) {
+          const ref = await tx.referral.findFirst({ where: { referredId: userId, status: 'completed', referredBonusGranted: true }, select: { id: true, referrerId: true, referredId: true } })
+          if (ref) {
+            const flip2 = await tx.referral.updateMany({ where: { id: ref.id, status: 'completed' }, data: { status: 'pending', completedAt: null, referredBonusGranted: false } })
+            if (flip2.count === 1) {
+              const REFERRAL_POINTS = 100 // referralController ile senkron
+              for (const uid of [ref.referrerId, ref.referredId]) {
+                await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${uid} FOR UPDATE`
+                const u = await tx.user.findUnique({ where: { id: uid }, select: { rewardPoints: true } })
+                const dec = Math.min(REFERRAL_POINTS, u?.rewardPoints || 0)
+                if (dec > 0) {
+                  await tx.user.update({ where: { id: uid }, data: { rewardPoints: { decrement: dec } } })
+                  await tx.rewardPoint.create({ data: { userId: uid, points: -dec, source: 'referral_reversed_cancel' } })
+                }
+              }
+            }
+          }
+        }
+      }
+
       return await tx.booking.findUnique({ where: { id: bookingId } })
     })
 

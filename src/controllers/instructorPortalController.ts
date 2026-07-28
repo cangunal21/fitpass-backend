@@ -120,14 +120,21 @@ export const createInstructorSession = async (req: Request, res: Response) => {
     const classId = parseIntSafe(req.params.classId)
     const { date, time, capacity } = req.body
 
-    if (!classId || !date || !time || !capacity) {
-      return res.status(400).json({ error: 'Tarih, saat ve kapasite zorunludur.' })
+    // Kapasite POZİTİF tamsayı olmalı: truthy guard'ı -5 (dead seans) ve "abc"→parseInt NaN→Prisma 500'ü geçirirdi
+    const cap = parseInt(capacity)
+    if (!classId || !date || !time || !(cap > 0)) {
+      return res.status(400).json({ error: 'Tarih, saat ve pozitif kapasite zorunludur.' })
     }
 
-    const cls = await prisma.class.findUnique({ where: { id: classId }, select: { instructorId: true, durationMinutes: true, duration: true } })
+    const cls = await prisma.class.findUnique({ where: { id: classId }, select: { instructorId: true, durationMinutes: true, duration: true, venue: { select: { isApproved: true, isActive: true, isSuspended: true } } } })
     // instructorId nullable → kesin eşitlik; sadece KENDİ dersine seans ekleyebilir
     if (!cls || cls.instructorId !== instructorId) {
       return res.status(403).json({ error: 'Bu derse seans ekleme yetkiniz yok.' })
+    }
+    // Salon onaysız/askıdaysa seans ekleme (createInstructorClass ile aynı kapı) — askıdaki salonda
+    // eğitmenin yeni bookable seans üretip moderasyonu veri katmanında atlamasını engelle.
+    if (!cls.venue?.isApproved || cls.venue?.isActive === false || cls.venue?.isSuspended) {
+      return res.status(403).json({ error: 'Salonunuz onaylı/aktif değil. Seans ekleyemezsiniz.' })
     }
 
     const startsAt = new Date(`${date}T${time}:00+03:00`) // TR (UTC+3) duvar-saati — sunucu TZ'inden bağımsız doğru an
@@ -137,7 +144,7 @@ export const createInstructorSession = async (req: Request, res: Response) => {
     const endsAt = new Date(startsAt.getTime() + (cls.durationMinutes || cls.duration || 60) * 60000)
 
     const session = await prisma.class_Session.create({
-      data: { classId, startsAt, endsAt, availableSpots: parseInt(capacity) },
+      data: { classId, startsAt, endsAt, availableSpots: cap },
     })
 
     return res.status(201).json({ message: 'Seans oluşturuldu!', session })
@@ -189,9 +196,10 @@ export const checkInInstructorBooking = async (req: Request, res: Response) => {
     })
     if (!booking) return res.status(404).json({ error: 'Geçersiz kod. Rezervasyon bulunamadı.' })
 
-    // SAHİPLİK: yalnız KENDİ dersinin öğrencisini check-in yapabilir (instructorId nullable → kesin eşitlik)
+    // SAHİPLİK: yalnız KENDİ dersinin öğrencisini check-in yapabilir (instructorId nullable → kesin eşitlik).
+    // Sahip-olunmayan kod, BULUNAMAYAN kodla AYNI 404 döner → "kod platformda var mı?" existence-oracle'ı kapatılır.
     if (booking.session?.class?.instructorId !== instructorId) {
-      return res.status(403).json({ error: 'Bu rezervasyon sizin dersinize ait değil.' })
+      return res.status(404).json({ error: 'Geçersiz kod. Rezervasyon bulunamadı.' })
     }
     if (booking.status !== 'confirmed') {
       return res.status(400).json({ error: 'Rezervasyon onaylı değil.' })

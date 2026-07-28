@@ -18,6 +18,10 @@ export const getSessions = async (req: Request, res: Response) => {
     // sıralanır (en yakın salon geç seansdaysa 1. sayfada çıkmaz). Bu yüzden nearby'de tüm eşleşen
     // seansları (üst sınırla) çekip GLOBAL mesafeye göre sıralayıp SONRA sayfalıyoruz.
     const isNearby = sort === 'nearby' && !!parseIntSafe(userNeighborhoodId)
+    // Query paramları dizi gelebilir (?search=a&search=b) → Prisma string beklerken 500 olurdu.
+    // String'e indir; aramayı 80 karaktere cap'le (searchUsers ile tutarlı, DoS/uzun-girdi önlemi).
+    const categoryStr = typeof category === 'string' ? category : undefined
+    const searchStr = typeof search === 'string' ? search.trim().slice(0, 80) : undefined
 
     const where: any = {
       status: 'open',
@@ -42,20 +46,20 @@ export const getSessions = async (req: Request, res: Response) => {
     // Pasife alınan ders listede çıkmasın (getForYou/getVenueById ile tutarlı)
     const classWhere: any = { isActive: true }
     // Kategori, Class.category metin alanıyla filtrelenir (sportCategoryId null olabilir)
-    if (category) classWhere.category = { equals: category as string, mode: 'insensitive' }
+    if (categoryStr) classWhere.category = { equals: categoryStr, mode: 'insensitive' }
     const vId = parseIntSafe(venueId)
     if (vId) classWhere.venueId = vId
     const nId = parseIntSafe(neighborhoodId)
     const cId = parseIntSafe(cityId)
     // Salon onaylı + aktif olmalı — askıya alınan/henüz onaylanmamış salonun dersleri listede çıkmasın
     classWhere.venue = { isApproved: true, isActive: true, ...(nId ? { neighborhoodId: nId } : {}), ...(cId ? { cityId: cId } : {}) }
-    if (search) {
+    if (searchStr) {
       classWhere.OR = [
-        { title: { contains: search as string, mode: 'insensitive' } },
-        { venue: { name: { contains: search as string, mode: 'insensitive' } } },
-        { venue: { neighborhood: { name: { contains: search as string, mode: 'insensitive' } } } },
-        { venue: { address: { contains: search as string, mode: 'insensitive' } } },
-        { sportCategory: { name: { contains: search as string, mode: 'insensitive' } } },
+        { title: { contains: searchStr, mode: 'insensitive' } },
+        { venue: { name: { contains: searchStr, mode: 'insensitive' } } },
+        { venue: { neighborhood: { name: { contains: searchStr, mode: 'insensitive' } } } },
+        { venue: { address: { contains: searchStr, mode: 'insensitive' } } },
+        { sportCategory: { name: { contains: searchStr, mode: 'insensitive' } } },
       ]
     }
     if (Object.keys(classWhere).length > 0) where.class = classWhere
@@ -391,11 +395,11 @@ export const getDropInSlotById = async (req: Request, res: Response) => {
     const slot = await prisma.dropInSlot.findUnique({
       where: { id },
       select: {
-        // privateCode ve bookedBy KASITEN yok — gizli slotun kodu public'e sızmamalı
+        // privateCode gate kontrolü için ÇEKİLİR ama yanıttan STRIP edilir (aşağıda) — public'e sızmaz
         id: true, venueId: true, sportCategoryId: true, title: true, startsAt: true, endsAt: true,
         format: true, totalPlayers: true, currentPlayers: true, totalPrice: true, pricePerPerson: true,
-        status: true, visibility: true, createdAt: true,
-        venue: { select: { id: true, name: true, address: true } },
+        status: true, visibility: true, privateCode: true, createdAt: true,
+        venue: { select: { id: true, name: true, address: true, isApproved: true, isActive: true } },
         sportCategory: { select: { name: true, colorHex: true, iconUrl: true } },
         participants: {
           // Roster public (kimlik-doğrulamasız uç). Gizli (activityPrivacy=private) ve banlı kullanıcılar
@@ -410,8 +414,17 @@ export const getDropInSlotById = async (req: Request, res: Response) => {
         },
       }
     })
-    if (!slot) return res.status(404).json({ error: 'Slot bulunamadı.' })
-    return res.json({ slot })
+    if (!slot || !slot.venue?.isApproved || slot.venue?.isActive === false) return res.status(404).json({ error: 'Slot bulunamadı.' })
+    // GİZLİ slot (visibility='private') yalnızca doğru privateCode ile görüntülenir (?code=...) — aksi halde
+    // id enumerasyonuyla kimin nerede/ne zaman oynadığı + roster (gerçek ad) sızardı. Kodsuz/yanlış kod → 404.
+    if (slot.visibility === 'private') {
+      const code = String((req.query.code as string) || '').trim().toUpperCase()
+      if (!code || code !== String(slot.privateCode || '').toUpperCase()) {
+        return res.status(404).json({ error: 'Slot bulunamadı.' })
+      }
+    }
+    const { privateCode, venue, ...restSlot } = slot as any
+    return res.json({ slot: { ...restSlot, venue: { id: venue.id, name: venue.name, address: venue.address } } })
   } catch (err) {
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
@@ -678,8 +691,10 @@ export const searchUsers = async (req: Request, res: Response) => {
 export const getInstructorById = async (req: Request, res: Response) => {
   try {
     const instructorId = parseInt(String(req.params.id), 10)
-    const instructor = await prisma.instructor.findUnique({
-      where: { id: instructorId },
+    // Askıdaki/onaysız salonun eğitmeni + canlı ders programı public görünmesin — diğer public
+    // uçlarla (getVenueById/getSessionById/getSessions) aynı kapı. Pasif eğitmen de 404.
+    const instructor = await prisma.instructor.findFirst({
+      where: { id: instructorId, isActive: true, venue: { isApproved: true, isActive: true } },
       include: {
         venue: {
           select: { id: true, name: true, neighborhood: { select: { name: true } } }

@@ -3,9 +3,11 @@
 // (ve `bookingId`) yanıtta kalırsa, liderlikteki id↔username eşlemesiyle "anonim"
 // yorum deşifre edilebilir. Bu yüzden anonimde bu alanlar da çıkarılır.
 export function sanitizeReview<T extends { isAnonymous?: boolean; reviewer?: any }>(r: T): any {
-  if (!r.isAnonymous) return r
-  const { reviewerUserId, bookingId, reviewer, ...rest } = r as any
-  return { ...rest, reviewer: null }
+  // İç scalar id'leri (reviewerUserId/bookingId/classId) HER yanıttan çıkar — public review uçları
+  // optionalAuth; anonim olmayan yorumda da bu iç kayıt-id'lerinin dışarı sızmasına gerek yok.
+  // Anonimde ek olarak join'lenmiş reviewer da null'lanır (kimlik tam gizli).
+  const { reviewerUserId, bookingId, classId, reviewer, ...rest } = r as any
+  return { ...rest, reviewer: r.isAnonymous ? null : reviewer }
 }
 
 // Salon/hoca'nın PRIVATE yanıtını yalnızca yorumu yazan kullanıcıya göster; herkeste (ve anonimde,

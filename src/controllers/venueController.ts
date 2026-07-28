@@ -428,8 +428,10 @@ export const createSession = async (req: Request, res: Response) => {
     const classId = parseInt(req.params.classId as string)
     const { date, time, capacity, price } = req.body
 
-    if (!date || !time || !capacity) {
-      return res.status(400).json({ error: 'Tarih, saat ve kapasite zorunludur.' })
+    // Kapasite POZİTİF tamsayı olmalı: truthy guard -5 (dead seans) ve "abc"→parseInt NaN→Prisma 500'ü geçirirdi
+    const cap = parseInt(capacity)
+    if (!date || !time || !(cap > 0)) {
+      return res.status(400).json({ error: 'Tarih, saat ve pozitif kapasite zorunludur.' })
     }
 
     const cls = await prisma.class.findUnique({ where: { id: classId } })
@@ -448,7 +450,7 @@ export const createSession = async (req: Request, res: Response) => {
         classId,
         startsAt,
         endsAt,
-        availableSpots: parseInt(capacity),
+        availableSpots: cap,
       }
     })
 

@@ -175,10 +175,21 @@ export const getUserLeaderboard = async (req: Request, res: Response) => {
       const now = new Date()
       // Sıralama HERKESE açık (Instagram mantığı): profili/aktivitesi gizli olsa da username+avatarla görünür,
       // tıklanıp takip isteği atılabilir. Yalnız BANLI hariç. Gizlilik yalnız profil-detayında/aktivitede uygulanır.
+      // Yalnızca bu sezon EN AZ 1 nitelikli (checkedIn, geçmiş, branş) dersi olan kullanıcıları yükle.
+      // Aksi halde TÜM kullanıcı tabanı (çoğu 0 dersli) belleğe çekilip JS'te filtrelenirdi → ölçekte ağır.
+      const activityFilter = {
+        status: 'confirmed' as const,
+        checkedIn: true,
+        session: {
+          startsAt: { gte: seasonStart, lt: now },
+          ...(branch ? { class: { category: branch as string } } : {}),
+        },
+      }
       const users = await prisma.user.findMany({
         where: {
           banned: false,
           ...(neighborhoodId ? { neighborhoodId } : {}),
+          bookings: { some: activityFilter },
         },
         select: {
           id: true,
