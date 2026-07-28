@@ -121,7 +121,13 @@ export const login = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'E-posta ve şifre gerekli.' })
     }
 
-    const user = await prisma.user.findFirst({ where: { email: { equals: String(email).trim(), mode: 'insensitive' } } })
+    // PERFORMANS: `mode:'insensitive'` Prisma'da ILIKE üretir ve User.email üzerindeki @unique btree
+    // index'i KULLANILAMAZ → her giriş/şifre-sıfırlama isteği tüm User tablosunu tarardı.
+    // Kayıt e-postayı küçük harfle sakladığından (cleanEmail) hızlı yol findUnique ile index'e düşer;
+    // normalizasyon öncesi kalmış olabilecek eski karışık-harfli kayıtlar için insensitive yedek korunur.
+    const cleanEmail = String(email).trim().toLowerCase()
+    const user = await prisma.user.findUnique({ where: { email: cleanEmail } })
+      ?? await prisma.user.findFirst({ where: { email: { equals: cleanEmail, mode: 'insensitive' } } })
 
     if (!user) {
       await bcrypt.compare(String(password), DUMMY_HASH).catch(() => {}) // timing'i eşitle (enumeration önleme — eğitmen realm'iyle aynı)
@@ -287,7 +293,13 @@ export const forgotPassword = async (req: Request, res: Response) => {
   try {
     const { email } = req.body
 
-    const user = await prisma.user.findFirst({ where: { email: { equals: String(email).trim(), mode: 'insensitive' } } })
+    // PERFORMANS: `mode:'insensitive'` Prisma'da ILIKE üretir ve User.email üzerindeki @unique btree
+    // index'i KULLANILAMAZ → her giriş/şifre-sıfırlama isteği tüm User tablosunu tarardı.
+    // Kayıt e-postayı küçük harfle sakladığından (cleanEmail) hızlı yol findUnique ile index'e düşer;
+    // normalizasyon öncesi kalmış olabilecek eski karışık-harfli kayıtlar için insensitive yedek korunur.
+    const cleanEmail = String(email).trim().toLowerCase()
+    const user = await prisma.user.findUnique({ where: { email: cleanEmail } })
+      ?? await prisma.user.findFirst({ where: { email: { equals: cleanEmail, mode: 'insensitive' } } })
 
     if (!user) {
       return res.json({ message: 'Email gönderildi' })

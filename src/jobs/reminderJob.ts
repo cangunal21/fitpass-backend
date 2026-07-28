@@ -1,6 +1,7 @@
 import prisma from '../utils/prisma'
 import { sendReminderEmail } from '../utils/email'
 import { sendPushNotification } from '../utils/push'
+import { trDate, trTime } from "../utils/trFormat"
 
 export const sendRemindersJob = async () => {
   try {
@@ -37,8 +38,8 @@ export const sendRemindersJob = async () => {
         if (claim.count === 0) continue
 
         const startsAt = new Date(booking.session!.startsAt)
-        const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
-        const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+        const date = trDate(startsAt)
+        const time = trTime(startsAt)
         const venueName = booking.session!.class.venue?.name || ''
         const classTitle = booking.session!.class.title
 

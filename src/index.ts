@@ -5,9 +5,9 @@ initSentry()
 
 import express from 'express'
 import cors from 'cors'
-import crypto from 'crypto'
 import helmet from 'helmet'
-import rateLimit from 'express-rate-limit'
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit'
+import { verifyToken } from './utils/jwt'
 import { sendRemindersJob } from './jobs/reminderJob'
 import { sendStreakNudges } from './jobs/streakJob'
 import { sendRatingPrompts } from './jobs/ratingPromptJob'
@@ -73,12 +73,24 @@ app.use(express.json())
 // Test sırasında limiter'ı kapat (gerçek yük testi yapılabilsin)
 const skipRateLimit = () => process.env.DISABLE_RATE_LIMIT === 'true'
 
-// Anahtar: girişli kullanıcı → token bazlı (aynı IP'yi paylaşan NAT/operatör kullanıcıları
-// birbirini limite sokmasın); anonim → IP bazlı.
+// Anahtar: girişli kullanıcı → DOĞRULANMIŞ kimlik bazlı (aynı IP'yi paylaşan NAT/operatör
+// kullanıcıları birbirini limite sokmasın); anonim VEYA geçersiz token → IP bazlı.
+// KRİTİK: token imzası doğrulanmadan anahtar üretilirse, saldırgan her istekte rastgele bir
+// "Bearer <uuid>" göndererek her seferinde YENİ kovaya düşer ve TÜM limitleri sınırsız bypass eder.
+// Doğrulanamayan token IP kovasına düşürülür → sahte token üretmek hiçbir avantaj sağlamaz.
 function rlKey(req: express.Request): string {
+  const ipKey = 'ip:' + ipKeyGenerator(req.ip || req.socket?.remoteAddress || 'unknown')
   const auth = req.headers.authorization
-  if (auth && auth.startsWith('Bearer ')) return 'u:' + crypto.createHash('sha1').update(auth.slice(7)).digest('hex')
-  return 'ip:' + (req.ip || req.socket?.remoteAddress || 'unknown')
+  if (!auth || !auth.startsWith('Bearer ')) return ipKey
+  try {
+    const p = verifyToken(auth.slice(7))
+    if (p.userId) return `u:${p.userId}`
+    if (p.venueId) return `v:${p.venueId}`
+    if (p.instructorId) return `i:${p.instructorId}`
+    return ipKey
+  } catch {
+    return ipKey // süresi dolmuş/sahte/bozuk token → anonim gibi davran
+  }
 }
 
 const generalLimiter = rateLimit({

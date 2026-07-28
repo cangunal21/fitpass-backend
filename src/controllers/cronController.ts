@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import crypto from 'crypto'
 import prisma from '../utils/prisma'
 import { sendReminderEmail } from '../utils/email'
+import { trDate, trTime } from "../utils/trFormat"
 
 // Kaynağa GÖMÜLÜ varsayılan YOK (adminAuth deseni) — commit'lenen 'cron-secret-2024' benzeri default,
 // NODE_ENV yanlış/eksik olan bir deploy'da bu side-effect'li ucu herkese açardı. Secret yoksa HER ortamda 503.
@@ -62,8 +63,8 @@ export const sendReminders = async (req: Request, res: Response) => {
         if (claim.count === 0) continue
 
         const startsAt = new Date(booking.session!.startsAt)
-        const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
-        const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+        const date = trDate(startsAt)
+        const time = trTime(startsAt)
 
         await sendReminderEmail(
           booking.user.email,

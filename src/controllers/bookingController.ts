@@ -7,6 +7,7 @@ import { completeReferral } from './referralController'
 import { resetYearlyPointsIfNeeded } from '../utils/tier'
 import { clampStr } from '../utils/validate'
 import { stripVenueSensitive } from '../utils/sanitize'
+import { trDate, trTime } from "../utils/trFormat"
 
 class BookingError extends Error {
   status: number
@@ -206,8 +207,8 @@ export const createBooking = async (req: Request, res: Response) => {
 
       if (venue?.email) {
         const startsAt = new Date(booking.session!.startsAt)
-        const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
-        const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+        const date = trDate(startsAt)
+        const time = trTime(startsAt)
 
         const occ = await prisma.booking.aggregate({
           where: { sessionId, status: { in: ['confirmed', 'pending'] } },
@@ -236,8 +237,8 @@ export const createBooking = async (req: Request, res: Response) => {
       const userForEmail = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, fullName: true } })
       if (userForEmail?.email) {
         const startsAt = new Date(booking.session!.startsAt)
-        const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
-        const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+        const date = trDate(startsAt)
+        const time = trTime(startsAt)
         await sendBookingConfirmationEmail(userForEmail.email, userForEmail.fullName, booking.session!.class.title, date, time, booking.finalAmount)
       }
     } catch (emailErr) {
@@ -264,8 +265,8 @@ export const createBooking = async (req: Request, res: Response) => {
       try {
         const booker = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } })
         const startsAt = new Date(booking.session!.startsAt)
-        const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
-        const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+        const date = trDate(startsAt)
+        const time = trTime(startsAt)
         const venueName = booking.session!.class.venueId
           ? (await prisma.venue.findUnique({ where: { id: booking.session!.class.venueId }, select: { name: true } }))?.name || ''
           : ''
@@ -564,8 +565,8 @@ export const cancelBooking = async (req: Request, res: Response) => {
 
       if (fullBooking) {
         const startsAt = new Date(fullBooking.session!.startsAt)
-        const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
-        const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+        const date = trDate(startsAt)
+        const time = trTime(startsAt)
         const classTitle = fullBooking.session!.class.title
         const venue = fullBooking.session!.class.venue
 
@@ -820,8 +821,8 @@ export const transferBooking = async (req: Request, res: Response) => {
       const sess = result.updated.session
       if (sess) {
         const startsAt = new Date(sess.startsAt)
-        const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
-        const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+        const date = trDate(startsAt)
+        const time = trTime(startsAt)
         if (u?.email) await sendTransferEmail(u.email, u.fullName, sess.class.title, date, time, result.priceRefund)
         if (u?.pushToken) {
           const refundTxt = result.priceRefund > 0 ? ` ₺${result.priceRefund} kredi iade edildi.` : ''

@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import { sendWaitlistNotificationEmail } from '../utils/email'
 import { sendPushNotification } from '../utils/push'
+import { trDate, trTime } from "../utils/trFormat"
 
 // Bekleme listesine katıl
 export const joinWaitlist = async (req: Request, res: Response) => {
@@ -122,8 +123,8 @@ export const notifyFirstWaitlistUser = async (sessionId: number) => {
     if (!first) return
 
     const startsAt = new Date(first.session.startsAt)
-    const date = startsAt.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', year: 'numeric' })
-    const time = startsAt.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+    const date = trDate(startsAt)
+    const time = trTime(startsAt)
     if (first.user?.email) {
       await sendWaitlistNotificationEmail(first.user.email, first.user.fullName, first.session.class.title, date, time)
     }
