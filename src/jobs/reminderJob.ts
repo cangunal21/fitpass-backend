@@ -6,8 +6,12 @@ import { trDate, trTime } from "../utils/trFormat"
 export const sendRemindersJob = async () => {
   try {
     const now = new Date()
-    const from = new Date(now.getTime() + 105 * 60 * 1000) // +1s45dk
-    const to = new Date(now.getTime() + 135 * 60 * 1000)   // +2s15dk
+    // Pencere (60dk) job periyodundan (30dk) GENİŞ olmalı: eşit olsaydı ardışık taramalar hiç örtüşmez,
+    // aralarındaki en ufak gecikmeye denk gelen rezervasyon hatırlatma ALMADAN pencereden çıkardı.
+    // 2x örtüşme sayesinde kaçan/geciken bir çalışma bir sonrakinde kendini onarır; çift gönderimi
+    // `reminderSent` atomik sahiplenmesi zaten engelliyor.
+    const from = new Date(now.getTime() + 90 * 60 * 1000)  // +1s30dk
+    const to = new Date(now.getTime() + 150 * 60 * 1000)   // +2s30dk
 
     const bookings = await prisma.booking.findMany({
       where: {
@@ -26,6 +30,7 @@ export const sendRemindersJob = async () => {
       }
     })
 
+    let sent = 0
     for (const booking of bookings) {
       try {
         // Atomik sahiplen: reminderSent'i false→true çevirebilen TEK çalışma gönderir.
@@ -36,6 +41,7 @@ export const sendRemindersJob = async () => {
           data: { reminderSent: true },
         })
         if (claim.count === 0) continue
+        sent++
 
         const startsAt = new Date(booking.session!.startsAt)
         const date = trDate(startsAt)
@@ -62,10 +68,12 @@ export const sendRemindersJob = async () => {
       }
     }
 
-    if (bookings.length > 0) {
-      console.log(`📧 ${bookings.length} hatırlatma maili gönderildi.`)
+    if (sent > 0) {
+      console.log(`📧 ${sent} hatırlatma gönderildi.`)
     }
+    return sent
   } catch (err) {
     console.error('Reminder job error:', err)
+    return 0
   }
 }

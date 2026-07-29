@@ -16,15 +16,27 @@ export const sendStreakNudges = async () => {
     const hour = istanbulHour(now)
     if (!process.env.STREAK_FORCE && (hour < 16 || hour > 21)) return // sadece akşam penceresi
 
-    // Son 12 günde aktivitesi olan kullanıcılar (sadece onların aktif serisi olabilir)
+    // Son 12 günde aktivitesi olan kullanıcılar (sadece onların aktif serisi olabilir).
+    // ELEME DB'DE YAPILIR: 20-saatlik nudge guard'ı + banlı + e-posta-opt-out filtreleri eskiden JS'te,
+    // TÜM satırlar (limitsiz) çekildikten SONRA uygulanıyordu → aday listesi aktif kullanıcı sayısıyla
+    // doğrusal büyüyüp her biri için ayrı findUnique atılıyordu (N+1). Filtreyi ilişkiye taşıdık.
     const since = new Date(now.getTime() - 12 * 86400000)
+    const guard = new Date(now.getTime() - 20 * 3600 * 1000)
+    const eligibleUser: any = {
+      banned: false,
+      NOT: { email: null },
+      emailReminders: { not: false },
+      OR: [{ lastStreakNudgeAt: null }, { lastStreakNudgeAt: { lt: guard } }],
+    }
     const recentBookings = await prisma.booking.findMany({
-      where: { status: 'confirmed', checkedIn: true, session: { startsAt: { gte: since } } },
+      where: { status: 'confirmed', checkedIn: true, session: { startsAt: { gte: since } }, user: eligibleUser },
       select: { userId: true },
+      take: 5000,
     })
     const recentDropins = await prisma.dropInParticipant.findMany({
-      where: { status: 'confirmed', checkedIn: true, slot: { startsAt: { gte: since } } },
+      where: { status: 'confirmed', checkedIn: true, slot: { startsAt: { gte: since } }, user: eligibleUser },
       select: { userId: true },
+      take: 5000,
     })
     const candidateIds = Array.from(new Set([
       ...recentBookings.map(b => b.userId),

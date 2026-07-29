@@ -6,11 +6,30 @@ export async function ensureIndexes() {
   try {
     // Eğitmen e-postası (login kimliği) tekil olmalı; NULL'lara izin (davet edilmemiş hocalar).
     // E-postalar uygulama düzeyinde küçük harfle saklanır → düz (email) kolonu üzerinde index yeter.
+    // UserBadge bloğundaki gibi ÖNCE mevcut çiftleri temizle: tek bir eski dupe, CREATE'i patlatıp
+    // catch'e düşürüyordu ve tekillik SESSİZCE hiç kurulmuyordu (kalıcı koruma boşluğu).
+    await prisma.$executeRawUnsafe(`
+      DELETE FROM "Instructor" a USING "Instructor" b
+      WHERE a.id > b.id AND a.email IS NOT NULL AND b.email IS NOT NULL AND lower(a.email) = lower(b.email)
+        AND a."passwordHash" IS NULL
+    `)
     await prisma.$executeRawUnsafe(
       `CREATE UNIQUE INDEX IF NOT EXISTS instructor_email_unique ON "Instructor"(email) WHERE email IS NOT NULL`
     )
   } catch (e) {
     console.error('ensureIndexes (instructor_email) hata (yok sayıldı):', e)
+  }
+
+  try {
+    // Kullanıcı adı uygulama genelinde büyük/küçük harf DUYARSIZ ele alınıyor ("Ali" ile "ali" aynı kişi
+    // sayılıyor) ama şemadaki @unique byte-exact; tek koruma atomik OLMAYAN bir ILIKE findFirst'tü →
+    // eşzamanlı iki kayıt "Ali"/"ali" olarak birlikte var olabilirdi. Kullanıcı adı kayıttan sonra
+    // değiştirilemediği için bu kalıcı bir kimlik çakışması olurdu.
+    await prisma.$executeRawUnsafe(
+      `CREATE UNIQUE INDEX IF NOT EXISTS user_username_lower_unique ON "User"(lower(username))`
+    )
+  } catch (e) {
+    console.error('ensureIndexes (user_username_lower) hata (yok sayıldı):', e)
   }
 
   try {

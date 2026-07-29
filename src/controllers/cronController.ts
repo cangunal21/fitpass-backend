@@ -1,8 +1,7 @@
 import { Request, Response } from 'express'
 import crypto from 'crypto'
 import prisma from '../utils/prisma'
-import { sendReminderEmail } from '../utils/email'
-import { trDate, trTime } from "../utils/trFormat"
+import { sendRemindersJob } from '../jobs/reminderJob'
 
 // Kaynağa GÖMÜLÜ varsayılan YOK (adminAuth deseni) — commit'lenen 'cron-secret-2024' benzeri default,
 // NODE_ENV yanlış/eksik olan bir deploy'da bu side-effect'li ucu herkese açardı. Secret yoksa HER ortamda 503.
@@ -25,62 +24,11 @@ export const sendReminders = async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Yetkisiz.' })
     }
 
-    const now = new Date()
-    // Sessions starting between 1h45m and 2h15m from now (30-minute window to avoid double-sending)
-    const from = new Date(now.getTime() + 105 * 60 * 1000) // +1h45m
-    const to = new Date(now.getTime() + 135 * 60 * 1000)   // +2h15m
-
-    const bookings = await prisma.booking.findMany({
-      where: {
-        status: 'confirmed',
-        reminderSent: false,
-        session: {
-          startsAt: { gte: from, lte: to }
-        }
-      },
-      include: {
-        user: { select: { email: true, fullName: true } },
-        session: {
-          include: {
-            class: {
-              include: { venue: { select: { name: true } } }
-            }
-          }
-        }
-      }
-    })
-
-    let sent = 0
-    for (const booking of bookings) {
-      try {
-        if (!booking.user?.email) continue
-        // Atomik sahiplen: reminderSent'i false→true çevirebilen TEK çalışma gönderir
-        // (dahili 30-dk job ile aynı anda çalışsa bile çift mail gitmez).
-        const claim = await prisma.booking.updateMany({
-          where: { id: booking.id, reminderSent: false },
-          data: { reminderSent: true },
-        })
-        if (claim.count === 0) continue
-
-        const startsAt = new Date(booking.session!.startsAt)
-        const date = trDate(startsAt)
-        const time = trTime(startsAt)
-
-        await sendReminderEmail(
-          booking.user.email,
-          booking.user.fullName,
-          booking.session!.class.title,
-          date,
-          time,
-          booking.session!.class.venue?.name || ''
-        )
-        sent++
-      } catch (e) {
-        console.error(`Reminder email error for booking ${booking.id}:`, e)
-      }
-    }
-
-    return res.json({ message: `${sent} hatırlatma maili gönderildi.`, sent })
+    // TEK KAYNAK: sorguyu burada TEKRARLAMA. Kopya sorgu, dahili job'daki iki filtreyi (emailReminders
+    // opt-out + banli kullanici) atliyordu -> bu uctan tetiklenince opt-out eden ve banli kullanicilara
+    // mail gidiyordu, ayrica push hic gonderilmiyordu. Artik ayni job cagriliyor.
+    const sent = await sendRemindersJob()
+    return res.json({ message: `${sent} hatirlatma gonderildi.`, sent })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })

@@ -88,7 +88,11 @@ export const venueRegister = async (req: Request, res: Response) => {
       return res.status(400).json({ error: `Şifre en az ${MIN_PASSWORD} karakter olmalı.` })
     }
 
-    const existing = await prisma.venue.findUnique({ where: { email } })
+    // E-postayi normalize et: Venue.email byte-exact @unique. Normalize edilmezse (a) 'Salon@X.com' ile
+    // kayit olan salon 'salon@x.com' ile GIREMEZ ve sifre-sifirlama da sessizce mail atmaz (kalici kilit),
+    // (b) ayni posta kutusu farkli harf duzeniyle IKI salon hesabi acabilir. User/Instructor zaten normalize ediyor.
+    const cleanEmail = String(email || '').trim().toLowerCase()
+    const existing = await prisma.venue.findUnique({ where: { email: cleanEmail } })
     if (existing) {
       return res.status(400).json({ error: 'Bu email adresi zaten kullanılıyor.' })
     }
@@ -98,7 +102,7 @@ export const venueRegister = async (req: Request, res: Response) => {
     const venue = await prisma.venue.create({
       data: {
         name: clampStr(name, 120) || '',
-        email,
+        email: cleanEmail,
         passwordHash,
         phone: clampStr(phone, 30) || '',
         address: clampStr(address, 250) || '',
@@ -173,7 +177,11 @@ export const venueLogin = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Email ve şifre gerekli.' })
     }
 
-    const venue = await prisma.venue.findUnique({ where: { email } })
+    // E-postayi normalize et: Venue.email byte-exact @unique. Normalize edilmezse (a) 'Salon@X.com' ile
+    // kayit olan salon 'salon@x.com' ile GIREMEZ ve sifre-sifirlama da sessizce mail atmaz (kalici kilit),
+    // (b) ayni posta kutusu farkli harf duzeniyle IKI salon hesabi acabilir. User/Instructor zaten normalize ediyor.
+    const cleanEmail = String(email || '').trim().toLowerCase()
+    const venue = await prisma.venue.findUnique({ where: { email: cleanEmail } })
     if (!venue || !venue.passwordHash) {
       await bcrypt.compare(String(password), VENUE_DUMMY_HASH).catch(() => {}) // timing'i eşitle (enumeration önleme)
       return res.status(401).json({ error: 'Email veya şifre hatalı.' })
@@ -767,7 +775,11 @@ export const updateVenueImages = async (req: Request, res: Response) => {
 export const venueForgotPassword = async (req: Request, res: Response) => {
   try {
     const { email } = req.body
-    const venue = await prisma.venue.findUnique({ where: { email } })
+    // E-postayi normalize et: Venue.email byte-exact @unique. Normalize edilmezse (a) 'Salon@X.com' ile
+    // kayit olan salon 'salon@x.com' ile GIREMEZ ve sifre-sifirlama da sessizce mail atmaz (kalici kilit),
+    // (b) ayni posta kutusu farkli harf duzeniyle IKI salon hesabi acabilir. User/Instructor zaten normalize ediyor.
+    const cleanEmail = String(email || '').trim().toLowerCase()
+    const venue = await prisma.venue.findUnique({ where: { email: cleanEmail } })
     // Güvenlik: email yoksa da aynı mesajı dön
     if (!venue || !venue.email) {
       return res.json({ message: 'Email gönderildi' })

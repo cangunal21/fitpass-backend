@@ -228,16 +228,19 @@ process.on('uncaughtException', (err) => {
   console.error('UncaughtException (yakalandı, sunucu ayakta):', err)
 })
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`✅ Fitpass sunucusu http://localhost:${PORT} adresinde çalışıyor`)
   // Seviye (Tier) yapılandırmasını kanonik değerlere hizala (Aday %1 → Olimpik %5)
   ensureTiers()
   // İl + ilçe verisini garanti et (İstanbul seed'li; 4 yeni il + tüm ilçeleri idempotent ekle)
   ensureGeo()
-  // DB-seviyesi tekillik index'leri (eğitmen e-postası vb.) — idempotent
-  ensureIndexes()
+  // DB-seviyesi tekillik index'leri — ÖNCE ve AWAIT'li olmalı: rozet çift-veriş koruması YALNIZCA bu
+  // ifade-index'i sayesinde çalışıyor. Beklenmeden başlatılırsa, index kurulmadan önce gelen istek/job
+  // rozet yazabilir ve skipDuplicates hiçbir şey engellemez (çift rozet + çift bildirim).
+  await ensureIndexes()
   // Kanonik rozetleri (sezon şampiyonu) garanti et, sonra biten sezon şampiyonlarını ödüllendir
-  ensureBadges().then(() => awardSeasonChampions())
+  await ensureBadges()
+  awardSeasonChampions()
   // Sezon dönümünü yakalamak için 12 saatte bir kontrol (sezon başına tek kez ödül verir)
   setInterval(() => { awardSeasonChampions() }, 12 * 60 * 60 * 1000)
   // Her 30 dakikada hatırlatma maili gönder

@@ -19,7 +19,12 @@ export const createReview = async (req: Request, res: Response) => {
     const instructorRating = hasInstructorRating ? parseInt(instructorRaw) : null
     const venueComment = req.body.venueComment ?? req.body.comment
     const instructorComment = req.body.instructorComment
-    const isAnonymous = req.body.isAnonymous ?? true
+    // Boolean'a ZORLA: ham gövde değeri (ör. "evet"/1/{}) non-null Boolean kolona gidince Prisma
+    // PrismaClientValidationError fırlatıyordu; handler'ın P2002/P2003 dalları bunu kapsamadığı için 500 dönerdi.
+    const rawAnon = req.body.isAnonymous
+    const isAnonymous = (rawAnon === undefined || rawAnon === null)
+      ? true
+      : (rawAnon === true || rawAnon === 'true' || rawAnon === 1 || rawAnon === '1')
 
     const validRating = (r: number) => Number.isInteger(r) && r >= 1 && r <= 5
     if (!bookingId || !validRating(venueRating)) {

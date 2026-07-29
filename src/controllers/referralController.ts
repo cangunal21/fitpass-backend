@@ -1,6 +1,7 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import crypto from 'crypto'
+import { resetYearlyPointsIfNeeded } from '../utils/tier'
 
 const REFERRAL_POINTS = 100
 
@@ -109,6 +110,12 @@ export const completeReferral = async (userId: number) => {
       where: { referredId: userId, status: 'pending' }
     })
     if (!referral) return
+
+    // Yıllık puan sıfırlaması TEMBEL (lazy) çalışıyor ve yalnız getMe + createBooking'de tetikleniyor.
+    // Davet EDENİN yıl damgası burada tazelenmezse, yeni yılda verilen +100 bir sonraki getMe'de
+    // eski yıl bakiyesiyle birlikte sıfırlanır — ama RewardPoint defter satırı kalır (bakiye/defter çelişkisi).
+    await resetYearlyPointsIfNeeded(referral.referrerId).catch(() => {})
+    await resetYearlyPointsIfNeeded(referral.referredId).catch(() => {})
 
     // CAS: pending→completed geçişini yapabilen TEK çağrı puanı verir. Kilitsiz findFirst+update
     // olsaydı, davet edilenin eşzamanlı iki ücretli booking'i aynı pending referral'ı görüp ÇİFT +100

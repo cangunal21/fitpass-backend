@@ -682,6 +682,11 @@ export const transferBooking = async (req: Request, res: Response) => {
     const { targetSessionId } = req.body
     if (!targetSessionId) return res.status(400).json({ error: 'Hedef seans gerekli.' })
 
+    // Transfer de puan YAZAN bir yol (pahalıya geçişte pointsDelta>0). createBooking'deki gibi yıl
+    // damgasını önce tazele; aksi halde yeni yılda eklenen puan bir sonraki getMe'de eski bakiyeyle
+    // birlikte sıfırlanır ama RewardPoint defter satırı kalır (bakiye/defter çelişkisi).
+    await resetYearlyPointsIfNeeded(userId)
+
     let result: any
     try {
       result = await prisma.$transaction(async (tx) => {

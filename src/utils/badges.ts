@@ -116,15 +116,24 @@ export async function syncUserBadges(userId: number): Promise<string[]> {
       }
     }
     if (ok) {
-      toCreate.push({ userId, badgeId: badge.id, sportCategoryId: null })
-      newlyAwarded.push(badge.name)
+      toCreate.push({ userId, badgeId: badge.id, sportCategoryId: null, _name: badge.name } as any)
     }
   }
 
   if (toCreate.length) {
-    // skipDuplicates: eşzamanlı syncUserBadges/championJob aynı rozeti iki kez YAZMASIN
-    // (ensureIndexes'teki userbadge_award_unique ifade-index'i ON CONFLICT DO NOTHING'i tetikler).
-    await prisma.userBadge.createMany({ data: toCreate, skipDuplicates: true })
+    // newlyAwarded GERÇEKTEN YAZILAN satırlardan türetilir. Önceden hesaplanan `toCreate` listesinden
+    // türetiliyordu: skipDuplicates zaten sahip olunan rozeti sessizce atlarken isim listede kalıyor,
+    // kullanıcı aynı rozet için TEKRAR TEKRAR "yeni rozet" bildirimi/e-postası alıyordu.
+    // Tekil create + P2002 yutma → yalnızca gerçekten eklenen satır sayılır (ifade-index'i ON CONFLICT'i tetikler).
+    for (const row of toCreate as any[]) {
+      const { _name, ...data } = row
+      try {
+        await prisma.userBadge.create({ data })
+        newlyAwarded.push(_name)
+      } catch (e: any) {
+        if (e?.code !== 'P2002') throw e // zaten sahip → sessizce atla, "yeni" sayma
+      }
+    }
   }
   return newlyAwarded
 }

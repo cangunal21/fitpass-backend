@@ -8,20 +8,9 @@ const getClient = () => {
   return client
 }
 
-// Basit rate limiting: IP başına dakikada max 5 mesaj
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
-
-const checkRateLimit = (ip: string): boolean => {
-  const now = Date.now()
-  const entry = rateLimitMap.get(ip)
-  if (!entry || now > entry.resetAt) {
-    rateLimitMap.set(ip, { count: 1, resetAt: now + 60_000 })
-    return true
-  }
-  if (entry.count >= 5) return false
-  entry.count++
-  return true
-}
+// Hız limiti index.ts'teki chatLimiter'da (doğrulanmış kimlik anahtarı + kendini temizleyen store).
+// Eski controller-içi Map SINIRSIZ büyüyordu (süresi dolan giriş hiç silinmiyordu) ve ham req.ip ile
+// anahtarlandığı için chatLimiter'ın kimlik-bazlı anahtarıyla da tutarsızdı → kaldırıldı.
 
 const SYSTEM_PROMPT = `Sen Şipşakspor platformunun yapay zeka asistanısın. Şipşakspor, İstanbul'daki spor salonlarını ve dersleri tek bir platformda toplayan bir rezervasyon uygulamasıdır.
 
@@ -141,9 +130,13 @@ const langRule = (lang: 'tr' | 'en'): string =>
 export const chat = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId as number | undefined
-    const ip = req.ip || req.socket.remoteAddress || 'unknown'
-    if (!checkRateLimit(ip)) {
-      return res.status(429).json({ error: 'Çok fazla mesaj gönderdiniz. Lütfen 1 dakika bekleyin.' })
+    // NOT: hız limiti index.ts'teki chatLimiter'da (doğrulanmış kimlik anahtarı + kendini temizleyen store).
+    // Buradaki eski controller-içi Map SINIRSIZ büyüyordu (süresi dolan giriş hiç silinmiyordu) ve ham
+    // req.ip ile anahtarlandığı için chatLimiter'ın kimlik-bazlı anahtarıyla da tutarsızdı.
+
+    // Anahtar yoksa 'dummy' ile devam edip Groq'a gitmek anlamsız 500 üretiyordu → net 503.
+    if (!process.env.GROQ_API_KEY) {
+      return res.status(503).json({ error: 'Asistan şu an kullanılamıyor.' })
     }
 
     const { messages, lang } = req.body
@@ -160,6 +153,13 @@ export const chat = async (req: Request, res: Response) => {
     // talimatını ekleyebilir → asistanın tüm kuralları (kimlik, konu kısıtı, sağlık uyarısı,
     // "adres uydurma") ezilir. Ayrıca filtreleme slice(-10)'dan ÖNCE yapılmalı; yoksa saldırgan
     // 10 sahte mesajla pencereyi doldurup gerçek içeriği bağlamdan dışarı itebilir.
+    // Uzun mesajı SESSİZCE kırpma (eskiden slice(0,500) yapıyordu): kullanıcı gönderdiğini sanıyor,
+    // asistan yarım metne cevap veriyordu. Açık sınır + net hata; istemciler de maxLength ile sınırlar.
+    const MAX_MSG_LEN = 2000
+    if ((messages as any[]).some(m => m?.content != null && String(m.content).length > MAX_MSG_LEN)) {
+      return res.status(400).json({ error: `Mesaj çok uzun (en fazla ${MAX_MSG_LEN} karakter).` })
+    }
+
     const ALLOWED_ROLES = new Set(['user', 'assistant'])
     const recent = (messages as any[])
       .filter(m => m && m.content != null && ALLOWED_ROLES.has(m.role))

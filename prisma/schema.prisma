@@ -11,13 +11,13 @@ datasource db {
 // ─────────────────────────────────────────────
 
 model City {
-  id            Int            @id @default(autoincrement())
+  id            Int                  @id @default(autoincrement())
   name          String
   neighborhoods Neighborhood[]
   venues        Venue[]
   users         User[]
   leaderboards  MonthlyLeaderboard[]
-  createdAt     DateTime       @default(now())
+  createdAt     DateTime             @default(now())
 }
 
 model Neighborhood {
@@ -56,15 +56,15 @@ model SportCategory {
 // ─────────────────────────────────────────────
 
 model Tier {
-  id              Int               @id @default(autoincrement())
-  name            String
-  minLessons      Int
-  pointRate       Int               @default(0)
-  iconUrl         String?
-  colorHex        String?
-  users           User[]
-  tierHistories   UserTierHistory[]
-  activityLogs    ActivityLog[]
+  id            Int               @id @default(autoincrement())
+  name          String
+  minLessons    Int
+  pointRate     Int               @default(0)
+  iconUrl       String?
+  colorHex      String?
+  users         User[]
+  tierHistories UserTierHistory[]
+  activityLogs  ActivityLog[]
 }
 
 model UserTierHistory {
@@ -106,10 +106,10 @@ model UserBadge {
   venue           Venue?         @relation(fields: [venueId], references: [id])
   venueId         Int?
   // Sezon şampiyonu rozetleri için (season_champion): kapsam + derece + sezon
-  rank            Int?           // 1=altın, 2=gümüş, 3=bronz
-  seasonKey       String?        // örn "yaz-2026" — sezon başına tek kez ödül (çift-vermez)
-  scopeType       String?        // 'city' | 'district'
-  scopeId         Int?           // scopeType'a göre cityId veya neighborhoodId
+  rank            Int? // 1=altın, 2=gümüş, 3=bronz
+  seasonKey       String? // örn "yaz-2026" — sezon başına tek kez ödül (çift-vermez)
+  scopeType       String? // 'city' | 'district'
+  scopeId         Int? // scopeType'a göre cityId veya neighborhoodId
   earnedAt        DateTime       @default(now())
 }
 
@@ -128,69 +128,71 @@ model EmailVerificationToken {
 }
 
 model User {
-  id                    Int                  @id @default(autoincrement())
-  username              String               @unique
-  email                 String               @unique
-  phone                 String?
-  passwordHash          String
-  fullName              String
-  isEmailVerified       Boolean              @default(false)
-  avatarUrl             String?
-  bio                   String?
-  neighborhood          Neighborhood?        @relation(fields: [neighborhoodId], references: [id])
-  neighborhoodId        Int?
-  city                  City?                @relation(fields: [cityId], references: [id])
-  cityId                Int?
-  latitude              Float?
-  longitude             Float?
-  profilePrivacy        String               @default("public")
-  activityPrivacy       String               @default("public")
-  emailReminders        Boolean              @default(true)
-  smsReminders          Boolean              @default(false)
-  pushToken             String?
-  tier                  Tier?                @relation(fields: [tierId], references: [id])
-  tierId                Int?
-  tierSportCounts       Json                 @default("{}")
-  yearlyTierResetDate   DateTime?
-  totalLessonsCompleted Int                  @default(0)
-  rewardPoints          Int                  @default(0)
-  rewardPointsYear      Int?                 // puanların ait olduğu yıl (yıllık reset için)
-  recordStreak          Int                  @default(0)  // kullanıcının EN UZUN (rekor) günlük serisi — profilde tek rozet, yeni rekorda güncellenir
-  lastStreakNudgeAt     DateTime?            // son streak teşvik e-postası (spam önleme)
-  preferredSports       Json                 @default("[]") // kayıtta seçilen spor tercihleri (isim dizisi)
-  preferredNeighborhoods Json                @default("[]") // kayıtta seçilen mahalle tercihleri (id dizisi)
-  referralCode          String?              @unique
-  creditBalance         Int                  @default(0)
-  referralCount         Int                  @default(0)
-  banned                Boolean              @default(false)
-  createdAt             DateTime             @default(now())
+  id                     Int           @id @default(autoincrement())
+  username               String        @unique
+  email                  String        @unique
+  phone                  String?
+  passwordHash           String
+  fullName               String
+  isEmailVerified        Boolean       @default(false)
+  avatarUrl              String?
+  bio                    String?
+  neighborhood           Neighborhood? @relation(fields: [neighborhoodId], references: [id])
+  neighborhoodId         Int?
+  city                   City?         @relation(fields: [cityId], references: [id])
+  cityId                 Int?
+  latitude               Float?
+  longitude              Float?
+  profilePrivacy         String        @default("public")
+  activityPrivacy        String        @default("public")
+  emailReminders         Boolean       @default(true)
+  smsReminders           Boolean       @default(false)
+  pushToken              String?
+  tier                   Tier?         @relation(fields: [tierId], references: [id])
+  tierId                 Int?
+  tierSportCounts        Json          @default("{}")
+  yearlyTierResetDate    DateTime?
+  totalLessonsCompleted  Int           @default(0)
+  rewardPoints           Int           @default(0)
+  rewardPointsYear       Int? // puanların ait olduğu yıl (yıllık reset için)
+  recordStreak           Int           @default(0) // kullanıcının EN UZUN (rekor) günlük serisi — profilde tek rozet, yeni rekorda güncellenir
+  lastStreakNudgeAt      DateTime? // son streak teşvik e-postası (spam önleme)
+  preferredSports        Json          @default("[]") // kayıtta seçilen spor tercihleri (isim dizisi)
+  preferredNeighborhoods Json          @default("[]") // kayıtta seçilen mahalle tercihleri (id dizisi)
+  referralCode           String?       @unique
+  creditBalance          Int           @default(0)
+  referralCount          Int           @default(0)
+  banned                 Boolean       @default(false)
+  createdAt              DateTime      @default(now())
 
-  venuesOwned           Venue[]
-  instructorProfile     Instructor?
-  bookings              Booking[]
-  reviews               Review[]
-  tierHistories         UserTierHistory[]
-  badges                UserBadge[]
-  activityLogs          ActivityLog[]
-  following             Follow[]             @relation("Follower")
-  followers             Follow[]             @relation("Following")
-  rewardPointLogs       RewardPoint[]
-  rewardRedemptions     RewardRedemption[]
-  leaderboards          MonthlyLeaderboard[]
-  dropInParticipants    DropInParticipant[]
-  passwordResetTokens      PasswordResetToken[]
-  emailVerificationTokens  EmailVerificationToken[]
-  waitlistEntries          Waitlist[]
-  favoriteVenues           FavoriteVenue[]
-  referralsSent         Referral[]           @relation("ReferralSender")
-  referralsReceived     Referral[]           @relation("ReferralReceiver")
-  chatMessages          ChatMessage[]
-  notifications         Notification[]       @relation("NotificationRecipient")
-  activityLikes         ActivityLike[]
-  activityComments      ActivityComment[]
-  reportsMade           Report[]             @relation("ReportsMade")
-  reportsAgainst        Report[]             @relation("ReportsAgainst")
-  refreshTokens         RefreshToken[]
+  venuesOwned             Venue[]
+  instructorProfile       Instructor?
+  bookings                Booking[]
+  reviews                 Review[]
+  tierHistories           UserTierHistory[]
+  badges                  UserBadge[]
+  activityLogs            ActivityLog[]
+  following               Follow[]                 @relation("Follower")
+  followers               Follow[]                 @relation("Following")
+  rewardPointLogs         RewardPoint[]
+  rewardRedemptions       RewardRedemption[]
+  leaderboards            MonthlyLeaderboard[]
+  dropInParticipants      DropInParticipant[]
+  passwordResetTokens     PasswordResetToken[]
+  emailVerificationTokens EmailVerificationToken[]
+  waitlistEntries         Waitlist[]
+  favoriteVenues          FavoriteVenue[]
+  referralsSent           Referral[]               @relation("ReferralSender")
+  referralsReceived       Referral[]               @relation("ReferralReceiver")
+  chatMessages            ChatMessage[]
+  notifications           Notification[]           @relation("NotificationRecipient")
+  activityLikes           ActivityLike[]
+  activityComments        ActivityComment[]
+  reportsMade             Report[]                 @relation("ReportsMade")
+  reportsAgainst          Report[]                 @relation("ReportsAgainst")
+  refreshTokens           RefreshToken[]
+  // registerPushToken ayni token'i baska hesaptan koparirken updateMany yapiyor -> indekssiz tam tablo taramasi
+  @@index([pushToken])
 }
 
 // ─────────────────────────────────────────────
@@ -232,62 +234,62 @@ model Complaint {
 // ─────────────────────────────────────────────
 
 model Venue {
-  id             Int                  @id @default(autoincrement())
-  name           String
-  description    String?
-  owner          User?                @relation(fields: [ownerUserId], references: [id])
-  ownerUserId    Int?
-  address        String
-  neighborhood   Neighborhood?        @relation(fields: [neighborhoodId], references: [id])
-  neighborhoodId Int?
-  city           City?                @relation(fields: [cityId], references: [id])
-  cityId         Int?
-  latitude       Float?
-  longitude      Float?
-  phone          String?
-  email          String?              @unique
-  passwordHash   String?
-  website        String?
-  coverImageUrl  String?
-  images         Json                 @default("[]")
-  pendingCoverImageUrl String?              // admin onayı bekleyen kapak
-  pendingImages        Json                 @default("[]") // admin onayı bekleyen galeri
-  imagesPendingReview  Boolean              @default(false) // onay bekleyen resim var mı
-  isActive       Boolean              @default(true)
-  isVerified     Boolean              @default(false)
-  isApproved     Boolean              @default(false)
-  isSuspended    Boolean              @default(false)
-  avgRating      Float                @default(0)
-  totalReviews   Int                  @default(0)
-  createdAt      DateTime             @default(now())
+  id                   Int           @id @default(autoincrement())
+  name                 String
+  description          String?
+  owner                User?         @relation(fields: [ownerUserId], references: [id])
+  ownerUserId          Int?
+  address              String
+  neighborhood         Neighborhood? @relation(fields: [neighborhoodId], references: [id])
+  neighborhoodId       Int?
+  city                 City?         @relation(fields: [cityId], references: [id])
+  cityId               Int?
+  latitude             Float?
+  longitude            Float?
+  phone                String?
+  email                String?       @unique
+  passwordHash         String?
+  website              String?
+  coverImageUrl        String?
+  images               Json          @default("[]")
+  pendingCoverImageUrl String? // admin onayı bekleyen kapak
+  pendingImages        Json          @default("[]") // admin onayı bekleyen galeri
+  imagesPendingReview  Boolean       @default(false) // onay bekleyen resim var mı
+  isActive             Boolean       @default(true)
+  isVerified           Boolean       @default(false)
+  isApproved           Boolean       @default(false)
+  isSuspended          Boolean       @default(false)
+  avgRating            Float         @default(0)
+  totalReviews         Int           @default(0)
+  createdAt            DateTime      @default(now())
 
   // İyzico Pazaryeri alt-üye (sub-merchant) alanları
-  subMerchantType        String?    // PERSONAL | PRIVATE_COMPANY | LIMITED_OR_JOINT_STOCK_COMPANY
-  legalCompanyTitle      String?    // ünvan (şirket)
+  subMerchantType        String? // PERSONAL | PRIVATE_COMPANY | LIMITED_OR_JOINT_STOCK_COMPANY
+  legalCompanyTitle      String? // ünvan (şirket)
   iban                   String?
   taxOffice              String?
   taxNumber              String?
-  identityNumber         String?    // TCKN
-  contactName            String?    // şahıs ad
-  contactSurname         String?    // şahıs soyad
-  payoutGsm              String?    // +90...
-  iyzicoSubMerchantKey   String?    // iyzico'dan dönen anahtar — ödeme anında şart
-  subMerchantStatus      String     @default("none")   // none|submitted|approved|rejected
-  kycDocs                Json       @default("{}")      // {vergiLevhasi,imzaSirkuleri,faaliyetBelgesi,ticaretSicilGazetesi,kimlik}
-  ibanMatchConsent       Boolean    @default(false)
+  identityNumber         String? // TCKN
+  contactName            String? // şahıs ad
+  contactSurname         String? // şahıs soyad
+  payoutGsm              String? // +90...
+  iyzicoSubMerchantKey   String? // iyzico'dan dönen anahtar — ödeme anında şart
+  subMerchantStatus      String    @default("none") // none|submitted|approved|rejected
+  kycDocs                Json      @default("{}") // {vergiLevhasi,imzaSirkuleri,faaliyetBelgesi,ticaretSicilGazetesi,kimlik}
+  ibanMatchConsent       Boolean   @default(false)
   subMerchantSubmittedAt DateTime?
   subMerchantApprovedAt  DateTime?
   subMerchantRejection   String?
 
-  sportCategories VenueSportCategory[]
-  instructors     Instructor[]
-  classes         Class[]
-  dropInSlots     DropInSlot[]
-  reviews         Review[]
-  userBadges      UserBadge[]
-  payouts         VenuePayout[]
-  favoritedBy     FavoriteVenue[]
-  coupons         Coupon[]
+  sportCategories     VenueSportCategory[]
+  instructors         Instructor[]
+  classes             Class[]
+  dropInSlots         DropInSlot[]
+  reviews             Review[]
+  userBadges          UserBadge[]
+  payouts             VenuePayout[]
+  favoritedBy         FavoriteVenue[]
+  coupons             Coupon[]
   passwordResetTokens VenuePasswordResetToken[]
 }
 
@@ -300,10 +302,10 @@ model VenueSportCategory {
 }
 
 model Instructor {
-  id           Int        @id @default(autoincrement())
-  user         User?      @relation(fields: [userId], references: [id])
-  userId       Int?       @unique
-  venue        Venue      @relation(fields: [venueId], references: [id])
+  id           Int      @id @default(autoincrement())
+  user         User?    @relation(fields: [userId], references: [id])
+  userId       Int?     @unique
+  venue        Venue    @relation(fields: [venueId], references: [id])
   venueId      Int
   fullName     String
   specialty    String?
@@ -311,21 +313,22 @@ model Instructor {
   bio          String?
   bioEn        String?
   avatarUrl    String?
-  phone        String?    // salon kaydında girilebilir (createInstructor bunu yazıyordu — kolon eklendi)
+  phone        String? // salon kaydında girilebilir (createInstructor bunu yazıyordu — kolon eklendi)
   // email tekilliği @unique yerine UYGULAMA düzeyinde (invite/create'te kontrol) → prod db push
   // veri-kaybı uyarısına takılmaz (salon-kontrollü, düşük hacimli oluşturma). Login findFirst kullanır.
-  email        String?    // eğitmen girişi + davet e-postası
-  passwordHash String?    // eğitmen kendi şifresini belirleyince (davet/reset) dolar
-  inviteStatus String     @default("none") // none | pending (davet gönderildi) | active (giriş kurdu)
-  avgRating    Float      @default(0)
-  totalReviews Int        @default(0)
-  isActive     Boolean    @default(true)
-  verified     Boolean    @default(false) // admin onaylı "doğrulanmış hoca" tiki
-  createdAt    DateTime   @default(now())
+  email        String? // eğitmen girişi + davet e-postası
+  passwordHash String? // eğitmen kendi şifresini belirleyince (davet/reset) dolar
+  inviteStatus String   @default("none") // none | pending (davet gönderildi) | active (giriş kurdu)
+  avgRating    Float    @default(0)
+  totalReviews Int      @default(0)
+  isActive     Boolean  @default(true)
+  verified     Boolean  @default(false) // admin onaylı "doğrulanmış hoca" tiki
+  createdAt    DateTime @default(now())
 
-  classes              Class[]
-  reviews              Review[]
-  passwordResetTokens  InstructorPasswordResetToken[]
+  classes             Class[]
+  reviews             Review[]
+  passwordResetTokens InstructorPasswordResetToken[]
+  @@index([venueId])
 }
 
 // Eğitmen davet/şifre-sıfırlama token'ı (VenuePasswordResetToken'ın aynası; tek-kullanım + 1sa expiry)
@@ -346,10 +349,10 @@ model InstructorPasswordResetToken {
 // ─────────────────────────────────────────────
 
 model Class {
-  id              Int           @id @default(autoincrement())
-  venue           Venue         @relation(fields: [venueId], references: [id])
+  id              Int            @id @default(autoincrement())
+  venue           Venue          @relation(fields: [venueId], references: [id])
   venueId         Int
-  instructor      Instructor?   @relation(fields: [instructorId], references: [id])
+  instructor      Instructor?    @relation(fields: [instructorId], references: [id])
   instructorId    Int?
   sportCategory   SportCategory? @relation(fields: [sportCategoryId], references: [id])
   sportCategoryId Int?
@@ -361,14 +364,15 @@ model Class {
   durationMinutes Int
   basePrice       Float
   capacity        Int
-  classType       String        @default("regular")
+  classType       String         @default("regular")
   recurrence      Json?
-  isActive        Boolean       @default(true)
-  createdAt       DateTime      @default(now())
+  isActive        Boolean        @default(true)
+  createdAt       DateTime       @default(now())
 
   sessions Class_Session[]
 
   @@index([venueId])
+  @@index([instructorId])
 }
 
 model Class_Session {
@@ -415,22 +419,25 @@ model DropInSlot {
 
   participants DropInParticipant[]
   bookings     Booking[]
+  // public drop-in listesi (status+visibility+startsAt) ve salon paneli (venueId) -- model hic indekssizdi
+  @@index([venueId])
+  @@index([status, visibility, startsAt])
 }
 
 model DropInParticipant {
-  id           Int        @id @default(autoincrement())
-  slot         DropInSlot @relation(fields: [slotId], references: [id])
-  slotId       Int
-  user         User       @relation(fields: [userId], references: [id])
-  userId       Int
-  team         String?
-  payment      Payment?   @relation(fields: [paymentId], references: [id])
-  paymentId    Int?
-  checkInCode  String?    @unique
-  checkedIn    Boolean    @default(false)
-  checkedInAt  DateTime?
-  joinedAt     DateTime   @default(now())
-  status       String     @default("confirmed")
+  id          Int        @id @default(autoincrement())
+  slot        DropInSlot @relation(fields: [slotId], references: [id])
+  slotId      Int
+  user        User       @relation(fields: [userId], references: [id])
+  userId      Int
+  team        String?
+  payment     Payment?   @relation(fields: [paymentId], references: [id])
+  paymentId   Int?
+  checkInCode String?    @unique
+  checkedIn   Boolean    @default(false)
+  checkedInAt DateTime?
+  joinedAt    DateTime   @default(now())
+  status      String     @default("confirmed")
 
   @@index([slotId])
   @@index([userId])
@@ -476,7 +483,7 @@ model Booking {
 
   payment           Payment?
   commissionHistory CommissionHistory?
-  reviews           Review[]           // salon + hoca ayrı satır (targetType) → çoğul
+  reviews           Review[] // salon + hoca ayrı satır (targetType) → çoğul
   activityLog       ActivityLog?
 
   @@index([userId])
@@ -500,32 +507,32 @@ model CommissionHistory {
 }
 
 model Payment {
-  id              Int      @id @default(autoincrement())
-  booking         Booking  @relation(fields: [bookingId], references: [id])
-  bookingId       Int      @unique
+  id              Int       @id @default(autoincrement())
+  booking         Booking   @relation(fields: [bookingId], references: [id])
+  bookingId       Int       @unique
   userId          Int
   amount          Float
-  currency        String   @default("TRY")
-  status          String   @default("pending")
+  currency        String    @default("TRY")
+  status          String    @default("pending")
   iyzicoPaymentId String?
   iyzicoResponse  Json?
   refundAmount    Float?
   refundedAt      DateTime?
-  createdAt       DateTime @default(now())
+  createdAt       DateTime  @default(now())
 
   dropInParticipants DropInParticipant[]
 }
 
 model VenuePayout {
-  id               Int      @id @default(autoincrement())
-  venue            Venue    @relation(fields: [venueId], references: [id])
+  id               Int       @id @default(autoincrement())
+  venue            Venue     @relation(fields: [venueId], references: [id])
   venueId          Int
   bookingId        Int
   amount           Float
-  status           String   @default("pending")
+  status           String    @default("pending")
   iyzicoTransferId String?
   transferredAt    DateTime?
-  createdAt        DateTime @default(now())
+  createdAt        DateTime  @default(now())
 }
 
 // ─────────────────────────────────────────────
@@ -533,25 +540,25 @@ model VenuePayout {
 // ─────────────────────────────────────────────
 
 model Review {
-  id             Int         @id @default(autoincrement())
+  id              Int         @id @default(autoincrement())
   // Yorum booking'DEN AYRIŞTIRILDI: booking/seans silinse bile yorum kalıcı (salon kötü
   // yorumu seansı silerek temizleyemesin). bookingId nullable → seans silinince null'a çekilir.
-  booking        Booking?    @relation(fields: [bookingId], references: [id])
-  bookingId      Int?
-  reviewer       User        @relation(fields: [reviewerUserId], references: [id])
-  reviewerUserId Int
-  targetType     String      // 'venue' | 'instructor' — her katılımdan iki satır (salon + hoca)
-  venue          Venue?      @relation(fields: [venueId], references: [id])
-  venueId        Int?
-  instructor     Instructor? @relation(fields: [instructorId], references: [id])
-  instructorId   Int?
-  classId        Int?        // ders-bazlı puan için saklanır (v1'de gösterilmez, ileride kullanılacak)
+  booking         Booking?    @relation(fields: [bookingId], references: [id])
+  bookingId       Int?
+  reviewer        User        @relation(fields: [reviewerUserId], references: [id])
+  reviewerUserId  Int
+  targetType      String // 'venue' | 'instructor' — her katılımdan iki satır (salon + hoca)
+  venue           Venue?      @relation(fields: [venueId], references: [id])
+  venueId         Int?
+  instructor      Instructor? @relation(fields: [instructorId], references: [id])
+  instructorId    Int?
+  classId         Int? // ders-bazlı puan için saklanır (v1'de gösterilmez, ileride kullanılacak)
   rating          Int
   comment         String?
   isAnonymous     Boolean     @default(true)
-  venueReply      String?     // hedef sahibinin (salon veya hoca) cevabı
+  venueReply      String? // hedef sahibinin (salon veya hoca) cevabı
   venueRepliedAt  DateTime?
-  replyVisibility String?     // 'public' (herkes görür) | 'private' (yalnız yorumu yazan + platform)
+  replyVisibility String? // 'public' (herkes görür) | 'private' (yalnız yorumu yazan + platform)
   createdAt       DateTime    @default(now())
 
   // (bookingId, targetType) tekil: bir booking için salon+hoca ayrı satır, çift-puan engellenir.
@@ -560,6 +567,8 @@ model Review {
   @@index([venueId])
   @@index([instructorId])
   @@index([classId])
+  // ban/hesap-silme moderasyon supurmeleri reviewerUserId ile filtreliyor
+  @@index([reviewerUserId])
 }
 
 // ─────────────────────────────────────────────
@@ -576,31 +585,33 @@ model Follow {
   createdAt   DateTime @default(now())
 
   @@unique([followerId, followingId])
+  // her profil goruntulemesinde takipci sayimi/listesi followingId ile filtreliyor
+  @@index([followingId, status])
 }
 
 model ActivityLog {
-  id              Int            @id @default(autoincrement())
-  user            User           @relation(fields: [userId], references: [id])
+  id              Int           @id @default(autoincrement())
+  user            User          @relation(fields: [userId], references: [id])
   userId          Int
   activityType    String
-  booking         Booking?       @relation(fields: [bookingId], references: [id])
-  bookingId       Int?           @unique
+  booking         Booking?      @relation(fields: [bookingId], references: [id])
+  bookingId       Int?          @unique
   dropInSlotId    Int?
-  badge           Badge?         @relation(fields: [badgeId], references: [id])
+  badge           Badge?        @relation(fields: [badgeId], references: [id])
   badgeId         Int?
-  tier            Tier?          @relation(fields: [tierId], references: [id])
+  tier            Tier?         @relation(fields: [tierId], references: [id])
   tierId          Int?
-  sportCategory   SportCategory  @relation(fields: [sportCategoryId], references: [id])
+  sportCategory   SportCategory @relation(fields: [sportCategoryId], references: [id])
   sportCategoryId Int
   venueId         Int?
   description     String
-  isVisible       Boolean        @default(true)
-  createdAt       DateTime       @default(now())
+  isVisible       Boolean       @default(true)
+  createdAt       DateTime      @default(now())
 }
 
 model ActivityLike {
   id        Int      @id @default(autoincrement())
-  feedKey   String   // e.g. "b-123" (booking) or "d-45" (dropin)
+  feedKey   String // e.g. "b-123" (booking) or "d-45" (dropin)
   user      User     @relation(fields: [userId], references: [id])
   userId    Int
   createdAt DateTime @default(now())
@@ -610,7 +621,7 @@ model ActivityLike {
 
 model ActivityComment {
   id        Int               @id @default(autoincrement())
-  feedKey   String            // e.g. "b-123" (booking) or "d-45" (dropin)
+  feedKey   String // e.g. "b-123" (booking) or "d-45" (dropin)
   user      User              @relation(fields: [userId], references: [id])
   userId    Int
   content   String
@@ -620,17 +631,18 @@ model ActivityComment {
   createdAt DateTime          @default(now())
 
   @@index([feedKey, createdAt])
+  @@index([userId])
 }
 
 model Notification {
-  id          Int      @id @default(autoincrement())
-  user        User     @relation("NotificationRecipient", fields: [userId], references: [id])
-  userId      Int
-  type        String   // "group_invite" | "like" | "comment" | "follow" | ...
-  message     String
+  id            Int      @id @default(autoincrement())
+  user          User     @relation("NotificationRecipient", fields: [userId], references: [id])
+  userId        Int
+  type          String // "group_invite" | "like" | "comment" | "follow" | ...
+  message       String
   relatedUserId Int?
-  isRead      Boolean  @default(false)
-  createdAt   DateTime @default(now())
+  isRead        Boolean  @default(false)
+  createdAt     DateTime @default(now())
 
   @@index([userId, createdAt])
 }
@@ -719,6 +731,8 @@ model Waitlist {
   createdAt  DateTime      @default(now())
 
   @@unique([userId, sessionId])
+  // notifyFirstWaitlistUser + sayaclar sessionId ile filtreliyor
+  @@index([sessionId, status, createdAt])
 }
 
 model Coupon {
@@ -726,10 +740,10 @@ model Coupon {
   venue         Venue     @relation(fields: [venueId], references: [id])
   venueId       Int
   code          String    @unique
-  discountType  String    // "percent" | "fixed"
+  discountType  String // "percent" | "fixed"
   discountValue Float
   maxUses       Int?
-  perUserLimit  Int?      // kişi başı kullanım limiti (null = sınırsız); createBooking'de uygulanır
+  perUserLimit  Int? // kişi başı kullanım limiti (null = sınırsız); createBooking'de uygulanır
   usedCount     Int       @default(0)
   expiresAt     DateTime?
   isActive      Boolean   @default(true)
@@ -738,16 +752,16 @@ model Coupon {
 }
 
 model Referral {
-  id           Int      @id @default(autoincrement())
-  referrer     User     @relation("ReferralSender", fields: [referrerId], references: [id])
-  referrerId   Int
-  referred     User     @relation("ReferralReceiver", fields: [referredId], references: [id])
-  referredId   Int
-  status       String   @default("pending") // pending | completed
-  creditAmount Int      @default(150)
-  referredBonusGranted Boolean @default(false) // davet edilene kayıt bonusu (email doğrulama sonrası) verildi mi
-  createdAt    DateTime @default(now())
-  completedAt  DateTime?
+  id                   Int       @id @default(autoincrement())
+  referrer             User      @relation("ReferralSender", fields: [referrerId], references: [id])
+  referrerId           Int
+  referred             User      @relation("ReferralReceiver", fields: [referredId], references: [id])
+  referredId           Int
+  status               String    @default("pending") // pending | completed
+  creditAmount         Int       @default(100) // REFERRAL_POINTS ile senkron (referralController.ts)
+  referredBonusGranted Boolean   @default(false) // davet edilene kayıt bonusu (email doğrulama sonrası) verildi mi
+  createdAt            DateTime  @default(now())
+  completedAt          DateTime?
 
   @@unique([referrerId, referredId])
 }
@@ -756,7 +770,7 @@ model ChatMessage {
   id        Int      @id @default(autoincrement())
   user      User     @relation(fields: [userId], references: [id])
   userId    Int
-  role      String   // "user" | "assistant"
+  role      String // "user" | "assistant"
   content   String
   createdAt DateTime @default(now())
 
