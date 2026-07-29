@@ -13,7 +13,8 @@
     "iyzico:test": "ts-node scripts/iyzico-sandbox-test.ts",
     "stress": "ts-node scripts/stress.ts",
     "chaos": "ts-node scripts/chaos.ts",
-    "fuzz": "ts-node scripts/fuzz.ts"
+    "fuzz": "ts-node scripts/fuzz.ts",
+    "backup:prod": "bash scripts/backup-prod.sh"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
