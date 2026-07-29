@@ -303,12 +303,21 @@ export const reviewVenueImages = async (req: Request, res: Response) => {
   try {
     const venueId = parseInt(req.params.id as string)
     const { approve } = req.body
+    if (!venueId || isNaN(venueId)) return res.status(400).json({ error: 'Geçersiz salon.' })
+    if (typeof approve !== 'boolean') return res.status(400).json({ error: 'approve alanı boolean olmalı.' })
 
     const venue = await prisma.venue.findUnique({
       where: { id: venueId },
-      select: { pendingImages: true, pendingCoverImageUrl: true },
+      select: { pendingImages: true, pendingCoverImageUrl: true, imagesPendingReview: true },
     })
     if (!venue) return res.status(404).json({ error: 'Salon bulunamadı.' })
+    // ÇİFT ONAY KORUMASI: ilk onay bekleyen seti canlıya alıp pending'i BOŞALTIYOR. İkinci çağrı
+    // (çift tıklama / iki admin / yeniden deneme) o BOŞ pending'i canlı alanların üzerine yazıp
+    // salonun yayındaki TÜM galerisini ve kapak fotoğrafını kalıcı olarak siliyordu — ve iki yanıt da
+    // 200 döndüğü için admin başarı görüyordu. Onaylanacak bekleyen set yoksa artık işlem yapılmaz.
+    if (!venue.imagesPendingReview) {
+      return res.status(409).json({ error: 'Bu salonun onay bekleyen resmi yok (işlem zaten yapılmış).' })
+    }
 
     if (approve) {
       // Bekleyen seti canlıya al

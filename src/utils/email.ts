@@ -9,7 +9,15 @@ const resend = {
         return
       }
       if (!_resend) _resend = new Resend(process.env.RESEND_API_KEY)
-      return _resend.emails.send(opts)
+      // Resend SDK API hatalarını FIRLATMAZ; `{ data: null, error }` döndürür. Dönüş değeri hiç
+      // incelenmediği için her Resend-tarafı hata (geçersiz alıcı, kota, domain doğrulanmamış, 5xx)
+      // GÖRÜNMEZDİ: log temiz, çağıran taraf "gönderildi" sanıyordu. Artık en azından loglanıyor.
+      const res: any = await _resend.emails.send(opts)
+      if (res?.error) {
+        console.error('[email FAIL]', opts.subject, '→', res.error?.name || res.error?.message || res.error)
+        return res
+      }
+      return res
     }
   }
 }

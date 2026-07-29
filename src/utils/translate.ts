@@ -1,8 +1,12 @@
 import Groq from 'groq-sdk'
 
 let client: Groq | null = null
+// TIMEOUT + maxRetries ZORUNLU: bu çeviriler ders/eğitmen OLUŞTURMADAN ÖNCE await ediliyor.
+// Varsayılan SDK ayarlarıyla (uzun timeout + 2 yeniden deneme) yavaşlayan Groq, tamamen KOZMETİK
+// bir İngilizce başlık için salonun ders eklemesini dakikalarca bloke edebiliyordu.
+// 6 saniyede dönmezse çeviriden vazgeç (null) — ders yine oluşur, titleEn sonra doldurulabilir.
 const getClient = () => {
-  if (!client) client = new Groq({ apiKey: process.env.GROQ_API_KEY || 'dummy' })
+  if (!client) client = new Groq({ apiKey: process.env.GROQ_API_KEY || 'dummy', timeout: 6000, maxRetries: 0 })
   return client
 }
 

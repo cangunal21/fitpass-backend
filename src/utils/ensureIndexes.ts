@@ -21,6 +21,40 @@ export async function ensureIndexes() {
   }
 
   try {
+    // SPOR KATEGORİSİ MÜKERRERLİĞİ: `SportCategory.name` şemada @unique DEĞİL, seed ise
+    // createMany({skipDuplicates:true}) kullanıyor — skipDuplicates yalnız GERÇEK unique kısıt üzerinden
+    // çalıştığı için seed her koşuşta aynı isimleri TEKRAR ekliyordu (dev DB'de Yoga id=1,12,23 gibi
+    // üçe katlanmış hâl ölçüldü). Etkisi kozmetik değil: kategori-adı filtreleri (liderlik ?branch=,
+    // ders listesi kategori filtresi) id'lere BÖLÜNÜR — bir kullanıcının Yoga dersi id=12'ye bağlıysa
+    // id=1 ile filtreleyen sorguda GÖRÜNMEZ.
+    // Birleştirme: en KÜÇÜK id kanonik kabul edilir, referanslar ona taşınır, boşalan kopya silinir.
+    // İdempotent ve prod-güvenli (referans taşımak aynı isimli kategori için anlamca kayıpsızdır).
+    const dupes = await prisma.$queryRawUnsafe<{ keep: number; drop: number }[]>(`
+      SELECT MIN(id) OVER (PARTITION BY lower(name)) AS keep, id AS drop
+      FROM "SportCategory"
+    `)
+    for (const { keep, drop } of dupes) {
+      if (!keep || keep === drop) continue
+      for (const [table, col] of [
+        ['UserTierHistory', 'sportCategoryId'], ['UserBadge', 'sportCategoryId'],
+        ['VenueSportCategory', 'sportCategoryId'], ['Class', 'sportCategoryId'],
+        ['DropInSlot', 'sportCategoryId'], ['ActivityLog', 'sportCategoryId'],
+        ['MonthlyLeaderboard', 'sportCategoryId'],
+      ] as const) {
+        await prisma.$executeRawUnsafe(`UPDATE "${table}" SET "${col}" = $1 WHERE "${col}" = $2`, keep, drop)
+      }
+      await prisma.$executeRawUnsafe(`DELETE FROM "SportCategory" WHERE id = $1`, drop)
+      console.log(`ensureIndexes: mükerrer spor kategorisi birleştirildi (id ${drop} → ${keep})`)
+    }
+    // Tekrarı kalıcı engelle (bundan sonra seed'in skipDuplicates'i gerçekten çalışır)
+    await prisma.$executeRawUnsafe(
+      `CREATE UNIQUE INDEX IF NOT EXISTS sportcategory_name_lower_unique ON "SportCategory"(lower(name))`
+    )
+  } catch (e) {
+    console.error('ensureIndexes (sportCategory dedupe) hata (yok sayıldı):', e)
+  }
+
+  try {
     // Kullanıcı adı uygulama genelinde büyük/küçük harf DUYARSIZ ele alınıyor ("Ali" ile "ali" aynı kişi
     // sayılıyor) ama şemadaki @unique byte-exact; tek koruma atomik OLMAYAN bir ILIKE findFirst'tü →
     // eşzamanlı iki kayıt "Ali"/"ali" olarak birlikte var olabilirdi. Kullanıcı adı kayıttan sonra

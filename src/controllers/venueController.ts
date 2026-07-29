@@ -574,7 +574,15 @@ export const createDropInSlot = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Geçersiz format.' })
     }
 
-    const sportCat = await prisma.sportCategory.findFirst({ where: { name: { equals: sport, mode: 'insensitive' } } })
+    // SESSİZ FALLBACK YOK: eskiden `sportCategoryId: sportCat?.id || 1` yazılıyordu. Drop-in'in izinli
+    // 3 sporu (Basketbol/Padel/Halı Saha) katalogda HİÇ YOK (court sporları bilinçli olarak hold'da),
+    // dolayısıyla her drop-in slotu id=1 (Yoga) ile kaydolurdu: public listede "Yoga" adı/rengiyle
+    // görünür, rozet sayacı futbol maçını Yoga'ya yazar, ?branch=Halı Saha filtresi hiç sonuç vermez.
+    // Kategori yoksa sessizce bozuk veri yazmak yerine AÇIK hata döndür.
+    const sportCat = await prisma.sportCategory.findFirst({ where: { name: { equals: sport, mode: 'insensitive' } }, orderBy: { id: 'asc' } })
+    if (!sportCat) {
+      return res.status(503).json({ error: `"${sport}" kategorisi sistemde tanımlı değil; bu spor için drop-in henüz açılmadı.` })
+    }
 
     const startsAt = new Date(`${date}T${time}:00+03:00`) // TR (UTC+3) duvar-saati — sunucu TZ'inden bağımsız doğru an
     if (startsAt <= new Date()) {
@@ -588,7 +596,7 @@ export const createDropInSlot = async (req: Request, res: Response) => {
     const slot = await prisma.dropInSlot.create({
       data: {
         venueId,
-        sportCategoryId: sportCat?.id || 1,
+        sportCategoryId: sportCat.id,
         title: `${sport} — ${format}`,
         startsAt,
         endsAt,
