@@ -1,0 +1,77 @@
+name: CI
+
+# Neden: testler bugüne dek YALNIZCA geliştiricinin makinesinde ELLE koşuyordu. Unutulan bir koşu =
+# bozuk kodun doğrudan canlıya gitmesi (Railway main'i otomatik deploy ediyor). Bu iş akışı her
+# push'ta sıfırdan bir makinede tip kontrolü + 93 kontrollük smoke testini gerçek PostgreSQL'e karşı
+# koşar. Kırmızı yanarsa bildirim gelir ve düzeltmeden ilerlemeyiz.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Aynı dalda üst üste push gelirse önceki koşuyu iptal et (dakika israfı olmasın)
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: tip kontrolü + smoke (93 kontrol)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fitpass_ci
+        ports: ['5432:5432']
+        # Sağlık kontrolü olmadan adımlar DB hazır olmadan başlar ve rastgele kırmızı yanar
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fitpass_ci
+      # CI'ya özel SAHTE sırlar — gerçek sırlar burada YOK, olmamalı.
+      # (Sunucu NODE_ENV=production iken sır yoksa fail-fast yapıyor; burada test modundayız.)
+      JWT_SECRET: ci-only-fake-jwt-secret
+      ADMIN_SECRET: ci-only-fake-admin-secret
+      CRON_SECRET: ci-only-fake-cron-secret
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: bağımlılıklar
+        run: npm ci
+
+      - name: prisma şeması geçerli mi
+        run: npx prisma validate
+
+      - name: prisma client üret
+        run: npx prisma generate
+
+      - name: TypeScript tip kontrolü
+        run: npx tsc --noEmit
+
+      - name: şemayı CI veritabanına uygula
+        # NOT: Prisma 7'de `--skip-generate` KALDIRILDI (yerel simülasyonda "unknown option" ile
+        # patladığı için yakalandı). Datasource URL'si prisma.config.ts üzerinden DATABASE_URL'den okunur.
+        run: npx prisma db push
+
+      - name: temel veriyi ekle (kategori/ilçe — smoke bunları bekliyor)
+        run: npm run seed
+
+      - name: smoke testi
+        run: npm run smoke
