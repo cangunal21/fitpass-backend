@@ -37,13 +37,21 @@ export const reportUser = async (req: Request, res: Response) => {
     if (existing) return res.json({ message: 'Şikayetiniz zaten alındı, inceleniyor.' })
 
     const cleanReason = reason ? String(reason).slice(0, 500) : null
-    await prisma.report.create({
-      data: {
-        reporterUserId,
-        reportedUserId: targetId,
-        reason: cleanReason,
-      },
-    })
+    try {
+      await prisma.report.create({
+        data: {
+          reporterUserId,
+          reportedUserId: targetId,
+          reason: cleanReason,
+        },
+      })
+    } catch (e: any) {
+      // P2002: yukarıdaki findFirst ile bu create arasında aynı çift için açık şikayet doğdu
+      // (çift tık / eşzamanlı istek). Artık DB tekilliği var (ensureIndexes) → kullanıcıya
+      // yine "alındı" de, ikinci admin e-postasını GÖNDERME.
+      if (e?.code === 'P2002') return res.json({ message: 'Şikayetiniz zaten alındı, inceleniyor.' })
+      throw e
+    }
 
     // Admin'e bildirim e-postası gönder (rezervasyonu/işlemi bloklama)
     try {

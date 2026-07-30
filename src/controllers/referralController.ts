@@ -30,11 +30,20 @@ export const getReferralInfo = async (req: Request, res: Response) => {
     // Kod yoksa oluştur
     if (!user.referralCode) {
       const code = await generateUniqueCode()
-      user = await prisma.user.update({
-        where: { id: userId },
+      // KOŞULLU YAZMA: eskiden koşulsuz update'ti. Aynı kullanıcının iki eşzamanlı isteği
+      // (uygulama + web, ya da çift tık) ikisi de "kod yok" görüp FARKLI kod üretiyor, ikincisi
+      // birincisini eziyordu. İlk isteğe gösterilen kod DB'de kalmadığı için o kodu paylaşan
+      // kullanıcının davetleri applyReferralCode'da "geçersiz kod" alıyordu.
+      const claim = await prisma.user.updateMany({
+        where: { id: userId, referralCode: null },
         data: { referralCode: code },
-        select: { id: true, referralCode: true, rewardPoints: true, referralCount: true }
       })
+      // count=0 → başka bir istek bu arada kod yazdı; ONU oku, kendi kodumuzu dayatma.
+      user = (await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, referralCode: true, rewardPoints: true, referralCount: true }
+      }))!
+      if (claim.count === 0) console.log(`referral kodu yarışı: user#${userId} mevcut kodu kullanıyor`)
     }
 
     const referrals = await prisma.referral.findMany({

@@ -680,12 +680,20 @@ export const deleteClass = async (req: Request, res: Response) => {
     const sessions = await prisma.class_Session.findMany({ where: { classId }, select: { id: true } })
     const sessIds = sessions.map(s => s.id)
     const affected = await prisma.$transaction(async (tx) => {
+      // KİLİT SIRASI: Venue → User → Booking. recomputeVenueRating Venue'yu EN SONDA kilitliyordu,
+      // createReview ise ÖNCE Venue'yu kilitleyip sonra Booking'e FK'li Review yazıyor → ters sıra,
+      // deadlock (40P01). Kurban puanlama tarafı olursa kullanıcının yorumu kaydedilmez ve booking
+      // hemen ardından silineceği için o puan bir daha ASLA verilemez. Venue kilidini başa alıyoruz.
+      await tx.$executeRaw`SELECT id FROM "Venue" WHERE id = ${cls.venueId} FOR UPDATE`
       const a = sessIds.length ? await purgeBookingsForSessions(tx, sessIds) : []
       await tx.class_Session.deleteMany({ where: { classId } })
       await tx.class.delete({ where: { id: classId } })
       await recomputeVenueRating(tx, cls.venueId) // yorumlar silindi → salon puanını güncelle
       return a
-    })
+    }, { timeout: 30000, maxWait: 10000 })
+    // timeout: purge rezervasyon başına birkaç gidiş-dönüş yapıyor; dolu bir dersin silinmesi
+    // Prisma'nın 5 sn'lik VARSAYILANINI aşıp TÜM işlemi geri alıyordu (seans silinmez, o dersteki
+    // herkesin puan iadesi hiç yazılmaz, salona 500 döner — tekrar denemede yük daha da büyük).
     await notifyRemovedBookings(affected, cls.title).catch(() => {})
     return res.json({ message: 'Ders silindi.', affectedBookings: affected.length })
   } catch (err) {
@@ -702,11 +710,12 @@ export const deleteSession = async (req: Request, res: Response) => {
     const session = await prisma.class_Session.findUnique({ where: { id: sessionId }, include: { class: true } })
     if (!session || session.class.venueId !== venueId) return res.status(403).json({ error: 'Yetki yok.' })
     const affected = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT id FROM "Venue" WHERE id = ${session.class.venueId} FOR UPDATE` // sıra: Venue → User → Booking (deleteClass ile aynı)
       const a = await purgeBookingsForSessions(tx, [sessionId])
       await tx.class_Session.delete({ where: { id: sessionId } })
       await recomputeVenueRating(tx, session.class.venueId) // yorumlar silindi → salon puanını güncelle
       return a
-    })
+    }, { timeout: 30000, maxWait: 10000 })
     await notifyRemovedBookings(affected, session.class.title).catch(() => {})
     return res.json({ message: 'Seans silindi.', affectedBookings: affected.length })
   } catch (err) {
@@ -722,8 +731,15 @@ export const deleteDropInSlot = async (req: Request, res: Response) => {
     const slotId = parseInt(req.params.id as string)
     const slot = await prisma.dropInSlot.findUnique({ where: { id: slotId } })
     if (!slot || slot.venueId !== venueId) return res.status(403).json({ error: 'Yetki yok.' })
-    await prisma.dropInParticipant.deleteMany({ where: { slotId } })
-    await prisma.dropInSlot.delete({ where: { id: slotId } })
+    // TEK TRANSACTION. Eskiden iki ayrı otomatik-commit yazmaydı: araya giren bir joinDropIn
+    // yeni katılımcı eklediğinde ikinci silme FK ihlaliyle patlıyor, ama İLK silme çoktan
+    // commit olmuş oluyordu → 5 katılımcı kalıcı silinmiş, slot hâlâ 'open' ve public listede.
+    // Slot satırını FOR UPDATE ile kilitliyoruz ki join bu arada araya giremesin.
+    await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT id FROM "DropInSlot" WHERE id = ${slotId} FOR UPDATE`
+      await tx.dropInParticipant.deleteMany({ where: { slotId } })
+      await tx.dropInSlot.delete({ where: { id: slotId } })
+    })
     return res.json({ message: 'Drop-in slot silindi.' })
   } catch (err) {
     console.error(err)

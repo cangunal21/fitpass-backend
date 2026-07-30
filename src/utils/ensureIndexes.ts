@@ -21,6 +21,26 @@ export async function ensureIndexes() {
   }
 
   try {
+    // AÇIK ŞİKAYET MÜKERRERLİĞİ: reportUser'daki spam koruması "önce findFirst, yoksa create"
+    // ile YALNIZCA kodda. Çift tık / eşzamanlı istek aynı (şikayetçi, şikayet edilen) çifti için
+    // iki açık Report ve iki admin e-postası üretiyordu. Daha kalıcısı: admin "yoksay" derse
+    // reportController yalnız TEK id'yi kapatıyor, ikizi açık kalıyor.
+    // Kısmi unique index: yalnız status='open' satırları için tekil (kapanmış eski şikayetler
+    // aynı çift için tekrar açılabilmeli).
+    await prisma.$executeRawUnsafe(`
+      DELETE FROM "Report" a USING "Report" b
+      WHERE a.id > b.id AND a.status = 'open' AND b.status = 'open'
+        AND a."reporterUserId" = b."reporterUserId" AND a."reportedUserId" = b."reportedUserId"
+        AND a."reportedUserId" IS NOT NULL
+    `)
+    await prisma.$executeRawUnsafe(
+      `CREATE UNIQUE INDEX IF NOT EXISTS report_open_pair_unique ON "Report"("reporterUserId", "reportedUserId") WHERE status = 'open' AND "reportedUserId" IS NOT NULL`
+    )
+  } catch (e) {
+    console.error('ensureIndexes (report tekilliği) hata (yok sayıldı):', e)
+  }
+
+  try {
     // SEANS MÜKERRERLİĞİ: createRecurringSessions/createSession "önce findFirst, yoksa create"
     // desenini kullanıyor ama (classId, startsAt) üzerinde DB tekilliği YOKTU — ne şemada ne burada.
     // Kodla sağlanan tekillik eşzamanlılıkta işe yaramaz: salonun formu iki kez göndermesi (ya da

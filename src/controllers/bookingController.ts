@@ -109,6 +109,12 @@ export const createBooking = async (req: Request, res: Response) => {
         const basePrice = (session.class?.basePrice || 0) * groupSize
 
         if (couponCode) {
+          // KİLİT SIRASI: User → Coupon (kod tabanının tamamıyla aynı: User → Class_Session →
+          // Booking → Coupon). Eskiden burada önce Coupon kilitleniyordu; cancelBooking ise
+          // User'ı önce kilitliyor → aynı kullanıcı + aynı kupon üzerinde eşzamanlı
+          // rezervasyon+iptal döngüsel beklemeye (40P01 deadlock) giriyor, kurban istek
+          // "Sunucu hatası" alıyordu.
+          await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`
           await tx.$executeRaw`SELECT id FROM "Coupon" WHERE code = ${String(couponCode).toUpperCase()} FOR UPDATE`
           const found = await tx.coupon.findUnique({ where: { code: String(couponCode).toUpperCase() } })
           if (!found || !found.isActive) throw new BookingError('Geçersiz kupon kodu.', 400)

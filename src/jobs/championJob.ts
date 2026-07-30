@@ -81,10 +81,23 @@ export async function awardSeasonChampions(now: Date = new Date()) {
     // (userbadge_award_unique ifade-index'i ile ON CONFLICT DO NOTHING).
     await prisma.userBadge.createMany({ data: toCreate, skipDuplicates: true })
 
-    // Kazananlara bildirim (best-effort)
-    const users = await prisma.user.findMany({ where: { id: { in: [...winnersByUser.keys()] } }, select: { id: true, pushToken: true } })
+    // BİLDİRİM YALNIZCA BU KOŞUDA GERÇEKTEN YAZILAN SATIRLARDAN. Eskiden yukarıda HESAPLANAN
+    // winnersByUser kümesinden besleniyordu: satır 30'daki "zaten verildi mi" koruması atomik
+    // olmayan bir count() olduğu için iki örtüşen koşuda ikisi de count=0 görüp devam edebiliyor;
+    // rozetler skipDuplicates sayesinde tek kalıyor ama her şampiyona İKİ bildirim + İKİ push
+    // gidiyordu. createdAt penceresiyle "bu koşuda eklenenler" ayıklanır.
+    const runStart = new Date(Date.now() - 60000)
+    const written = await prisma.userBadge.findMany({
+      where: { badgeId: champBadge.id, seasonKey: prev.key, createdAt: { gte: runStart } },
+      select: { userId: true },
+    })
+    if (written.length === 0) return // hepsi zaten vardı → bu koşu yeni bir şey yazmadı, susalım
+    const writtenByUser = new Map<number, number>()
+    for (const w of written) writtenByUser.set(w.userId, (writtenByUser.get(w.userId) || 0) + 1)
+
+    const users = await prisma.user.findMany({ where: { id: { in: [...writtenByUser.keys()] } }, select: { id: true, pushToken: true } })
     for (const u of users) {
-      const n = winnersByUser.get(u.id) || 0
+      const n = writtenByUser.get(u.id) || 0
       const msg = `${prev.label} sezonunda ${n} şampiyonluk rozeti kazandın! 🏆`
       await prisma.notification.create({ data: { userId: u.id, type: 'badge', message: msg } }).catch(() => {})
       if (u.pushToken) sendPushNotification(u.pushToken, 'Sezon şampiyonu! 🏆', msg).catch(() => {})
