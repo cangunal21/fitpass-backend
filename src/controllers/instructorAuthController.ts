@@ -99,15 +99,20 @@ export const instructorSetPassword = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Geçersiz veya süresi dolmuş link.' })
     }
     const passwordHash = await bcrypt.hash(password, 12)
-    // Token'ı ATOMİK sahiplen: used false→true çevirebilen TEK istek şifreyi yazsın (çift-submit yarışı)
-    const claimed = await prisma.instructorPasswordResetToken.updateMany({
-      where: { id: resetToken.id, used: false },
-      data: { used: true },
+    // CAS + parola yazması TEK TRANSACTION. Eskiden token used=true AYRI commit'leniyor, sonra
+    // instructor.update AYRI yazılıyordu → ikinci adım başarısız olursa token YANMIŞ ama parola
+    // yazılmamış olur: link ölür, eğitmen parolayı bir daha belirleyemez. Atomik olunca ikisi
+    // birlikte olur ya da hiç olmaz.
+    const ok = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.instructorPasswordResetToken.updateMany({
+        where: { id: resetToken.id, used: false },
+        data: { used: true },
+      })
+      if (claimed.count === 0) return false
+      await tx.instructor.update({ where: { id: resetToken.instructorId }, data: { passwordHash, inviteStatus: 'active' } })
+      return true
     })
-    if (claimed.count === 0) {
-      return res.status(400).json({ error: 'Geçersiz veya süresi dolmuş link.' })
-    }
-    await prisma.instructor.update({ where: { id: resetToken.instructorId }, data: { passwordHash, inviteStatus: 'active' } })
+    if (!ok) return res.status(400).json({ error: 'Geçersiz veya süresi dolmuş link.' })
     return res.json({ message: 'Şifre belirlendi. Artık giriş yapabilirsiniz.' })
   } catch (err) {
     console.error(err)

@@ -8,15 +8,21 @@ import { invalidate } from './cache'
 // Ban anında: banned yaz + ban-cache geçersizle + tüm refresh token'ları iptal et +
 // yorum/feed içeriğini sil (banlı içerik public'te kalmasın, puanlar yeniden hesaplanır).
 export async function applyUserBan(userId: number, ban: boolean) {
-  const user = await prisma.user.update({ where: { id: userId }, data: { banned: ban } })
-  invalidate(`banned:${userId}`)
-  if (ban) {
-    await prisma.refreshToken.updateMany({ where: { userId }, data: { revoked: true } }).catch(() => {})
-    await prisma.$transaction(async (tx) => {
+  // TEK TRANSACTION: ban + token iptali + içerik temizliği ATOMİK. Eskiden ban ayrı commit'leniyor,
+  // revoke ve purge ise `.catch` ile YUTULUYORDU → purge bir deadlock/geçici hatayla başarısız olsa
+  // bile kullanıcı banned=true olur ama yorumları/feed içeriği public'te KALIR ve salon/eğitmen
+  // avgRating hayalet puanlarla sapar; admin 200 "banlandı" görür, hiçbir alarm yok. Artık purge
+  // başarısızsa TÜMÜ geri alınır ve hata çağırana çıkar (500) → admin tekrar dener.
+  const user = await prisma.$transaction(async (tx) => {
+    const u = await tx.user.update({ where: { id: userId }, data: { banned: ban } })
+    if (ban) {
+      await tx.refreshToken.updateMany({ where: { userId }, data: { revoked: true } })
       await purgeUserReviews(tx, userId)
       await purgeUserComments(tx, userId)
-    }).catch((e) => console.error('Ban içerik temizleme hatası:', e))
-  }
+    }
+    return u
+  })
+  invalidate(`banned:${userId}`) // cache in-memory → transaction dışında, commit sonrası
   return user
 }
 

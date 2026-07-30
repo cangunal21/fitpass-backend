@@ -557,10 +557,17 @@ export const changePassword = async (req: Request & { userId?: number }, res: Re
     if (!isValid) return res.status(401).json({ error: 'Mevcut şifre hatalı.' })
 
     const newHash = await bcrypt.hash(newPassword, 12)
-    await prisma.user.update({ where: { id: req.userId }, data: { passwordHash: newHash } })
-
-    // Şifre değişti → diğer cihazlardaki oturumları kapat (refresh token'ları iptal)
-    await prisma.refreshToken.updateMany({ where: { userId: req.userId, revoked: false }, data: { revoked: true } }).catch(() => {})
+    // TEK TRANSACTION + .catch YOK. resetPassword'de (satır ~361) düzeltilen aynı kalıp buradaydı:
+    // parola yazması ayrı commit'lenip oturum-iptal süpürgesi `.catch(() => {})` ile yutuluyordu →
+    // süpürge bir DB hıçkırığıyla başarısız olsa bile kullanıcı 200 "değiştirildi" görüyor, eski
+    // cihaz oturumları (180 gün geçerli refresh token) açık kalıyordu. Süpürge güvenlik işlemidir,
+    // best-effort DEĞİL: başarısızsa 500 dönmeli, "başarılı" DENMEMELİ.
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: req.userId }, data: { passwordHash: newHash } })
+      await tx.refreshToken.updateMany({ where: { userId: req.userId, revoked: false }, data: { revoked: true } })
+    })
+    // Commit sonrası araya girmiş olabilecek oturumları da kapat (idempotent güvenlik ağı).
+    await prisma.refreshToken.updateMany({ where: { userId: req.userId, revoked: false }, data: { revoked: true } })
 
     return res.json({ message: 'Şifre başarıyla değiştirildi.' })
   } catch (error) {

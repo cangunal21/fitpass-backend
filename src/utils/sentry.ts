@@ -14,8 +14,12 @@ const TCKN_RE = /\b[1-9]\d{10}\b/g
 const IBAN_RE = /\bTR\d{2}\s?(?:\d{4}\s?){5}\d{2}\b/gi
 const JWT_RE = /\beyJ[\w-]+\.[\w-]+\.[\w-]+/g
 const BEARER_RE = /Bearer\s+[\w.-]+/gi
+// Opak hex token'lar: parola-sıfırlama (64 hex), verify (64), refresh (96). 24+ hex güvenli eşik
+// (checkInCode 8 hex → yanlış-pozitif riski için dahil edilmedi). bcrypt hash de maskelenir.
+const HEXTOKEN_RE = /\b[0-9a-f]{24,}\b/gi
+const BCRYPT_RE = /\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}/g
 
-function scrub(text: unknown): string | undefined {
+export function scrub(text: unknown): string | undefined {
   if (typeof text !== 'string') return undefined
   return text
     .replace(EMAIL_RE, '[eposta]')
@@ -24,6 +28,8 @@ function scrub(text: unknown): string | undefined {
     .replace(BEARER_RE, 'Bearer [token]')
     .replace(PHONE_RE, '[telefon]')
     .replace(TCKN_RE, '[tckn]')
+    .replace(BCRYPT_RE, '[hash]')
+    .replace(HEXTOKEN_RE, '[token]')
 }
 
 function scrubUrl(url: unknown): string | undefined {
@@ -55,6 +61,7 @@ export function initSentry() {
         }
         if (event.request) {
           event.request.url = scrubUrl(event.request.url) ?? event.request.url
+          delete (event.request as any).query_string // url'den AYRI alan; ham token/code/email taşıyabilir
           delete event.request.data     // gövde parola/token/PII tasiyabilir
           delete event.request.cookies
           delete (event.request as any).headers

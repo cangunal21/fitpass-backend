@@ -887,14 +887,20 @@ export const venueResetPassword = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Geçersiz veya süresi dolmuş link.' })
     }
     const passwordHash = await bcrypt.hash(password, 12)
-    await prisma.venue.update({
-      where: { id: resetToken.venueId },
-      data: { passwordHash }
+    // CAS + parola yazması TEK TRANSACTION (user resetPassword ile aynı desen). Eskiden parola önce
+    // commit'lenip token used=true AYRI yazılıyordu ve used üzerinde CAS yoktu → aynı sıfırlama
+    // linkine iki kez tıklama iki kez parola yazabiliyor, ya da token yazması başarısızsa link
+    // sonsuza dek "kullanılmadı" kalıyordu. (Salon token'ı 7-gün JWT, refresh yok → revoke gereksiz.)
+    const ok = await prisma.$transaction(async (tx) => {
+      const claim = await tx.venuePasswordResetToken.updateMany({
+        where: { id: resetToken.id, used: false },
+        data: { used: true },
+      })
+      if (claim.count === 0) return false
+      await tx.venue.update({ where: { id: resetToken.venueId }, data: { passwordHash } })
+      return true
     })
-    await prisma.venuePasswordResetToken.update({
-      where: { id: resetToken.id },
-      data: { used: true }
-    })
+    if (!ok) return res.status(400).json({ error: 'Geçersiz veya süresi dolmuş link.' })
     return res.json({ message: 'Şifre güncellendi.' })
   } catch (err) {
     console.error(err)

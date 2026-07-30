@@ -78,11 +78,15 @@ export const submitSubMerchant = async (req: Request, res: Response) => {
         })
         return res.json({ status: 'approved', message: 'Bilgileriniz onaylandı, artık ders ekleyip ödeme alabilirsiniz.' })
       } catch (e: any) {
+        // HAM e?.message İSTEMCİYE/DB'YE YAZILMIYOR: ağ/parse hatasında iç detay (stack, dahili URL)
+        // salon profil ucundan geri gösteriliyordu (global temiz-500 middleware'i baypas). Detay
+        // yalnız sunucu logunda; kullanıcıya/DB'ye sabit, güvenli mesaj.
+        console.error('submitSubMerchant iyzico hata:', e)
         await prisma.venue.update({
           where: { id: venueId },
-          data: { subMerchantStatus: 'rejected', subMerchantRejection: e?.message || 'Ödeme kuruluşu reddetti.' },
+          data: { subMerchantStatus: 'rejected', subMerchantRejection: 'Ödeme kuruluşu bilgileri reddetti.' },
         })
-        return res.status(400).json({ status: 'rejected', error: e?.message || 'Ödeme kuruluşu bilgileri reddetti.' })
+        return res.status(400).json({ status: 'rejected', error: 'Ödeme kuruluşu bilgileri reddetti. Lütfen bilgilerinizi kontrol edin.' })
       }
     }
 

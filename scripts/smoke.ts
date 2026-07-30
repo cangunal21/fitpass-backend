@@ -1975,6 +1975,73 @@ async function run() {
     await prisma.venue.deleteMany({ where: { id: TV } }).catch(() => {})
   })
 
+  // ================== HATA YOLLARI REGRESYONLARI (denetim turu 15) ==================
+  await check('Hata yolu: şifre değişince TÜM refresh oturumları iptal edilir (atomik)', async () => {
+    const CU = 990901
+    const bcryptLib = require('bcryptjs')
+    await prisma.user.upsert({ where: { id: CU }, update: { passwordHash: await bcryptLib.hash('EskiSifre123', 12) }, create: { id: CU, username: `cp_${CU}`, email: `cp_${CU}@x.com`, passwordHash: await bcryptLib.hash('EskiSifre123', 12), fullName: 'Cp', tierSportCounts: {} } })
+    await prisma.refreshToken.deleteMany({ where: { userId: CU } })
+    await prisma.refreshToken.create({ data: { token: `rt-cp-${CU}-${Date.now()}`, userId: CU, expiresAt: new Date(Date.now() + 86400000) } })
+    const tok = jwt.sign({ userId: CU, email: `cp_${CU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http('/api/auth/change-password', { method: 'PUT', token: tok, body: { currentPassword: 'EskiSifre123', newPassword: 'YeniSifre456' } })
+    if (r.status !== 200) throw new Error(`şifre değiştir: ${r.status} ${r.text.slice(0,120)}`)
+    // REGRESYON: revoke .catch(()=>{}) ile yutuluyordu → oturum açık kalabiliyordu
+    const alive = await prisma.refreshToken.count({ where: { userId: CU, revoked: false } })
+    if (alive !== 0) throw new Error(`şifre değişti ama ${alive} oturum hâlâ açık (0 bekleniyor)`)
+    await prisma.refreshToken.deleteMany({ where: { userId: CU } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: CU } }).catch(() => {})
+  })
+
+  await check('Hata yolu: ban içerik temizliği + token iptali ATOMİK (yorum kalmaz)', async () => {
+    const BU = 990902, BV = 990902
+    await prisma.venue.upsert({ where: { id: BV }, update: { isApproved: true, isActive: true }, create: { id: BV, name: 'BanV', email: `bnv${BV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.user.upsert({ where: { id: BU }, update: { banned: false }, create: { id: BU, username: `ban_${BU}`, email: `ban_${BU}@x.com`, passwordHash: 'x', fullName: 'Ban', tierSportCounts: {} } })
+    await prisma.review.deleteMany({ where: { reviewerUserId: BU } })
+    await prisma.review.create({ data: { reviewerUserId: BU, targetType: 'venue', venueId: BV, rating: 5 } })
+    await prisma.refreshToken.deleteMany({ where: { userId: BU } })
+    await prisma.refreshToken.create({ data: { token: `rt-ban-${BU}-${Date.now()}`, userId: BU, expiresAt: new Date(Date.now() + 86400000) } })
+    const r = await http(`/api/admin/users/${BU}/ban`, { method: 'PUT', admin: true, body: { ban: true } })
+    if (r.status !== 200) throw new Error(`ban: ${r.status} ${r.text.slice(0,120)}`)
+    // Ban + purge + revoke atomik → yorum silinmeli, token iptal olmalı, kullanıcı banlı olmalı
+    const reviews = await prisma.review.count({ where: { reviewerUserId: BU } })
+    if (reviews !== 0) throw new Error(`banlı kullanıcının yorumu silinmedi: ${reviews}`)
+    const aliveTok = await prisma.refreshToken.count({ where: { userId: BU, revoked: false } })
+    if (aliveTok !== 0) throw new Error(`banlı kullanıcının token'ı iptal edilmedi: ${aliveTok}`)
+    const u = await prisma.user.findUnique({ where: { id: BU }, select: { banned: true } })
+    if (!u?.banned) throw new Error('kullanıcı banlanmadı')
+    await prisma.refreshToken.deleteMany({ where: { userId: BU } }).catch(() => {})
+    await prisma.review.deleteMany({ where: { reviewerUserId: BU } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: BU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: BV } }).catch(() => {})
+  })
+
+  await check('Hata yolu: Sentry scrub opak token + bcrypt hash + IBAN maskeler', async () => {
+    const { scrub } = require('../src/utils/sentry')
+    const resetTok = 'a'.repeat(64) // reset token: 64 hex
+    if (scrub(`link token=${resetTok}`)?.includes(resetTok)) throw new Error('64-hex reset token maskelenmedi')
+    const bcryptH = '$2b$12$' + 'A'.repeat(53)
+    if (scrub(`hash ${bcryptH}`)?.includes(bcryptH)) throw new Error('bcrypt hash maskelenmedi')
+    if (scrub('iban TR33 0006 1005 1978 6457 8413 26')?.includes('6457')) throw new Error('IBAN maskelenmedi')
+    // checkInCode (8 hex) yanlış-pozitif riskiyle KASITLI maskelenmiyor → kısa hex korunmalı
+    if (scrub('kod ABCD1234')?.includes('ABCD1234') !== true) throw new Error('kısa kod yanlışlıkla maskelendi (checkInCode koruması bozuk)')
+  })
+
+  await check('Hata yolu: salon şifre-sıfırlama linki tek kullanımlık (atomik CAS)', async () => {
+    const RV = 990903
+    const bcryptLib = require('bcryptjs')
+    await prisma.venue.upsert({ where: { id: RV }, update: {}, create: { id: RV, name: 'RstV', email: `rstv${RV}@x.com`, passwordHash: await bcryptLib.hash('eski', 12), address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.venuePasswordResetToken.deleteMany({ where: { venueId: RV } })
+    const rtok = `vrst-${RV}-${Date.now()}`
+    await prisma.venuePasswordResetToken.create({ data: { token: rtok, venueId: RV, expiresAt: new Date(Date.now() + 3600000) } })
+    const r1 = await http('/api/venue/reset-password', { method: 'POST', body: { token: rtok, password: 'YeniSifre123' } })
+    if (r1.status !== 200) throw new Error(`ilk sıfırlama: ${r1.status} ${r1.text.slice(0,120)}`)
+    // İkinci kez AYNI token → CAS ile reddedilmeli (eskiden used CAS'siz, iki kez yazabiliyordu)
+    const r2 = await http('/api/venue/reset-password', { method: 'POST', body: { token: rtok, password: 'BaskaSifre456' } })
+    if (r2.status === 200) throw new Error('aynı salon sıfırlama linki İKİNCİ kez kullanılabildi')
+    await prisma.venuePasswordResetToken.deleteMany({ where: { venueId: RV } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: RV } }).catch(() => {})
+  })
+
   // ================== PARA MATEMATİĞİ REGRESYONLARI (denetim turu 14) ==================
   await check('Para: fixed kupon discountAmount money()\'li — defter özdeşliği tutar', async () => {
     const CV = 990801, CC = 990801, CS = 990801, CU = 990801
