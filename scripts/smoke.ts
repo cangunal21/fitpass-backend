@@ -5,6 +5,7 @@
  * Çalıştırma:  npm run smoke
  * (Kendi sunucusunu test portunda başlatır, kontrolleri yapar, veriyi temizler.)
  */
+import 'dotenv/config' // sunucunun (src/index.ts) yaptığı gibi: sırlar .env'den gelir, gömülü varsayılan YOK
 import { spawn, ChildProcess } from 'child_process'
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
@@ -17,7 +18,9 @@ import prisma from '../src/utils/prisma'
 
 const PORT = 3199
 const BASE = `http://localhost:${PORT}`
-const JWT_SECRET = process.env.JWT_SECRET || 'fitpass-secret-key-change-in-production'
+// Test harness'i sunucuyla AYNI anahtarı kullanmalı. Gömülü varsayılan kaldırıldı (public repo).
+const JWT_SECRET = process.env.JWT_SECRET || ''
+if (!JWT_SECRET) { console.error('JWT_SECRET set edilmeli (.env veya ortam).'); process.exit(1) }
 const ADMIN_SECRET = process.env.ADMIN_SECRET || 'fitpass-admin-2024'
 const CRON_SECRET = process.env.CRON_SECRET || 'cron-secret-2024'
 

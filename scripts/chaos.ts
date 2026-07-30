@@ -9,6 +9,7 @@
  *
  * Çalıştırma:  npm run chaos   (sunucuyu CHAOS_TEST modunda test portunda açar)
  */
+import 'dotenv/config' // sunucunun (src/index.ts) yaptığı gibi: sırlar .env'den gelir, gömülü varsayılan YOK
 import { spawn, ChildProcess } from 'child_process'
 
 const PORT = 3197

@@ -1,3 +1,4 @@
+import 'dotenv/config' // sunucunun (src/index.ts) yaptığı gibi: sırlar .env'den gelir, gömülü varsayılan YOK
 import { PrismaPg } from '@prisma/adapter-pg'
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports

@@ -32,14 +32,15 @@ import referralRoutes from './routes/referral'
 import { chat, getChatHistory } from './controllers/chatController'
 import { authMiddleware, optionalAuthMiddleware } from './middlewares/auth'
 
-// GÜVENLİK: production'da kritik secret'lar set DEĞİLSE zayıf varsayılana düşmek yerine
-// sunucuyu BAŞLATMA (fail-fast). Dev/test'te (NODE_ENV≠production) varsayılan kullanılabilir.
-if (process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || !process.env.ADMIN_SECRET)) {
-  console.error('FATAL: production ortamında JWT_SECRET ve ADMIN_SECRET set edilmeli (zayıf varsayılan kullanılamaz).')
-  process.exit(1)
-}
+// GÜVENLİK: kritik secret'lar YOKSA sunucuyu HİÇ BAŞLATMA — ortamdan BAĞIMSIZ.
+// Eski hali `NODE_ENV === 'production'` tam eşitliğine bağlıydı: NODE_ENV set edilmemişse (ki
+// "Railway'de NODE_ENV=production ayarla" görevi HÂLÂ AÇIK) ya da 'Production'/'prod' yazılmışsa
+// bu kontrol sessizce atlanıyor, sunucu console.warn basıp AÇILIYOR ve jwt.ts'teki public-repo'da
+// duran gömülü varsayılanla token imzalıyordu. Ortam değişkeninin doğru yazılmasına güvenmek
+// güvenlik kontrolü değildir; artık koşul yok.
 if (!process.env.JWT_SECRET || !process.env.ADMIN_SECRET) {
-  console.warn('⚠️  JWT_SECRET/ADMIN_SECRET set değil — zayıf varsayılan kullanılıyor (yalnızca dev/test için kabul edilebilir).')
+  console.error('FATAL: JWT_SECRET ve ADMIN_SECRET set edilmeli. Gömülü varsayılan YOK.')
+  process.exit(1)
 }
 
 const app = express()
