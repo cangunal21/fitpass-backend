@@ -7,17 +7,29 @@ const connectionString = process.env.DATABASE_URL ?? 'postgresql://cangunal@loca
 const adapter = new PrismaPg({ connectionString })
 const prisma = new PrismaClient({ adapter })
 
+// PRODUCTION'IN BIREBIR KOPYASI. 2026-07-30 prod yedeginden (data/SportCategory.csv) alindi.
+//
+// Neden birebir: kodda 6 yerde kategori ISIMLE aranıyor (venueController 130/352/401/582,
+// instructorPortalController 82). Seed farkli isimler uretirse CI ve yerel gelistirme, prod'da
+// BULUNMAYAN kategorilerle test eder; o yollarin gercek veriyle davranisi hic denenmemis olur.
+// Olculdu (prod yedegi vs yerel): ayni ID'ler farkli sporlara denk geliyordu —
+//   id 3 prod "Dövüş Sporları" / seed "Boks",  id 4 prod "Fitness" / seed "HIIT",
+//   id 11 prod "Binicilik" / seed "Diğer",  Crossfit+Diğer prod'da yok, Deniz Sporları seed'de yoktu.
+//
+// Bu listeyi degistirecegin zaman: DOGRU KAYNAK PROD'DUR. Once prod'daki gercek satirlara bak
+// (yedekteki data/SportCategory.csv ya da admin paneli), sonra burayi ona gore hizala.
+// "Deniz Sporları" prod'da iconUrl'suz duruyor — kasitli: web/mobil ikonu isimden cozuyor
+// (sportIcons.tsx getIconKeyForCategory: 'deniz' -> sailing), bu yuzden null bırakıldı.
 const sports = [
-  { name: 'Yoga', iconUrl: 'yoga', colorHex: '#7C3AED', hasInstructor: true },
-  { name: 'Pilates', iconUrl: 'pilates', colorHex: '#DB2777', hasInstructor: true },
-  { name: 'Boks', iconUrl: 'boxing', colorHex: '#DC2626', hasInstructor: true },
-  { name: 'HIIT', iconUrl: 'hiit', colorHex: '#EA580C', hasInstructor: true },
-  { name: 'Tenis', iconUrl: 'padel', colorHex: '#65A30D', hasInstructor: true },
+  { name: 'Yoga', iconUrl: 'yoga', colorHex: '#d76792', hasInstructor: true },
+  { name: 'Pilates', iconUrl: 'pilates', colorHex: '#e2b67d', hasInstructor: true },
+  { name: 'Dövüş Sporları', iconUrl: 'boxing', colorHex: '#DC2626', hasInstructor: true },
+  { name: 'Fitness', iconUrl: 'hiit', colorHex: '#EA580C', hasInstructor: true },
   { name: 'Dans', iconUrl: 'dance', colorHex: '#C026D3', hasInstructor: true },
   { name: 'Yüzme', iconUrl: 'swimming', colorHex: '#0284C7', hasInstructor: true },
-  { name: 'Crossfit', iconUrl: 'crossfit', colorHex: '#B45309', hasInstructor: true },
   { name: 'Binicilik', iconUrl: 'equestrian', colorHex: '#92400E', hasInstructor: true },
-  { name: 'Diğer', iconUrl: 'zap', colorHex: '#6B7280', hasInstructor: false },
+  { name: 'Deniz Sporları', iconUrl: null, colorHex: '#00c7fc', hasInstructor: true },
+  { name: 'Tenis', iconUrl: 'padel', colorHex: '#65A30D', hasInstructor: true },
 ]
 
 const districts = [
@@ -63,11 +75,25 @@ const districts = [
 ]
 
 async function main() {
-  await prisma.sportCategory.createMany({
-    data: sports,
-    skipDuplicates: true,
-  })
-  console.log('Sport categories seeded.')
+  // createMany({ skipDuplicates: true }) KULLANMIYORUZ. skipDuplicates yalnizca bir UNIQUE kisit
+  // varsa is gorur; SportCategory.name'de sema seviyesinde unique YOK. Tekillik ancak sunucu
+  // acilirken ensureIndexes.ts'in kurdugu sportcategory_name_lower_unique ile geliyor — yani
+  // seed'in kostugu anda (CI'da: db push -> seed -> test) o indeks HENUZ YOK. Bu yuzden eski hali
+  // her kosuda kategorileri COGALTIYORDU (canlida 26'ya kadar cikmis, elle birlestirildi).
+  // Isim bazli (buyuk/kucuk harf duyarsiz) kontrol bu tuzagi indeksten bagimsiz kapatir.
+  let olusturulan = 0
+  for (const s of sports) {
+    const mevcut = await prisma.sportCategory.findFirst({
+      where: { name: { equals: s.name, mode: 'insensitive' } },
+      select: { id: true },
+    })
+    // MEVCUT OLANA DOKUNMUYORUZ: renk/ikon admin panelinden degistirilebiliyor, seed onu ezmemeli.
+    if (!mevcut) {
+      await prisma.sportCategory.create({ data: s })
+      olusturulan++
+    }
+  }
+  console.log(`Sport categories seeded (${olusturulan} yeni, ${sports.length - olusturulan} zaten vardi).`)
 
   // İstanbul şehri
   const istanbul = await prisma.city.upsert({
