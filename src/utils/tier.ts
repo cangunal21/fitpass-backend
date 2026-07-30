@@ -32,6 +32,25 @@ export async function resetYearlyPointsIfNeeded(userId: number) {
   })
 }
 
+// İptal/silme sırasında bir booking için GERİ ALINACAK puan miktarını hesaplar.
+// CROSS-YEAR KORUMASI: puanlar her 1 Ocak'ta sıfırlanır (resetYearlyPointsIfNeeded). Bir booking
+// ÖNCEKİ puan-yılında kazanılmışsa o puanlar reset'te ZATEN silinmiştir; iptalinde tekrar düşmek
+// cari yılın MEŞRU puanını haksız siler (kullanıcı tek rezervasyon için iki kez puan kaybeder).
+// booking'in kazanım yılı (createdAt, TR) kullanıcının güncel rewardPointsYear'ından ESKİYSE → 0 döndür.
+// Aynı/yeni yıl ise Math.min ile bakiyeyi negatife düşürmeden düş.
+export function reversiblePoints(
+  pointsEarned: number,
+  bookingCreatedAt: Date,
+  userRewardPointsYear: number | null,
+  currentBalance: number,
+): number {
+  if (!(pointsEarned > 0)) return 0
+  const earnYear = trYear(new Date(bookingCreatedAt))
+  // rewardPointsYear null → kullanıcı hiç reset görmemiş, tüm yıllar cari sayılır (düş).
+  if (userRewardPointsYear != null && earnYear < userRewardPointsYear) return 0
+  return Math.min(pointsEarned, Math.max(0, currentBalance))
+}
+
 export async function syncUserTier(userId: number) {
   const [count, tiers, current] = await Promise.all([
     computeCompletedLessons(userId),

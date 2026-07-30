@@ -9,6 +9,8 @@ import { sendPushNotification } from '../utils/push'
 import { isValidEmail, MIN_PASSWORD, parseIntSafe, clampStr } from '../utils/validate'
 import crypto from 'crypto'
 import { trYmd, trWeekday, trInstant, trAddDays } from '../utils/trFormat'
+import { reversiblePoints } from '../utils/tier'
+const money = (x: number) => Math.round(x * 100) / 100 // bookingController ile aynı 2-ondalık yuvarlama
 
 // Bir seans/ders silinirken aktif rezervasyonları GÜVENLİ kaldırır:
 // puanları iade eder, FK'lı alt kayıtları temizler (Payment/Review/Commission/ActivityLog),
@@ -35,7 +37,7 @@ async function purgeBookingsForSessions(tx: any, sessionIds: number[]) {
   // defterde aynı bookingId için iki ters kayıt kalırdı).
   const bookings = await tx.booking.findMany({
     where: { sessionId: { in: sessionIds } },
-    select: { id: true, userId: true, pointsEarned: true, status: true },
+    select: { id: true, userId: true, pointsEarned: true, status: true, createdAt: true },
   })
   if (bookings.length === 0) return []
   const ids = bookings.map((b: any) => b.id)
@@ -44,8 +46,9 @@ async function purgeBookingsForSessions(tx: any, sessionIds: number[]) {
       // CLAMP: bakiyeyi NEGATİFE düşürme (yıllık reset/redemption sonrası pointsEarned > güncel bakiye olabilir).
       // cancelBooking/transferBooking ile aynı invariant — Math.min. (User kilidi yukarıda,
       // döngüden ÖNCE ve id sırasıyla alındı: hem deadlock sırası sabit hem tx daha kısa.)
-      const cur = await tx.user.findUnique({ where: { id: b.userId }, select: { rewardPoints: true } })
-      const dec = Math.min(b.pointsEarned, cur?.rewardPoints || 0)
+      const cur = await tx.user.findUnique({ where: { id: b.userId }, select: { rewardPoints: true, rewardPointsYear: true } })
+      // Cross-year: booking önceki puan-yılındaysa reset zaten sildi → tekrar düşme (cancelBooking ile aynı).
+      const dec = reversiblePoints(b.pointsEarned, b.createdAt, cur?.rewardPointsYear ?? null, cur?.rewardPoints || 0)
       if (dec > 0) {
         await tx.user.update({ where: { id: b.userId }, data: { rewardPoints: { decrement: dec } } })
         await tx.rewardPoint.create({ data: { userId: b.userId, points: -dec, source: 'session_removed', bookingId: b.id } })
@@ -627,7 +630,12 @@ export const createDropInSlot = async (req: Request, res: Response) => {
     const endsAt = new Date(startsAt.getTime() + 90 * 60000)
 
     const players = FORMAT_PLAYERS_MAP[format] || parseInt(totalPlayers) || 8
+    // `!pricePerPerson` kontrolü (satır ~600) string '0' ve negatifi geçiriyordu → bedava/negatif
+    // fiyatlı slot oluşabiliyordu. Number.isFinite + pozitiflik ile kesin kapat.
     const price = parseFloat(pricePerPerson)
+    if (!Number.isFinite(price) || price <= 0) {
+      return res.status(400).json({ error: 'Kişi başı fiyat 0’dan büyük geçerli bir sayı olmalı.' })
+    }
 
     const slot = await prisma.dropInSlot.create({
       data: {
@@ -639,8 +647,8 @@ export const createDropInSlot = async (req: Request, res: Response) => {
         format,
         totalPlayers: players,
         currentPlayers: 0,
-        totalPrice: players * price,
-        pricePerPerson: price,
+        totalPrice: money(players * price), // money(): players*price float tozunu temizle (public API'de ₺333.299999... görünüyordu)
+        pricePerPerson: money(price),
         status: 'open',
         visibility: visibility || 'open',
         privateCode: privateCode || null,

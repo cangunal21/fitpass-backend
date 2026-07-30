@@ -23,6 +23,9 @@ export const createCoupon = async (req: Request, res: Response) => {
     if (discountType === 'percent' && dv > 100) {
       return res.status(400).json({ error: 'Yüzde indirim 1-100 arasında olmalıdır.' })
     }
+    // Fixed kupon değerini 2 ondalığa YUVARLA: 9.999 gibi kuruş-altı değer DB'ye girip discountAmount
+    // defterinde 3-ondalık toz bırakıyordu. money() ile aynı sözleşme (Math.round(x*100)/100).
+    const dvClean = Math.round(dv * 100) / 100
 
     // maxUses / expiresAt güvenli ayrıştır — 'abc'→NaN Prisma 500'ünü ve negatif maxUses'in kuponu
     // kalıcı brick'lemesini (0 >= -5 → "limit dolmuş" sonsuza dek) önle.
@@ -47,7 +50,7 @@ export const createCoupon = async (req: Request, res: Response) => {
         venueId,
         code: code.toUpperCase(),
         discountType,
-        discountValue: dv,
+        discountValue: dvClean,
         maxUses: maxUsesVal,
         perUserLimit: perUserLimit != null && perUserLimit !== '' && parseInt(perUserLimit) > 0 ? parseInt(perUserLimit) : null,
         expiresAt: expiresAtVal,

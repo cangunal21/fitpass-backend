@@ -1975,6 +1975,88 @@ async function run() {
     await prisma.venue.deleteMany({ where: { id: TV } }).catch(() => {})
   })
 
+  // ================== PARA MATEMATİĞİ REGRESYONLARI (denetim turu 14) ==================
+  await check('Para: fixed kupon discountAmount money()\'li — defter özdeşliği tutar', async () => {
+    const CV = 990801, CC = 990801, CS = 990801, CU = 990801
+    await prisma.venue.upsert({ where: { id: CV }, update: { isApproved: true, isActive: true }, create: { id: CV, name: 'CpV', email: `cpv${CV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: CC }, update: {}, create: { id: CC, venueId: CV, title: 'CpD', category: catName, basePrice: 50, durationMinutes: 60, capacity: 20, isActive: true } })
+    const soon = new Date(Date.now() + 2 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: CS }, update: { startsAt: soon }, create: { id: CS, classId: CC, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.user.upsert({ where: { id: CU }, update: {}, create: { id: CU, username: `cp_${CU}`, email: `cp_${CU}@x.com`, passwordHash: 'x', fullName: 'Cp', tierSportCounts: {} } })
+    await prisma.booking.deleteMany({ where: { userId: CU } })
+    // Kuruş-altı fixed kupon oluşturmayı DENE → 2 ondalığa yuvarlanmalı (9.999 → 10.00)
+    await prisma.coupon.deleteMany({ where: { code: 'FIX999' } })
+    const vtok = jwt.sign({ venueId: CV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const cr = await http('/api/venue/coupons', { method: 'POST', token: vtok, body: { code: 'FIX999', discountType: 'fixed', discountValue: 9.999 } })
+    if (cr.status !== 201) throw new Error(`kupon oluşturma: ${cr.status} ${cr.text.slice(0,120)}`)
+    const cpn = await prisma.coupon.findUnique({ where: { code: 'FIX999' }, select: { discountValue: true } })
+    if (Math.round((cpn!.discountValue) * 1000) % 10 !== 0) throw new Error(`fixed kupon 2 ondalığa yuvarlanmadı: ${cpn!.discountValue}`)
+    // Rezervasyonda defter özdeşliği: baseAmount = finalAmount + discountAmount (float tozu olmamalı)
+    const utok = jwt.sign({ userId: CU, email: `cp_${CU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const bk = await http('/api/bookings', { method: 'POST', token: utok, body: { sessionId: CS, couponCode: 'FIX999' } })
+    if (bk.status !== 201) throw new Error(`rezervasyon: ${bk.status} ${bk.text.slice(0,120)}`)
+    const row = await prisma.booking.findFirst({ where: { userId: CU }, select: { baseAmount: true, finalAmount: true, discountAmount: true } })
+    const drift = Math.abs(row!.baseAmount - (row!.finalAmount + row!.discountAmount))
+    if (drift > 1e-9) throw new Error(`defter özdeşliği bozuk: baseAmount ${row!.baseAmount} != finalAmount ${row!.finalAmount} + discountAmount ${row!.discountAmount} (fark ${drift})`)
+    await prisma.booking.deleteMany({ where: { userId: CU } }).catch(() => {})
+    await prisma.coupon.deleteMany({ where: { code: 'FIX999' } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: CS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: CC } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: CV } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: CU } }).catch(() => {})
+  })
+
+  await check('Para: drop-in totalPrice money()\'li + sıfır/negatif fiyat reddedilir', async () => {
+    const DV = 990802
+    await prisma.venue.upsert({ where: { id: DV }, update: { isApproved: true, isActive: true, isVerified: true }, create: { id: DV, name: 'DpV', email: `dpv${DV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, isVerified: true, neighborhoodId: V, cityId: 1 } })
+    // Drop-in'in izinli sporları (Basketbol/Padel/Halı Saha) katalogda YOK → endpoint 503 verip fiyat
+    // kontrolüne HİÇ ulaşmıyor. Testin fiyat kontrolünü gerçekten sınaması için geçici kategori aç.
+    // (İlk sürüm sport/format/kategori nedeniyle non-201 alıp fiyat kontrolünü atlıyordu — sabotaj yakaladı.)
+    await prisma.sportCategory.upsert({ where: { id: 990802 }, update: {}, create: { id: 990802, name: 'Basketbol', iconUrl: 'basketball', colorHex: '#F59E0B' } }).catch(() => {})
+    const vtok = jwt.sign({ venueId: DV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const base = { sport: 'Basketbol', format: '5v5 Tam Saha', date: '2027-01-01', time: '19:00' }
+    // Negatif ve sıfır fiyat reddedilmeli (artık kategori var → fiyat kontrolüne ulaşılıyor)
+    const neg = await http('/api/venue/dropin', { method: 'POST', token: vtok, body: { ...base, pricePerPerson: -5 } })
+    if (neg.status === 201) throw new Error('negatif fiyatlı drop-in oluşturulabildi')
+    const zero = await http('/api/venue/dropin', { method: 'POST', token: vtok, body: { ...base, pricePerPerson: 0 } })
+    if (zero.status === 201) throw new Error('sıfır fiyatlı drop-in oluşturulabildi')
+    // Geçerli ama float-tozu üreten fiyat: 10 oyuncu × 33.33 = 333.29999... → totalPrice money()'li olmalı
+    const ok = await http('/api/venue/dropin', { method: 'POST', token: vtok, body: { ...base, pricePerPerson: 33.33 } })
+    if (ok.status !== 201) throw new Error(`geçerli drop-in: ${ok.status} ${ok.text.slice(0,120)}`)
+    const slot = await prisma.dropInSlot.findFirst({ where: { venueId: DV }, orderBy: { id: 'desc' }, select: { totalPrice: true } })
+    if (Math.abs(slot!.totalPrice - Math.round(slot!.totalPrice * 100) / 100) > 1e-9) throw new Error(`totalPrice money()'li değil: ${slot!.totalPrice}`)
+    await prisma.dropInSlot.deleteMany({ where: { venueId: DV } }).catch(() => {})
+    await prisma.sportCategory.deleteMany({ where: { id: 990802 } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: DV } }).catch(() => {})
+  })
+
+  await check('Para: önceki yılda kazanılan puan, reset sonrası iptalde CARİ yılı düşürmez', async () => {
+    const YU = 990803, YC = 990803, YS = 990803, YV = 990803
+    await prisma.venue.upsert({ where: { id: YV }, update: { isApproved: true, isActive: true }, create: { id: YV, name: 'YrV', email: `yrv${YV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: YC }, update: {}, create: { id: YC, venueId: YV, title: 'YrD', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const future = new Date(Date.now() + 20 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: YS }, update: { startsAt: future }, create: { id: YS, classId: YC, startsAt: future, endsAt: new Date(future.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    const thisYear = new Date().getUTCFullYear()
+    // Kullanıcı: cari yılda 5 puanı VAR (meşru), rewardPointsYear = bu yıl
+    await prisma.user.upsert({ where: { id: YU }, update: { rewardPoints: 5, rewardPointsYear: thisYear }, create: { id: YU, username: `yr_${YU}`, email: `yr_${YU}@x.com`, passwordHash: 'x', fullName: 'Yr', rewardPoints: 5, rewardPointsYear: thisYear, tierSportCounts: {} } })
+    await prisma.booking.deleteMany({ where: { userId: YU } })
+    // ÖNCEKİ yılda oluşturulmuş, 5 puan kazandırmış bir booking (createdAt geçen yıl)
+    const lastYear = new Date(Date.UTC(thisYear - 1, 11, 20))
+    await prisma.booking.create({ data: { userId: YU, sessionId: YS, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, venuePayout: 100, finalAmount: 100, pointsEarned: 5, bookingNumber: `YR-${Date.now()}`, createdAt: lastYear, groupSize: 1 } })
+    const utok = jwt.sign({ userId: YU, email: `yr_${YU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const bkId = (await prisma.booking.findFirst({ where: { userId: YU }, select: { id: true } }))!.id
+    const r = await http(`/api/bookings/${bkId}/cancel`, { method: 'PUT', token: utok })
+    if (r.status !== 200) throw new Error(`iptal: ${r.status} ${r.text.slice(0,120)}`)
+    const after = await prisma.user.findUnique({ where: { id: YU }, select: { rewardPoints: true } })
+    // REGRESYON: eskiden dec=min(5, 5)=5 → cari yılın meşru 5 puanı haksız silinirdi. Artık 5 kalmalı.
+    if (after!.rewardPoints !== 5) throw new Error(`önceki yıl booking iptali cari puanı düşürdü: ${after!.rewardPoints} (5 bekleniyor)`)
+    await prisma.booking.deleteMany({ where: { userId: YU } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: YS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: YC } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: YV } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: YU } }).catch(() => {})
+  })
+
   // ================== YETKI — İKİNCİ PARTİ REGRESYONLAR (turlar 12-13 test borcu) ==================
   await check('Yetki: askıya alınmış salona transfer YAPILAMAZ', async () => {
     const TV = 990711, TC = 990711, S1 = 990711, S2 = 990712, TU = 990711

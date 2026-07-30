@@ -4,7 +4,7 @@ import crypto from 'crypto'
 import { sendVenueBookingNotificationEmail, sendCancellationEmail, sendVenueCancellationEmail, sendBookingConfirmationEmail, sendGroupTagNotificationEmail, sendGroupInviteEmail, sendCashbackEmail, sendTransferEmail } from '../utils/email'
 import { sendPushNotification } from '../utils/push'
 import { completeReferral } from './referralController'
-import { resetYearlyPointsIfNeeded } from '../utils/tier'
+import { resetYearlyPointsIfNeeded, reversiblePoints } from '../utils/tier'
 import { clampStr } from '../utils/validate'
 import { stripVenueSensitive } from '../utils/sanitize'
 import { trDate, trTime } from "../utils/trFormat"
@@ -128,9 +128,12 @@ export const createBooking = async (req: Request, res: Response) => {
             if (myUses >= found.perUserLimit) throw new BookingError('Bu kuponu daha fazla kullanamazsınız (kişi başı limit doldu).', 400)
           }
           coupon = found
+          // İKİ DAL DA money(): fixed dalı eskiden Math.min'i ham bırakıyordu → discountAmount kolonuna
+          // yuvarlanmamış float (49.995 gibi) yazılıp baseAmount = finalAmount + discountAmount defter
+          // özdeşliği 0.001 TL bozuluyordu. Artık her iki dal da 2 ondalığa yuvarlı.
           couponDiscount = found.discountType === 'percent'
             ? money(basePrice * (found.discountValue / 100))
-            : Math.min(found.discountValue, basePrice)
+            : money(Math.min(found.discountValue, basePrice))
         }
 
         const userWithTier = await tx.user.findUnique({
@@ -547,8 +550,9 @@ export const cancelBooking = async (req: Request, res: Response) => {
         // ilkinin düşürdüğü GÜNCEL bakiyeyi okur. Kilitsizken ikisi de stale bakiye okuyup min-clamp'i
         // atlar ve rewardPoints NEGATİFE düşerdi.
         await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`
-        const cur = await tx.user.findUnique({ where: { id: userId }, select: { rewardPoints: true } })
-        const dec = Math.min(booking.pointsEarned, cur?.rewardPoints || 0)
+        const cur = await tx.user.findUnique({ where: { id: userId }, select: { rewardPoints: true, rewardPointsYear: true } })
+        // Cross-year: booking önceki puan-yılındaysa puanı reset zaten sildi → tekrar düşme.
+        const dec = reversiblePoints(booking.pointsEarned, booking.createdAt, cur?.rewardPointsYear ?? null, cur?.rewardPoints || 0)
         if (dec > 0) {
           await tx.user.update({ where: { id: userId }, data: { rewardPoints: { decrement: dec } } })
           await tx.rewardPoint.create({ data: { userId, points: -dec, source: 'booking_cancelled', bookingId: booking.id } })
@@ -780,10 +784,13 @@ export const transferBooking = async (req: Request, res: Response) => {
         }
 
         const groupSize = booking.groupSize
-        const oldBase = booking.baseAmount
-        const newBase = target.class.basePrice * groupSize
+        const oldBase = booking.baseAmount // DB'de money() ile yuvarlanmış
+        const newBase = money(target.class.basePrice * groupSize)
 
-        // Aynı veya daha ucuz olmalı
+        // Aynı veya daha ucuz olmalı. KRİTİK: oldBase yuvarlı (kayıtlı baseAmount) ama newBase eskiden
+        // HAM float'tı → 8.33*3=24.990000000000002 > 24.99 TRUE olup AYNI fiyatlı transferi reddediyordu
+        // (getTransferOptions o seansı geçerli/0-iade listeler → liste ile transfer çelişiyordu). İki
+        // tarafı da money() ile yuvarlayınca 24.99 > 24.99 = false, doğru geçer.
         if (newBase > oldBase) {
           throw new BookingError('Sadece aynı veya daha uygun fiyatlı derslere transfer yapabilirsiniz.', 400)
         }
