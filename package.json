@@ -14,6 +14,7 @@
     "chaos": "ts-node scripts/chaos.ts",
     "fuzz": "ts-node scripts/fuzz.ts",
     "backup:prod": "bash scripts/backup-prod.sh",
+    "backup:prod:logical": "bash scripts/backup-prod-logical.sh",
     "typecheck": "tsc --noEmit",
     "typecheck:ci": "tsc -p tsconfig.ci.json"
   },

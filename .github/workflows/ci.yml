@@ -50,7 +50,9 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        # Prod (Railway) PostgreSQL 18.4 kosuyor. CI 16 kalirsa surume bagli davranis
+        # farklari (planlayici, yeni/degisen fonksiyonlar) CI'da YAKALANMAZ, canlida patlar.
+        image: postgres:18
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
