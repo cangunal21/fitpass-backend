@@ -352,19 +352,32 @@ export const resetPassword = async (req: Request, res: Response) => {
 
     const passwordHash = await bcrypt.hash(password, 12)
 
-    await prisma.user.update({
-      where: { id: resetToken.userId },
-      data: { passwordHash }
+    // ÜÇÜ TEK TRANSACTION'DA. Eskiden üç ayrı otomatik-commit yazmaydı ve iki sorun vardı:
+    //  1) Araya giren bir giriş: T2 eski parolayla doğrulamayı geçmişken T1 parolayı değiştirip
+    //     süpürgeyi çalıştırıyor, T2 SÜPÜRGEDEN SONRA yeni bir refresh token yazıyordu. Sonuç:
+    //     parola değiştirildikten sonra doğmuş, revoked=false, 180 gün geçerli bir oturum.
+    //     rotateAccessToken (utils/refreshToken.ts) yalnız revoked/expiresAt bakar, parola
+    //     sürümüne bakmaz → hesabı ele geçiren kişi parola sıfırlamasına RAĞMEN içeride kalıyordu.
+    //  2) Süpürge `.catch(() => {})` ile sarılıydı: başarısız olursa SESSİZCE yutuluyor,
+    //     kullanıcı "şifren güncellendi" görürken tüm eski oturumlar açık kalıyordu.
+    // Token tüketimi de aynı transaction'da CAS ile yapılıyor (used:false koşulu) → aynı
+    // sıfırlama bağlantısına iki kez tıklanması ikinci kez parola yazmaz.
+    const ok = await prisma.$transaction(async (tx) => {
+      const claim = await tx.passwordResetToken.updateMany({
+        where: { id: resetToken.id, used: false },
+        data: { used: true },
+      })
+      if (claim.count === 0) return false // token bu arada başka bir istekçe tüketildi
+      await tx.user.update({ where: { id: resetToken.userId }, data: { passwordHash } })
+      await tx.refreshToken.updateMany({ where: { userId: resetToken.userId, revoked: false }, data: { revoked: true } })
+      return true
     })
+    if (!ok) return res.status(400).json({ error: 'Geçersiz veya süresi dolmuş token' })
 
-    await prisma.passwordResetToken.update({
-      where: { id: resetToken.id },
-      data: { used: true }
-    })
-
-    // Şifre sıfırlandı → mevcut TÜM oturumları kapat (refresh token'ları iptal).
-    // Hesabı ele geçiren biri varsa, şifre sıfırlama onun 180-günlük oturumunu da öldürür.
-    await prisma.refreshToken.updateMany({ where: { userId: resetToken.userId, revoked: false }, data: { revoked: true } }).catch(() => {})
+    // Süpürge transaction'ı commit ettikten SONRA doğmuş olabilecek oturumları da kapat:
+    // eşzamanlı bir giriş, tx görünürlüğü dışında token yazmış olabilir. İkinci süpürge
+    // ucuz ve idempotent; parola değişiminden sonra hiçbir eski oturum ayakta kalmamalı.
+    await prisma.refreshToken.updateMany({ where: { userId: resetToken.userId, revoked: false }, data: { revoked: true } })
 
     return res.json({ message: 'Şifre güncellendi' })
   } catch (error) {

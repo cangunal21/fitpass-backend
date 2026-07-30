@@ -834,6 +834,9 @@ async function run() {
   await check('Puanlama: check-in\'li + bitişten 2sa sonra salon & hoca çift puanı + display', async () => {
     const IV = 990093, IC = 990093, ISS = 990093, IU = 990093, II = 990093
     const past3h = new Date(Date.now() - 3 * 3600000)
+    // ISS2 FARKLI bir saatte: (classId, startsAt) artık DB'de tekil. Aynı dersin aynı anda iki
+    // seansı zaten olamaz; fixture kolaylık olsun diye aynı saati kullanıyordu.
+    const past4h = new Date(Date.now() - 4 * 3600000)
     await prisma.venue.upsert({ where: { id: IV }, update: { isApproved: true, isActive: true, avgRating: 0, totalReviews: 0 }, create: { id: IV, name: 'RateVenue', email: `rt${IV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.instructor.upsert({ where: { id: II }, update: { avgRating: 0, totalReviews: 0, isActive: true }, create: { id: II, venueId: IV, fullName: 'Rate Hoca', isActive: true } })
     await prisma.class.upsert({ where: { id: IC }, update: { instructorId: II }, create: { id: IC, venueId: IV, instructorId: II, title: 'RateDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
@@ -876,6 +879,9 @@ async function run() {
   await check('Puanlama: check-in olmayan booking 403 (derse gitmeyen puanlayamaz)', async () => {
     const IV = 990094, IC = 990094, ISS = 990094, IU = 990094
     const past3h = new Date(Date.now() - 3 * 3600000)
+    // ISS2 FARKLI bir saatte: (classId, startsAt) artık DB'de tekil. Aynı dersin aynı anda iki
+    // seansı zaten olamaz; fixture kolaylık olsun diye aynı saati kullanıyordu.
+    const past4h = new Date(Date.now() - 4 * 3600000)
     await prisma.venue.upsert({ where: { id: IV }, update: { isApproved: true, isActive: true }, create: { id: IV, name: 'NoCheckVenue', email: `nc${IV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.class.upsert({ where: { id: IC }, update: {}, create: { id: IC, venueId: IV, title: 'NoCheckDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     await prisma.class_Session.upsert({ where: { id: ISS }, update: { startsAt: past3h, endsAt: past3h }, create: { id: ISS, classId: IC, startsAt: past3h, endsAt: past3h, availableSpots: 20, status: 'open' } })
@@ -897,11 +903,14 @@ async function run() {
     const ISS = 990095   // katılınan + 3sa önce bitmiş (job'a uygun: >2sa)
     const ISS2 = 990096  // katılınmayan (checkedIn=false) — pending'de OLMAMALI
     const past3h = new Date(Date.now() - 3 * 3600000)
+    // ISS2 FARKLI bir saatte: (classId, startsAt) artık DB'de tekil. Aynı dersin aynı anda iki
+    // seansı zaten olamaz; fixture kolaylık olsun diye aynı saati kullanıyordu.
+    const past4h = new Date(Date.now() - 4 * 3600000)
     await prisma.venue.upsert({ where: { id: IV }, update: { isApproved: true, isActive: true }, create: { id: IV, name: 'PendVenue', email: `pv${IV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.instructor.upsert({ where: { id: II }, update: { isActive: true }, create: { id: II, venueId: IV, fullName: 'Pend Hoca', isActive: true } })
     await prisma.class.upsert({ where: { id: IC }, update: { instructorId: II }, create: { id: IC, venueId: IV, instructorId: II, title: 'PendDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     await prisma.class_Session.upsert({ where: { id: ISS }, update: { startsAt: past3h, endsAt: past3h }, create: { id: ISS, classId: IC, startsAt: past3h, endsAt: past3h, availableSpots: 20, status: 'open' } })
-    await prisma.class_Session.upsert({ where: { id: ISS2 }, update: { startsAt: past3h, endsAt: past3h }, create: { id: ISS2, classId: IC, startsAt: past3h, endsAt: past3h, availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: ISS2 }, update: { startsAt: past4h, endsAt: past4h }, create: { id: ISS2, classId: IC, startsAt: past4h, endsAt: past4h, availableSpots: 20, status: 'open' } })
     await prisma.user.upsert({ where: { id: IU }, update: {}, create: { id: IU, username: `pend_${IU}`, email: `pend_${IU}@x.com`, passwordHash: 'x', fullName: 'Pend User', tierSportCounts: {} } })
     const bkGo = await prisma.booking.create({ data: { userId: IU, sessionId: ISS, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `PG-${Date.now()}`, checkedIn: true, checkedInAt: new Date(), ratingPromptSent: false } })
     // katılınmayan booking (aynı kullanıcı, farklı seans) — pending listesine GİRMEMELİ
@@ -1927,8 +1936,11 @@ async function run() {
     if (rr.status !== 201) throw new Error(`tekrarlayan: ${rr.status}`)
     const rec = await prisma.class_Session.findFirst({ where: { classId: TC }, orderBy: { startsAt: 'asc' }, select: { startsAt: true } })
     if (!rec) throw new Error('tekrarlayan seans oluşmadı (bu haftaki Çarşamba geçmiş olabilir)')
-    // Aynı günü tek-seans ucundan da ekle → iki yol AYNI anı vermeli (eskiden 3 saat fark vardı)
+    // Aynı günü tek-seans ucundan da ekle → iki yol AYNI anı vermeli (eskiden 3 saat fark vardı).
+    // (classId, startsAt) artık DB'de TEKİL olduğu için önce tekrarlayan seansı silip aynı anı
+    // ikinci yoldan üretiyoruz; karşılaştırma aynı, çakışma yok.
     const ymd = new Date(rec.startsAt).toLocaleDateString('en-CA', { timeZone: 'Europe/Istanbul' })
+    await prisma.class_Session.deleteMany({ where: { classId: TC } })
     const one = await http(`/api/venue/classes/${TC}/sessions`, { method: 'POST', token: tok, body: { date: ymd, time: '20:30', capacity: 10 } })
     if (one.status !== 201) throw new Error(`tek seans: ${one.status} ${one.text.slice(0, 160)}`)
     const single = await prisma.class_Session.findUnique({ where: { id: one.json.session.id }, select: { startsAt: true } })
@@ -1955,6 +1967,95 @@ async function run() {
     if (r.status !== 400) throw new Error(`10 gün sonraki drop-in check-in'i ${r.status} döndü (400 bekleniyor)`)
     await prisma.dropInParticipant.deleteMany({ where: { slotId: slot.id } }).catch(() => {})
     await prisma.dropInSlot.deleteMany({ where: { id: slot.id } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: TU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: TV } }).catch(() => {})
+  })
+
+  // ================== EŞZAMANLILIK REGRESYONLARI (denetim turu 12) ==================
+  await check('Eşzamanlılık: parola sıfırlama TÜM oturumları kapatır ve token tek kullanımlık', async () => {
+    const PU = 990601
+    const bcryptLib = require('bcryptjs')
+    await prisma.user.upsert({ where: { id: PU }, update: {}, create: { id: PU, username: `pw_${PU}`, email: `pw_${PU}@x.com`, passwordHash: await bcryptLib.hash('EskiSifre123', 12), fullName: 'Pw', tierSportCounts: {} } })
+    await prisma.refreshToken.deleteMany({ where: { userId: PU } })
+    await prisma.refreshToken.create({ data: { token: `rt-old-${PU}-${Date.now()}`, userId: PU, expiresAt: new Date(Date.now() + 86400000) } })
+    await prisma.passwordResetToken.deleteMany({ where: { userId: PU } })
+    const rt = `reset-${PU}-${Date.now()}`
+    await prisma.passwordResetToken.create({ data: { token: rt, userId: PU, expiresAt: new Date(Date.now() + 3600000) } })
+    const r1 = await http('/api/auth/reset-password', { method: 'POST', body: { token: rt, password: 'YeniSifre123' } })
+    if (r1.status !== 200) throw new Error(`sıfırlama: ${r1.status} ${r1.text.slice(0, 160)}`)
+    // REGRESYON: revoke `.catch(()=>{})` ile yutuluyordu → eski oturum ayakta kalabiliyordu
+    const alive = await prisma.refreshToken.count({ where: { userId: PU, revoked: false } })
+    if (alive !== 0) throw new Error(`parola değişti ama ${alive} oturum hâlâ açık (0 bekleniyor)`)
+    // Aynı token ikinci kez kullanılamaz (CAS)
+    const r2 = await http('/api/auth/reset-password', { method: 'POST', body: { token: rt, password: 'BaskaSifre123' } })
+    if (r2.status === 200) throw new Error('aynı sıfırlama token\'ı İKİNCİ kez kullanılabildi')
+    await prisma.refreshToken.deleteMany({ where: { userId: PU } }).catch(() => {})
+    await prisma.passwordResetToken.deleteMany({ where: { userId: PU } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: PU } }).catch(() => {})
+  })
+
+  await check('Eşzamanlılık: aynı ders+saat için İKİ seans oluşturulamaz (DB tekilliği)', async () => {
+    const TV = 990602, TC = 990602
+    await prisma.venue.upsert({ where: { id: TV }, update: { isApproved: true, isActive: true, isVerified: true }, create: { id: TV, name: 'CcVenue', email: `cc${TV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, isVerified: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: TC }, update: {}, create: { id: TC, venueId: TV, title: 'CcDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    await prisma.class_Session.deleteMany({ where: { classId: TC } })
+    const when = new Date(Date.now() + 5 * 86400000)
+    await prisma.class_Session.create({ data: { classId: TC, startsAt: when, endsAt: new Date(when.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    // REGRESYON: (classId, startsAt) tekilliği yoktu → çift gönderim iki seans üretiyor, kontenjan ikiye bölünüyordu
+    let ikinciOlustu = false
+    try {
+      await prisma.class_Session.create({ data: { classId: TC, startsAt: when, endsAt: new Date(when.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+      ikinciOlustu = true
+    } catch (e: any) { if (e?.code !== 'P2002') throw e }
+    if (ikinciOlustu) throw new Error('aynı ders+saat için ikinci seans oluşabildi (DB tekilliği yok)')
+    await prisma.class_Session.deleteMany({ where: { classId: TC } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: TC } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: TV } }).catch(() => {})
+  })
+
+  await check('Eşzamanlılık: drop-in check-in İKİ kez başarılı dönemez (atomik CAS)', async () => {
+    const TV = 990603, TU = 990603
+    await prisma.venue.upsert({ where: { id: TV }, update: { isApproved: true, isActive: true }, create: { id: TV, name: 'CcVenue2', email: `cc${TV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.user.upsert({ where: { id: TU }, update: {}, create: { id: TU, username: `cc_${TU}`, email: `cc_${TU}@x.com`, passwordHash: 'x', fullName: 'Cc', tierSportCounts: {} } })
+    const cat = await prisma.sportCategory.findFirst({ where: { name: { equals: catName, mode: 'insensitive' } }, select: { id: true } })
+    const now = new Date(Date.now() + 10 * 60000) // 10 dk sonra → check-in penceresi AÇIK
+    const slot = await prisma.dropInSlot.create({ data: { venueId: TV, sportCategoryId: cat!.id, title: 'CcDropIn', startsAt: now, endsAt: new Date(now.getTime() + 3600000), pricePerPerson: 100, totalPrice: 400, totalPlayers: 4, format: '2x2', status: 'open', visibility: 'open' } })
+    const code = `CC${Date.now()}`.slice(0, 12).toUpperCase()
+    await prisma.dropInParticipant.create({ data: { slotId: slot.id, userId: TU, status: 'confirmed', checkInCode: code } })
+    const tok = jwt.sign({ venueId: TV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    // İKİ İSTEĞİ AYNI ANDA gönder — oku-sonra-yaz olsaydı ikisi de success dönerdi
+    const [a, b] = await Promise.all([
+      http('/api/bookings/dropin-checkin', { method: 'POST', token: tok, body: { code } }),
+      http('/api/bookings/dropin-checkin', { method: 'POST', token: tok, body: { code } }),
+    ])
+    const basarili = [a, b].filter(r => r.json?.success === true).length
+    if (basarili !== 1) throw new Error(`eşzamanlı iki check-in'den ${basarili} tanesi 'success' döndü (tam 1 bekleniyor)`)
+    await prisma.dropInParticipant.deleteMany({ where: { slotId: slot.id } }).catch(() => {})
+    await prisma.dropInSlot.deleteMany({ where: { id: slot.id } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: TU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: TV } }).catch(() => {})
+  })
+
+  await check('Eşzamanlılık: bekleme listesinde \'notified\' kalıcı dışlama DEĞİL (süre aşımı)', async () => {
+    const TV = 990604, TC = 990604, TS = 990604, TU = 990604
+    await prisma.venue.upsert({ where: { id: TV }, update: { isApproved: true, isActive: true }, create: { id: TV, name: 'WlVenue', email: `wl${TV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: TC }, update: {}, create: { id: TC, venueId: TV, title: 'WlDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 1, isActive: true } })
+    const when = new Date(Date.now() + 3 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: TS }, update: { startsAt: when }, create: { id: TS, classId: TC, startsAt: when, endsAt: new Date(when.getTime() + 3600000), availableSpots: 1, status: 'open' } })
+    await prisma.user.upsert({ where: { id: TU }, update: {}, create: { id: TU, username: `wl_${TU}`, email: `wl_${TU}@x.com`, passwordHash: 'x', fullName: 'Wl', tierSportCounts: {} } })
+    await prisma.waitlist.deleteMany({ where: { sessionId: TS } })
+    // 31 dakika önce bildirilmiş ama yeri kapamamış bekleyen → yeniden seçilebilmeli
+    await prisma.waitlist.create({ data: { sessionId: TS, userId: TU, status: 'notified', notifiedAt: new Date(Date.now() - 31 * 60000) } })
+    const { notifyFirstWaitlistUser } = require('../src/controllers/waitlistController')
+    await notifyFirstWaitlistUser(TS)
+    const row = await prisma.waitlist.findFirst({ where: { sessionId: TS, userId: TU }, select: { notifiedAt: true } })
+    // REGRESYON: 'notified' kalıcıydı → notifiedAt hiç tazelenmez, kullanıcı bir daha ASLA bildirim almazdı
+    if (!row?.notifiedAt || row.notifiedAt.getTime() < Date.now() - 5 * 60000) {
+      throw new Error('süresi geçmiş \'notified\' bekleyen yeniden bildirilmedi (kalıcı dışlama)')
+    }
+    await prisma.waitlist.deleteMany({ where: { sessionId: TS } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: TS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: TC } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: TU } }).catch(() => {})
     await prisma.venue.deleteMany({ where: { id: TV } }).catch(() => {})
   })

@@ -473,26 +473,56 @@ export const cancelBooking = async (req: Request, res: Response) => {
       }
     }
 
-    // Determine refund type
-    const sessionStartsAt2 = booking.session?.startsAt
-    const hoursUntil = sessionStartsAt2
-      ? (new Date(sessionStartsAt2).getTime() - new Date().getTime()) / (1000 * 60 * 60)
-      : 999
-    const refundType = hoursUntil >= 24 ? 'full' : 'half'
-    const refundAmount = refundType === 'full' ? booking.finalAmount : money((booking.finalAmount || 0) / 2)
+    // (İade tipi/tutarı artık transaction İÇİNDE, taze satırdan hesaplanıyor — aşağıya bak.)
 
-    const updated = await prisma.$transaction(async (tx) => {
-      // Atomik durum geçişi (compare-and-swap): yalnızca HÂLÂ iptal edilmemiş kaydı iptal et.
-      // İki eşzamanlı iptal isteği yarışında yalnızca BİRİ count=1 alır → çift puan/kupon
-      // geri-alma önlenir (kilitsiz findUnique + tx-dışı status kontrolü yarışa açıktı).
+    // NOT: yukarıdaki `booking` yalnızca ERKEN REDDETME içindir (404/403/zaten-iptal/12-saat).
+    // İptal MATEMATİĞİ transaction içindeki TAZE ve KİLİTLİ satırdan türetilir — aşağıya bak.
+    const outcome = await prisma.$transaction(async (tx) => {
+      // KİLİT SIRASI (tüm kod tabanında aynı olmalı): User → Class_Session → Booking → Coupon.
+      // Eskiden burası Booking(CAS) → User → Coupon, purgeBookingsForSessions ise User → Booking
+      // sırasıyla kilitliyordu; ters sıra PostgreSQL deadlock'u (40P01) üretiyordu.
+      await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`
+      await tx.$executeRaw`SELECT id FROM "Booking" WHERE id = ${bookingId} FOR UPDATE`
+
+      // TAZE OKUMA. Kritik: satır 445'teki okuma transaction DIŞINDA ve kilitsizdi. Araya giren
+      // bir transferBooking sessionId/finalAmount/pointsEarned'ı değiştirebiliyor, iptal ise
+      // BAYAT değerlerle çalışıp kullanıcının bakiyesinden fazla puan siliyor, yanlış iade tutarı
+      // vaat ediyor ve 12-saat kapısını ESKİ seansın saatiyle değerlendiriyordu (politika baypası).
+      const fresh = await tx.booking.findUnique({
+        where: { id: bookingId },
+        include: { session: { select: { startsAt: true } } },
+      })
+      if (!fresh || fresh.status === 'cancelled') return { kind: 'already' as const }
+      if (fresh.userId !== userId) return { kind: 'forbidden' as const }
+
+      // 12-saat kapısı ve iade tutarı TAZE satırdan yeniden hesaplanır.
+      const freshHours = fresh.session?.startsAt
+        ? (new Date(fresh.session.startsAt).getTime() - Date.now()) / 3600000
+        : 999
+      if (freshHours < 12) return { kind: 'tooLate' as const, hoursLeft: Math.round(freshHours * 10) / 10 }
+      const rType = freshHours >= 24 ? 'full' : 'half'
+      const rAmount = rType === 'full' ? fresh.finalAmount : money((fresh.finalAmount || 0) / 2)
+
+      // CAS'i transferBooking:783 ile SİMETRİK yap: yalnız status değil, matematiği besleyen
+      // alanları da pinle. Araya giren transfer bunları değiştirdiyse count=0 → hiçbir şey yapma.
       const flip = await tx.booking.updateMany({
-        where: { id: bookingId, status: { not: 'cancelled' } },
+        where: {
+          id: bookingId,
+          status: fresh.status,
+          sessionId: fresh.sessionId,
+          finalAmount: fresh.finalAmount,
+          pointsEarned: fresh.pointsEarned,
+          checkedIn: false,
+        },
         data: {
           status: 'cancelled',
-          notes: `${booking.notes ? booking.notes + ' | ' : ''}İptal: ${refundType === 'full' ? 'Tam iade' : 'Yarım iade'} (₺${refundAmount})`,
+          notes: `${fresh.notes ? fresh.notes + ' | ' : ''}İptal: ${rType === 'full' ? 'Tam iade' : 'Yarım iade'} (₺${rAmount})`,
         },
       })
-      if (flip.count === 0) return null // başka bir istek zaten iptal etti → hiçbir geri-alma yapma
+      if (flip.count === 0) return { kind: 'conflict' as const }
+      const booking = fresh // aşağıdaki geri-alma bloklarının tamamı artık TAZE satırı kullanır
+      const refundType = rType
+      const refundAmount = rAmount
 
       // Rezervasyon gerçekleşmediği için kazandığı puanı geri al (yalnızca iptali biz yaptıysak).
       // Bakiyeden FAZLA düşme: yıllık puan sıfırlaması sonrası eski booking iptal edilince
@@ -545,13 +575,21 @@ export const cancelBooking = async (req: Request, res: Response) => {
         }
       }
 
-      return await tx.booking.findUnique({ where: { id: bookingId } })
+      return {
+        kind: 'ok' as const,
+        booking: await tx.booking.findUnique({ where: { id: bookingId } }),
+        refundType, refundAmount, sessionId: fresh.sessionId,
+      }
     })
 
-    // Yarışı kaybettik (kayıt zaten iptal edilmişti) → çift işlem yapma
-    if (!updated) {
-      return res.status(400).json({ error: 'Rezervasyon zaten iptal edilmiş.' })
-    }
+    if (outcome.kind === 'already') return res.status(400).json({ error: 'Rezervasyon zaten iptal edilmiş.' })
+    if (outcome.kind === 'forbidden') return res.status(403).json({ error: 'Bu rezervasyonu iptal edemezsiniz.' })
+    if (outcome.kind === 'tooLate') return res.status(400).json({ error: 'Derse 12 saatten az kaldığı için iptal yapılamaz.', hoursLeft: outcome.hoursLeft })
+    // Araya giren bir transfer rezervasyonu değiştirdi → istemci tazeleyip tekrar denemeli.
+    if (outcome.kind === 'conflict') return res.status(409).json({ error: 'Rezervasyon bu sırada değişti. Sayfayı yenileyip tekrar deneyin.' })
+    const updated = outcome.booking
+    const refundType = outcome.refundType
+    const refundAmount = outcome.refundAmount
 
     // İptal email bildirimleri
     try {
@@ -590,7 +628,9 @@ export const cancelBooking = async (req: Request, res: Response) => {
     // Waitlist'teki ilk kişiye bildir
     try {
       const { notifyFirstWaitlistUser } = await import('./waitlistController')
-      await notifyFirstWaitlistUser(booking.sessionId!)
+      // TAZE sessionId: bayat okumadan gelirse boşalan yer YANLIŞ seansa duyurulur ve gerçek
+      // boşluk hiç ilan edilmez.
+      await notifyFirstWaitlistUser(outcome.sessionId!)
     } catch (e) {
       console.error('Waitlist notify error:', e)
     }
@@ -899,10 +939,22 @@ export const checkInDropIn = async (req: Request, res: Response) => {
       })
     }
 
-    await prisma.dropInParticipant.update({
-      where: { id: participant.id },
+    // ATOMİK SAHİPLENME (CAS): checkInBooking ve checkInInstructorBooking bu deseni kullanıyor,
+    // burada unutulmuştu. Oku-sonra-yaz olduğu için aynı kod iki kez okutulduğunda İKİ istek de
+    // yukarıdaki `participant.checkedIn` kontrolünü geçip ikisine de "Check-in başarılı!" dönüyordu
+    // (salon aynı kişiyi iki kez içeri almış sayıyor). count=0 → yarışı kaybettik, zaten yapılmış.
+    const claim = await prisma.dropInParticipant.updateMany({
+      where: { id: participant.id, checkedIn: false },
       data: { checkedIn: true, checkedInAt: new Date() }
     })
+    if (claim.count === 0) {
+      const now = await prisma.dropInParticipant.findUnique({ where: { id: participant.id }, select: { checkedInAt: true } })
+      return res.json({
+        alreadyCheckedIn: true,
+        message: 'Bu katılımcı zaten check-in yapmış.',
+        participant: { user: participant.user, slotTitle: participant.slot?.title, checkedInAt: now?.checkedInAt }
+      })
+    }
 
     return res.json({
       success: true,

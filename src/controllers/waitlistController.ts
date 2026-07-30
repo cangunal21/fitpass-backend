@@ -102,10 +102,25 @@ export const notifyFirstWaitlistUser = async (sessionId: number) => {
       // banned=false: banlı bekleyen sırayı BAŞTAN kapıp tek "yer açıldı" bildirimini tüketir ama
       // authMiddleware 403 verdiğinden hiç rezerve edemez → sıradaki gerçek bekleyen hiç haber almaz.
       // Yalnız Waitlist satırını kilitle (FOR UPDATE OF w) — join'lenen User satırını değil.
+      // 'notified' ÖLÜ BİR DURUMDU: kod tabanında yalnız aşağıda YAZILIYOR, hiçbir yerde geri
+      // 'waiting'e çevrilmiyordu. Bildirim gönderilen kişi yeri kapamazsa (araya başkası girdi,
+      // e-postayı geç gördü) satırı kalıcı olarak 'notified'da kalıyor ve bir daha ASLA
+      // bildirim alamıyordu — sırada görünmeye devam ederek sessizce dışlanıyordu.
+      // Çözüm: bildirim bir ÖNCELİK PENCERESİ. Pencere dolduysa kişi havuza geri döner ve
+      // sıradaki boşlukta yeniden değerlendirilir; sıra yeri (createdAt) korunur.
       const rows = await tx.$queryRaw<{ id: number }[]>`
         SELECT w.id FROM "Waitlist" w
         JOIN "User" u ON u.id = w."userId"
-        WHERE w."sessionId" = ${sessionId} AND w.status = 'waiting' AND u.banned = false
+        WHERE w."sessionId" = ${sessionId}
+          AND u.banned = false
+          AND (
+            w.status = 'waiting'
+            -- NOW() timestamptz döner; notifiedAt ise timestamp WITHOUT time zone (Prisma UTC yazar).
+            -- Düz NOW() ile karşılaştırma DB OTURUMUNUN saat dilimine göre kayar: yerelde
+            -- (TimeZone=America/Toronto) 31 dk önceki satır "4 saat sonrası" gibi görünüp hiç
+            -- seçilmiyordu. Railway'de TZ=UTC olduğu için tesadüfen çalışırdı — doğru olduğu için değil.
+            OR (w.status = 'notified' AND w."notifiedAt" < (NOW() AT TIME ZONE 'UTC') - INTERVAL '30 minutes')
+          )
         ORDER BY w."createdAt" ASC
         LIMIT 1
         FOR UPDATE OF w SKIP LOCKED`

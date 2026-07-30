@@ -86,9 +86,13 @@ export async function syncUserBadges(userId: number): Promise<string[]> {
       for (const [scId, count] of sportCounts) {
         if (count < threshold) continue
         if (!earnedMasterSports.has(scId)) {
-          toCreate.push({ userId, badgeId: badge.id, sportCategoryId: scId })
+          // İsim BURADA eklenmiyor: aşağıdaki döngü, GERÇEKTEN yazılan satırdan türetiyor.
+          // Eskiden burada push ediliyordu → (a) eşzamanlı iki /api/auth/me çağrısında ikisi de
+          // "yeni rozet" sayıp çift bildirim/push/e-posta üretiyordu, (b) satırda `_name` olmadığı
+          // için aşağıdaki push `undefined` ekliyor ve "2 yeni rozet kazandın!" gibi şişirilmiş
+          // mesaj çıkıyordu.
+          toCreate.push({ userId, badgeId: badge.id, sportCategoryId: scId, _name: `${sportIdName.get(scId) || 'Spor'} ustası` } as any)
           earnedMasterSports.add(scId)
-          newlyAwarded.push(`${sportIdName.get(scId) || 'Spor'} ustası`)
         }
       }
       continue
@@ -129,7 +133,7 @@ export async function syncUserBadges(userId: number): Promise<string[]> {
       const { _name, ...data } = row
       try {
         await prisma.userBadge.create({ data })
-        newlyAwarded.push(_name)
+        if (_name) newlyAwarded.push(_name) // _name'siz satır bildirimi şişirmesin
       } catch (e: any) {
         if (e?.code !== 'P2002') throw e // zaten sahip → sessizce atla, "yeni" sayma
       }

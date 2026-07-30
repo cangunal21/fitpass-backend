@@ -21,6 +21,32 @@ export async function ensureIndexes() {
   }
 
   try {
+    // SEANS MÜKERRERLİĞİ: createRecurringSessions/createSession "önce findFirst, yoksa create"
+    // desenini kullanıyor ama (classId, startsAt) üzerinde DB tekilliği YOKTU — ne şemada ne burada.
+    // Kodla sağlanan tekillik eşzamanlılıkta işe yaramaz: salonun formu iki kez göndermesi (ya da
+    // iki eşzamanlı istek) aynı ders+saat için İKİ seans satırı üretiyordu. Etkisi kozmetik değil:
+    // kontenjan ikiye bölünür (salon 20 dedi, sistemde 40 yer açılır → gerçek salonda aşırı satış)
+    // ve ders listesinde aynı saat iki kez görünür.
+    // Önce GÜVENLİ tekilleştirme: yalnızca rezervasyonu ve bekleyeni OLMAYAN kopyalar silinir;
+    // en küçük id kanonik kabul edilir. Rezervasyonlu kopya varsa DOKUNULMAZ (veri kaybetmeyiz) —
+    // o durumda index kurulamaz ve aşağıdaki catch bunu loglar, sessizce geçmez.
+    await prisma.$executeRawUnsafe(`
+      DELETE FROM "Class_Session" s
+      WHERE EXISTS (
+        SELECT 1 FROM "Class_Session" k
+        WHERE k."classId" = s."classId" AND k."startsAt" = s."startsAt" AND k.id < s.id
+      )
+      AND NOT EXISTS (SELECT 1 FROM "Booking" b WHERE b."sessionId" = s.id)
+      AND NOT EXISTS (SELECT 1 FROM "Waitlist" w WHERE w."sessionId" = s.id)
+    `)
+    await prisma.$executeRawUnsafe(
+      `CREATE UNIQUE INDEX IF NOT EXISTS class_session_class_startsat_unique ON "Class_Session"("classId", "startsAt")`
+    )
+  } catch (e) {
+    console.error('ensureIndexes (class_session tekilliği) hata (yok sayıldı):', e)
+  }
+
+  try {
     // SPOR KATEGORİSİ MÜKERRERLİĞİ: `SportCategory.name` şemada @unique DEĞİL, seed ise
     // createMany({skipDuplicates:true}) kullanıyor — skipDuplicates yalnız GERÇEK unique kısıt üzerinden
     // çalıştığı için seed her koşuşta aynı isimleri TEKRAR ekliyordu (dev DB'de Yoga id=1,12,23 gibi

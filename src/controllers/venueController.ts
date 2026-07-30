@@ -18,6 +18,21 @@ async function purgeBookingsForSessions(tx: any, sessionIds: number[]) {
   // Bekleme listesi kayıtları seansa GERÇEK FK ile bağlı → seans silinmeden önce temizlenmeli
   // (rezervasyon olmasa bile bekleme listesi olabilir; erken return'dan ÖNCE silinir)
   if (sessionIds.length) await tx.waitlist.deleteMany({ where: { sessionId: { in: sessionIds } } })
+  // KİLİT SIRASI: User → Booking (cancelBooking ile AYNI sıra). Eskiden burada Booking'e hiç
+  // kilit alınmıyordu ve User döngü içinde kilitleniyordu; cancelBooking ise Booking→User
+  // sırasındaydı → ters sıra PostgreSQL deadlock'u (40P01) üretiyordu. Kurban bu taraf olursa
+  // seans silinmiyor ve o seanstaki HERKESİN puan iadesi hiç yazılmıyordu.
+  const preview = await tx.booking.findMany({ where: { sessionId: { in: sessionIds } }, select: { userId: true } })
+  if (preview.length === 0) return []
+  for (const uid of [...new Set(preview.map((b: any) => b.userId))].sort((a: any, b: any) => a - b)) {
+    await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${uid} FOR UPDATE`
+  }
+  await tx.$executeRaw`SELECT id FROM "Booking" WHERE "sessionId" = ANY(${sessionIds}::int[]) FOR UPDATE`
+
+  // Kilitler alındıktan SONRA taze oku. Kilitsiz okuma, eşzamanlı bir cancelBooking ile aynı
+  // rezervasyonun puanını İKİ KEZ geri aldırıyordu (iptal -100 yazar, burası bayat snapshot'ta
+  // hâlâ 'confirmed'/pointsEarned=100 gördüğü için bir -100 daha yazardı → bakiyeden 200 düşer,
+  // defterde aynı bookingId için iki ters kayıt kalırdı).
   const bookings = await tx.booking.findMany({
     where: { sessionId: { in: sessionIds } },
     select: { id: true, userId: true, pointsEarned: true, status: true },
@@ -27,8 +42,8 @@ async function purgeBookingsForSessions(tx: any, sessionIds: number[]) {
   for (const b of bookings) {
     if (b.pointsEarned > 0 && (b.status === 'confirmed' || b.status === 'pending')) {
       // CLAMP: bakiyeyi NEGATİFE düşürme (yıllık reset/redemption sonrası pointsEarned > güncel bakiye olabilir).
-      // cancelBooking/transferBooking ile aynı invariant — User FOR UPDATE + Math.min.
-      await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${b.userId} FOR UPDATE`
+      // cancelBooking/transferBooking ile aynı invariant — Math.min. (User kilidi yukarıda,
+      // döngüden ÖNCE ve id sırasıyla alındı: hem deadlock sırası sabit hem tx daha kısa.)
       const cur = await tx.user.findUnique({ where: { id: b.userId }, select: { rewardPoints: true } })
       const dec = Math.min(b.pointsEarned, cur?.rewardPoints || 0)
       if (dec > 0) {
@@ -454,14 +469,22 @@ export const createSession = async (req: Request, res: Response) => {
     }
     const endsAt = new Date(startsAt.getTime() + (cls.durationMinutes || cls.duration || 60) * 60000)
 
-    const session = await prisma.class_Session.create({
-      data: {
-        classId,
-        startsAt,
-        endsAt,
-        availableSpots: cap,
-      }
-    })
+    let session
+    try {
+      session = await prisma.class_Session.create({
+        data: {
+          classId,
+          startsAt,
+          endsAt,
+          availableSpots: cap,
+        }
+      })
+    } catch (e: any) {
+      // (classId, startsAt) artık DB'de tekil (ensureIndexes). Aynı saate ikinci seans denemesi
+      // "Sunucu hatası" değil, anlaşılır bir çakışma mesajı almalı.
+      if (e?.code === 'P2002') return res.status(409).json({ error: 'Bu ders için bu saatte zaten bir seans var.' })
+      throw e
+    }
 
     return res.status(201).json({ message: 'Seans oluşturuldu!', session })
   } catch (err) {
@@ -528,10 +551,18 @@ export const createRecurringSessions = async (req: Request, res: Response) => {
           continue
         }
 
-        const session = await prisma.class_Session.create({
-          data: { classId, startsAt: date, endsAt, availableSpots: parseInt(capacity) }
-        })
-        created.push(session)
+        try {
+          const session = await prisma.class_Session.create({
+            data: { classId, startsAt: date, endsAt, availableSpots: parseInt(capacity) }
+          })
+          created.push(session)
+        } catch (e: any) {
+          // P2002: yukarıdaki findFirst ile bu create arasında BAŞKA bir istek aynı seansı
+          // oluşturdu (çift gönderim / eşzamanlı istek). DB tekilliği artık bunu yakalıyor;
+          // 500 yerine "zaten vardı, atlandı" olarak raporla.
+          if (e?.code === 'P2002') { skipped.push(date.toISOString()); continue }
+          throw e
+        }
       }
     }
 
