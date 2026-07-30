@@ -8,7 +8,7 @@ export interface AuthRequest extends Request {
   userEmail?: string
 }
 
-export const optionalAuthMiddleware = (req: Request, res: Response, next: NextFunction) => {
+export const optionalAuthMiddleware = async (req: Request, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.split(' ')[1]
@@ -16,7 +16,17 @@ export const optionalAuthMiddleware = (req: Request, res: Response, next: NextFu
       const decoded = verifyToken(token) as any
       // Yalnız GERÇEK kullanıcı token'ı (userId taşıyan) → salon/eğitmen token'ı burada kullanıcı
       // sayılmasın (viewerId sızıntısı/karışması olmasın)
-      if (decoded && decoded.userId) (req as any).userId = decoded.userId
+      if (decoded && decoded.userId) {
+        // BAN KONTROLÜ: authMiddleware banlıyı reddediyor ama optionalAuth ETMİYORDU. Banlı kullanıcı
+        // elindeki geçerli token'la, optionalAuth ile korunan okuma uçlarında "onaylı takipçi/giriş
+        // yapmış" ayrıcalığını (gizli profil aktivitesi, takip-özel içerik) kullanmaya devam ediyordu.
+        // Banlıysa viewer kimliğini DÜŞÜR → istek anonim/giriş-yapılmamış gibi işlenir.
+        const banned = await cached(`banned:${decoded.userId}`, 60000, async () => {
+          const u = await prisma.user.findUnique({ where: { id: decoded.userId }, select: { banned: true } })
+          return u?.banned ?? false
+        })
+        if (!banned) (req as any).userId = decoded.userId
+      }
     } catch {}
   }
   next()

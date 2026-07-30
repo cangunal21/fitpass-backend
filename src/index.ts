@@ -177,6 +177,10 @@ app.use('/api/social/feed', feedLimiter)              // yorum/beğeni spam + fe
 app.use('/api/social/leaderboard', heavyReadLimiter)  // liderlik tam-tablo hesabı
 app.use('/api/public/users-search', heavyReadLimiter) // ILIKE tam-tablo taraması
 app.use('/api/chat', chatLimiter)
+// Admin: gizli anahtar tahminini yavaşlat. /api/admin yalnız generalLimiter (200/dk) altındaydı;
+// x-admin-secret sabit bir sır olduğu için dakikada 200 deneme brute-force'a kapı açıyordu.
+// Diğer tüm auth uçlarıyla aynı 10/dk. (Anahtar zaten timing-safe karşılaştırılıyor, adminAuth.ts.)
+app.use('/api/admin', authLimiter)
 
 // Routes
 app.use('/api/auth', authRoutes)

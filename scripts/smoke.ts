@@ -360,15 +360,16 @@ async function run() {
   })
 
   // Check-in yanlış salon token'ı ile reddedilmeli (IDOR koruması)
-  await check('Check-in: başka salon reddediliyor (403)', async () => {
+  await check('Check-in: başka salon reddediliyor (404 — existence-oracle kapalı)', async () => {
     const b = await prisma.booking.findFirst({ where: { userId: U, sessionId: S }, select: { checkInCode: true } })
-    // GERÇEK ama farklı bir salon (venueAuth artık salon-durumu doğruluyor → olmayan salon 401 verirdi).
-    // Aktif başka salonun token'ı venueAuth'u geçer, checkInBooking sahiplik kontrolünde 403 alır.
+    // GERÇEK ama farklı bir salon. Sahip-olunmayan kod, BULUNAMAYAN kodla AYNI 404 döner (403 DEĞİL):
+    // 403 dönmek "bu kod platformda var" bilgisini ele veriyordu (existence-oracle). Denetim turu 13'te
+    // instructor tarafıyla simetrik hale getirildi; bu test o davranışı kilitliyor.
     const OV = 990013
     await prisma.venue.upsert({ where: { id: OV }, update: { isApproved: true, isActive: true, isSuspended: false }, create: { id: OV, name: 'OtherV', email: `ov${OV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     const otherVenueToken = jwt.sign({ venueId: OV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
     const r = await http('/api/bookings/checkin', { method: 'POST', token: otherVenueToken, body: { code: b?.checkInCode } })
-    if (r.status !== 403) throw new Error(`başka salon check-in yapabildi: ${r.status}`)
+    if (r.status !== 404) throw new Error(`başka salon check-in: ${r.status} (404 bekleniyor — oracle kapalı)`)
     await prisma.venue.deleteMany({ where: { id: OV } }).catch(() => {})
   })
 
@@ -1972,6 +1973,80 @@ async function run() {
     await prisma.dropInSlot.deleteMany({ where: { id: slot.id } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: TU } }).catch(() => {})
     await prisma.venue.deleteMany({ where: { id: TV } }).catch(() => {})
+  })
+
+  // ================== YETKI / IDOR REGRESYONLARI (denetim turu 13) ==================
+  await check('Yetki: getVenueBookings checkInCode ve komisyon SIZDIRMAZ', async () => {
+    const AV = 990701, AC = 990701, AS = 990701, AU = 990701
+    await prisma.venue.upsert({ where: { id: AV }, update: { isApproved: true, isActive: true }, create: { id: AV, name: 'AuthVenue', email: `av${AV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: AC }, update: {}, create: { id: AC, venueId: AV, title: 'AuthDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const when = new Date(Date.now() + 2 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: AS }, update: { startsAt: when }, create: { id: AS, classId: AC, startsAt: when, endsAt: new Date(when.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.user.upsert({ where: { id: AU }, update: {}, create: { id: AU, username: `auth_${AU}`, email: `auth_${AU}@x.com`, passwordHash: 'x', fullName: 'Auth', tierSportCounts: {} } })
+    await prisma.booking.deleteMany({ where: { sessionId: AS } })
+    await prisma.booking.create({ data: { userId: AU, sessionId: AS, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 15, venueCommission: 15, venuePayout: 85, finalAmount: 100, bookingNumber: `AV-${Date.now()}`, checkInCode: 'SECRET99' } })
+    const vtok = jwt.sign({ venueId: AV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http('/api/venue/bookings', { token: vtok })
+    if (r.status !== 200) throw new Error(`venue bookings: ${r.status}`)
+    const blob = JSON.stringify(r.json)
+    if (blob.includes('SECRET99')) throw new Error('checkInCode salona SIZDI (müşteri adına check-in yapabilir)')
+    if (blob.includes('venuePayout') || blob.includes('commissionAmount')) throw new Error('komisyon kırılımı yanıtta')
+    await prisma.booking.deleteMany({ where: { sessionId: AS } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: AS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: AC } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: AV } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: AU } }).catch(() => {})
+  })
+
+  await check('Yetki: banUser boolean olmayan ban alanını reddeder (sessiz unban yok)', async () => {
+    const BU = 990702
+    await prisma.user.upsert({ where: { id: BU }, update: { banned: true }, create: { id: BU, username: `ban_${BU}`, email: `ban_${BU}@x.com`, passwordHash: 'x', fullName: 'Ban', banned: true, tierSportCounts: {} } })
+    // ban alanı YOK → eskiden !!undefined=false ile SESSİZCE unban oluyordu
+    const r = await http(`/api/admin/users/${BU}/ban`, { method: 'PUT', admin: true, body: {} })
+    if (r.status !== 400) throw new Error(`eksik ban alanı ${r.status} döndü (400 bekleniyor)`)
+    const still = await prisma.user.findUnique({ where: { id: BU }, select: { banned: true } })
+    if (!still?.banned) throw new Error('boş gövde kullanıcının banını SESSİZCE kaldırdı')
+    await prisma.user.deleteMany({ where: { id: BU } }).catch(() => {})
+  })
+
+  await check('Yetki: askıya alınmış salonun eğitmeni check-in YAPAMAZ', async () => {
+    const SV = 990703, SC = 990703, SS = 990703, SI = 990703, SU = 990703
+    await prisma.venue.upsert({ where: { id: SV }, update: { isApproved: true, isActive: false, isSuspended: true }, create: { id: SV, name: 'SuspVenue', email: `sv${SV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: false, isSuspended: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.instructor.upsert({ where: { id: SI }, update: { isActive: true, venueId: SV }, create: { id: SI, venueId: SV, fullName: 'Susp Hoca', isActive: true } })
+    await prisma.class.upsert({ where: { id: SC }, update: { instructorId: SI }, create: { id: SC, venueId: SV, instructorId: SI, title: 'SuspDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const soon = new Date(Date.now() + 10 * 60000)
+    await prisma.class_Session.upsert({ where: { id: SS }, update: { startsAt: soon }, create: { id: SS, classId: SC, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.user.upsert({ where: { id: SU }, update: {}, create: { id: SU, username: `susp_${SU}`, email: `susp_${SU}@x.com`, passwordHash: 'x', fullName: 'Susp', tierSportCounts: {} } })
+    await prisma.booking.deleteMany({ where: { sessionId: SS } })
+    await prisma.booking.create({ data: { userId: SU, sessionId: SS, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, venuePayout: 100, finalAmount: 100, bookingNumber: `SV-${Date.now()}`, checkInCode: 'SUSP1234' } })
+    const itok = jwt.sign({ instructorId: SI, role: 'instructor' }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http('/api/instructor/checkin', { method: 'POST', token: itok, body: { code: 'SUSP1234' } })
+    if (r.status !== 403) throw new Error(`askıya alınmış salonun eğitmeni check-in yaptı: ${r.status} (403 bekleniyor)`)
+    const bk = await prisma.booking.findFirst({ where: { sessionId: SS }, select: { checkedIn: true } })
+    if (bk?.checkedIn) throw new Error('donmuş salonda check-in yazıldı')
+    await prisma.booking.deleteMany({ where: { sessionId: SS } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: SS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: SC } }).catch(() => {})
+    await prisma.instructor.deleteMany({ where: { id: SI } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: SV } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: SU } }).catch(() => {})
+  })
+
+  await check('Yetki: geçmiş/kapalı seansın bekleme listesine girilemez', async () => {
+    const WV = 990704, WC = 990704, WS = 990704, WU = 990704
+    await prisma.venue.upsert({ where: { id: WV }, update: { isApproved: true, isActive: true }, create: { id: WV, name: 'WlV', email: `wlv${WV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: WC }, update: {}, create: { id: WC, venueId: WV, title: 'WlD', category: catName, basePrice: 100, durationMinutes: 60, capacity: 1, isActive: true } })
+    const past = new Date(Date.now() - 2 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: WS }, update: { startsAt: past }, create: { id: WS, classId: WC, startsAt: past, endsAt: new Date(past.getTime() + 3600000), availableSpots: 1, status: 'open' } })
+    await prisma.user.upsert({ where: { id: WU }, update: {}, create: { id: WU, username: `wlu_${WU}`, email: `wlu_${WU}@x.com`, passwordHash: 'x', fullName: 'Wlu', tierSportCounts: {} } })
+    const utok = jwt.sign({ userId: WU, email: `wlu_${WU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http(`/api/waitlist/sessions/${WS}`, { method: 'POST', token: utok })
+    if (r.status !== 400) throw new Error(`geçmiş seansa bekleme listesi: ${r.status} (400 bekleniyor)`)
+    await prisma.waitlist.deleteMany({ where: { sessionId: WS } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: WS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: WC } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: WV } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: WU } }).catch(() => {})
   })
 
   // ================== EŞZAMANLILIK REGRESYONLARI (denetim turu 12) ==================

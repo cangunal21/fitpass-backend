@@ -266,9 +266,15 @@ export const banUser = async (req: Request, res: Response) => {
   try {
     const userId = parseInt(req.params.id as string)
     const { ban } = req.body
+    // TİP DOĞRULAMASI: approveVenue/suspendVenue bu hata sınıfını açıkça kapatmış, banUser'da açıktı.
+    // `!!ban` ile eksik/bozuk gövde SESSİZCE ban KALDIRIYORDU (ban=undefined → false → unban). Admin
+    // "banla" demek isterken yanlış payload'la yanlışlıkla ban'ı kaldırabilirdi. Boolean şart.
+    if (typeof ban !== 'boolean') {
+      return res.status(400).json({ error: 'ban alanı true/false olmalı.' })
+    }
 
     // Ban/unban tek yerde (applyUserBan): banned + cache invalidate + refresh iptal + içerik purge
-    const user = await applyUserBan(userId, !!ban)
+    const user = await applyUserBan(userId, ban)
     const { passwordHash, ...safeUser } = user
     return res.json({ message: ban ? 'Kullanıcı banlandı.' : 'Kullanıcı aktif edildi.', user: safeUser })
   } catch (err) {

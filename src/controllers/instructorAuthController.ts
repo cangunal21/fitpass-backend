@@ -35,6 +35,13 @@ export const instructorLogin = async (req: Request, res: Response) => {
     if (!instructor.isActive) {
       return res.status(403).json({ error: 'Eğitmen hesabınız aktif değil. Salonunuzla iletişime geçin.' })
     }
+    // SALON DURUM KAPISI: eğitmen bir salona bağlı; salon askıya alınmış/onayı geri alınmışsa
+    // eğitmen de yeni token üretememeli (aksi halde donmuş salonun eğitmeni süresiz iş yapmaya
+    // devam eder — check-in salon-durum bulgusunun kök nedeni buydu).
+    const vGate = await prisma.venue.findUnique({ where: { id: instructor.venueId }, select: { isApproved: true, isActive: true, isSuspended: true } })
+    if (!vGate || !vGate.isApproved || !vGate.isActive || vGate.isSuspended) {
+      return res.status(403).json({ error: 'Bağlı olduğunuz salon şu anda aktif değil.' })
+    }
     const token = generateToken({ instructorId: instructor.id, email: instructor.email || '', role: 'instructor' })
     return res.json({
       message: 'Giriş başarılı!',

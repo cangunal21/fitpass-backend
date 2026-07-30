@@ -352,8 +352,14 @@ export const getMyBookings = async (req: Request, res: Response) => {
       take: 200, // tüm ömür-boyu booking geçmişi derin include'la tek yanıtta yüklenmesin
     })
 
-    const safeBookings = bookings.map(b => ({
-      ...b,
+    const safeBookings = bookings.map(b => {
+      // `...b` Booking'in TÜM kolonlarını yayıyordu: salonun net hak edişi ve komisyon kırılımı
+      // (commissionAmount, venueCommission, userCommission, venuePayout) müşteriye dönüyordu — bu
+      // platformun iş modeli verisi, müşteriyi ilgilendirmez. checkInCode'u da ayıklıyoruz: müşteri
+      // kendi kodunu görür ama yanıtın geri kalanı loglara/istemci state'ine gereksiz taşımasın.
+      const { commissionAmount, venueCommission, userCommission, venuePayout, ...bSafe } = b as any
+      return {
+      ...bSafe,
       session: b.session ? {
         ...b.session,
         class: b.session.class ? {
@@ -370,7 +376,8 @@ export const getMyBookings = async (req: Request, res: Response) => {
       // Geriye dönük uyum: eski istemci `review` (tekil, salon yorumu) bekliyor + yeni `reviewed` bayrağı
       review: (b as any).reviews?.find((r: any) => r.targetType === 'venue') || null,
       reviewed: ((b as any).reviews?.length || 0) > 0,
-    }))
+      }
+    })
 
     res.json({ bookings: safeBookings })
   } catch (err) {
@@ -457,8 +464,10 @@ export const cancelBooking = async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Rezervasyon bulunamadı.' })
     }
 
+    // Başkasının rezervasyonu, OLMAYAN rezervasyonla AYNI 404 döner (403 DEĞİL): artan id'lerle
+    // "şu id'de rezervasyon var mı" enumerasyonunu ve platform hacmi ölçümünü kapatır.
     if (booking.userId !== userId) {
-      return res.status(403).json({ error: 'Bu rezervasyonu iptal edemezsiniz.' })
+      return res.status(404).json({ error: 'Rezervasyon bulunamadı.' })
     }
 
     if (booking.status === 'cancelled') {
@@ -589,7 +598,7 @@ export const cancelBooking = async (req: Request, res: Response) => {
     })
 
     if (outcome.kind === 'already') return res.status(400).json({ error: 'Rezervasyon zaten iptal edilmiş.' })
-    if (outcome.kind === 'forbidden') return res.status(403).json({ error: 'Bu rezervasyonu iptal edemezsiniz.' })
+    if (outcome.kind === 'forbidden') return res.status(404).json({ error: 'Rezervasyon bulunamadı.' })
     if (outcome.kind === 'tooLate') return res.status(400).json({ error: 'Derse 12 saatten az kaldığı için iptal yapılamaz.', hoursLeft: outcome.hoursLeft })
     // Araya giren bir transfer rezervasyonu değiştirdi → istemci tazeleyip tekrar denemeli.
     if (outcome.kind === 'conflict') return res.status(409).json({ error: 'Rezervasyon bu sırada değişti. Sayfayı yenileyip tekrar deneyin.' })
@@ -758,6 +767,12 @@ export const transferBooking = async (req: Request, res: Response) => {
         if (!target) throw new BookingError('Hedef seans bulunamadı.', 404)
         if (target.status !== 'open') throw new BookingError('Hedef seans açık değil.', 400)
         if (new Date(target.startsAt) <= new Date()) throw new BookingError('Geçmiş bir seansa transfer yapılamaz.', 400)
+        // DURUM KAPILARI: createBooking:82,87 hedef ders/salon için bunları kontrol ediyor, transfer
+        // ETMİYORDU → kullanıcı, salonun kapattığı (isActive=false) bir derse ya da askıya alınmış/
+        // onayı geri alınmış salonun seansına transfer olabiliyordu. Aynı kapılar burada da olmalı.
+        if (!target.class.isActive) throw new BookingError('Hedef ders şu anda rezervasyona kapalı.', 400)
+        const tVenue = await tx.venue.findUnique({ where: { id: target.class.venueId }, select: { isActive: true, isApproved: true } })
+        if (!tVenue || !tVenue.isActive || !tVenue.isApproved) throw new BookingError('Hedef salon şu anda aktif değil.', 400)
 
         // Aynı salon kontrolü
         if (target.class.venueId !== booking.session.class.venueId) {
@@ -995,9 +1010,11 @@ export const checkInBooking = async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Geçersiz kod. Rezervasyon bulunamadı.' })
     }
 
-    // Bu salona ait mi?
+    // Bu salona ait mi? Sahip-olunmayan kod, BULUNAMAYAN kodla AYNI 404 döner (403 DEĞİL) →
+    // "bu kod platformda var mı?" existence-oracle'ı kapatılır. checkInInstructorBooking:201 zaten
+    // bu deseni kullanıyor; salon tarafı 403 dönüp kodun varlığını ele veriyordu.
     if (booking.session?.class?.venueId !== venueId) {
-      return res.status(403).json({ error: 'Bu rezervasyon salonunuza ait değil.' })
+      return res.status(404).json({ error: 'Geçersiz kod. Rezervasyon bulunamadı.' })
     }
 
     if (booking.status !== 'confirmed') {

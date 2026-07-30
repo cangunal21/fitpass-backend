@@ -191,7 +191,7 @@ export const checkInInstructorBooking = async (req: Request, res: Response) => {
       where: { checkInCode: code.trim().toUpperCase() },
       include: {
         user: { select: { fullName: true, username: true, avatarUrl: true } },
-        session: { include: { class: { select: { title: true, instructorId: true } } } },
+        session: { include: { class: { select: { title: true, instructorId: true, venue: { select: { isApproved: true, isActive: true, isSuspended: true } } } } } },
       },
     })
     if (!booking) return res.status(404).json({ error: 'Geçersiz kod. Rezervasyon bulunamadı.' })
@@ -200,6 +200,14 @@ export const checkInInstructorBooking = async (req: Request, res: Response) => {
     // Sahip-olunmayan kod, BULUNAMAYAN kodla AYNI 404 döner → "kod platformda var mı?" existence-oracle'ı kapatılır.
     if (booking.session?.class?.instructorId !== instructorId) {
       return res.status(404).json({ error: 'Geçersiz kod. Rezervasyon bulunamadı.' })
+    }
+    // SALON DURUM KAPISI: kardeş uçlar (createInstructorClass/Session) bunu kontrol ediyor, check-in
+    // ETMİYORDU → askıya alınmış/onayı geri alınmış salonun eğitmeni öğrenci check-in'leyip streak/
+    // rozet/tier ilerletebiliyor ve o salona yeni puan yazılmasının önünü açıyordu. Salonun kendi
+    // token'ı bu işlemde 403 alırken eğitmen realm'i etkilenmiyordu.
+    const iv = booking.session?.class?.venue
+    if (!iv || !iv.isApproved || !iv.isActive || iv.isSuspended) {
+      return res.status(403).json({ error: 'Salonunuz şu anda aktif değil; check-in yapılamaz.' })
     }
     if (booking.status !== 'confirmed') {
       return res.status(400).json({ error: 'Rezervasyon onaylı değil.' })

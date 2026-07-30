@@ -12,9 +12,17 @@ export const joinWaitlist = async (req: Request, res: Response) => {
 
     const session = await prisma.class_Session.findUnique({
       where: { id: sessionId },
-      include: { class: true }
+      include: { class: { include: { venue: { select: { isApproved: true, isActive: true, isSuspended: true } } } } }
     })
     if (!session) return res.status(404).json({ error: 'Seans bulunamadı.' })
+    // DURUM KAPILARI: createBooking hedef seans için bunları kontrol ediyor, joinWaitlist ETMİYORDU
+    // → kullanıcı geçmiş/kapalı bir seansın ya da askıya alınmış salonun bekleme listesine girebiliyor,
+    // orada sonsuza dek "sıra 1" görünüyordu (o yer hiç açılmayacağı için bildirim de gelmez).
+    if (session.status !== 'open') return res.status(400).json({ error: 'Bu seans rezervasyona kapalı.' })
+    if (new Date(session.startsAt) <= new Date()) return res.status(400).json({ error: 'Geçmiş bir seans için bekleme listesine girilemez.' })
+    if (!session.class?.isActive) return res.status(400).json({ error: 'Bu ders şu anda kapalı.' })
+    const wv = session.class?.venue
+    if (!wv || !wv.isApproved || !wv.isActive || wv.isSuspended) return res.status(400).json({ error: 'Salon şu anda aktif değil.' })
 
     // Zaten kayıtlı mı?
     const existingBooking = await prisma.booking.findFirst({

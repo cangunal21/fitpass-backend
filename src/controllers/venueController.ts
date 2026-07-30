@@ -752,13 +752,18 @@ export const getVenueBookings = async (req: Request, res: Response) => {
   try {
     const venueId = (req as any).venueId
 
+    // AÇIK SELECT (include DEĞİL). include, Booking'in TÜM skaler kolonlarını döndürüyordu; bunların
+    // arasında müşterinin tek-kullanımlık `checkInCode` KATILIM KANITI vardı. Salon bu kodu bilirse
+    // müşteri gelmeden onun adına check-in yapıp streak/rozet ilerletebilir (kodun tüm amacı bunu
+    // engellemek). Salonun panelde ihtiyacı olan alanlarla sınırlıyoruz; checkInCode ASLA dönmez.
     const bookings = await prisma.booking.findMany({
       where: { session: { class: { venueId } } },
-      include: {
-        // Veri minimizasyonu (KVKK): salona müşteri e-postası verilmez — check-in kodla,
-        // roster isimle yapılır; e-posta panelde de gösterilmiyordu (gereksiz ifşa kaldırıldı).
+      select: {
+        id: true, status: true, bookingType: true, groupSize: true, bookingNumber: true,
+        checkedIn: true, checkedInAt: true, createdAt: true,
+        // Veri minimizasyonu (KVKK): salona müşteri e-postası verilmez — check-in kodla, roster isimle.
         user: { select: { id: true, fullName: true, username: true } },
-        session: { include: { class: { select: { title: true, category: true } } } }
+        session: { select: { id: true, startsAt: true, class: { select: { title: true, category: true } } } },
       },
       orderBy: { createdAt: 'desc' },
     })

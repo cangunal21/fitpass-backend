@@ -85,8 +85,10 @@ export const getUserFavorites = async (req: Request, res: Response) => {
     const user = await prisma.user.findUnique({ where: { username } })
     if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
 
-    // Gizlilik kontrolü — banlı hesap da (searchUsers/getUserActivities ile aynı) enumerasyona kapalı
-    if (user.banned || user.activityPrivacy === 'private') {
+    // Gizlilik kontrolü — banlı hesap da (searchUsers/getUserActivities ile aynı) enumerasyona kapalı.
+    // profilePrivacy DE kontrol edilir: favori salon listesi bir AKTİVİTE/tercih sinyalidir (kişinin
+    // nereye gittiği), yalnız activityPrivacy'ye bakmak gizli profilin bu listesini yabancıya açıyordu.
+    if (user.banned || user.activityPrivacy === 'private' || user.profilePrivacy === 'private') {
       return res.json({ favorites: [], private: true })
     }
 
