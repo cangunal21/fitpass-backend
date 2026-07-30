@@ -623,8 +623,9 @@ export const likeActivity = async (req: Request, res: Response) => {
     // Aktivite gerçekten var mı + erişebilir miyim (gizli değilse/kendiminse)
     const activity = await resolveFeedActivity(feedKey)
     if (!activity) return res.status(404).json({ error: 'Aktivite bulunamadı.' })
+    // Gizli aktivite: 403 DEĞİL 404 — "var ama gizli" ile "hiç yok" ayırt edilmemeli (existence-oracle).
     if (activity.privacy === 'private' && activity.ownerId !== userId) {
-      return res.status(403).json({ error: 'Bu aktiviteye erişiminiz yok.' })
+      return res.status(404).json({ error: 'Aktivite bulunamadı.' })
     }
 
     const existing = await prisma.activityLike.findUnique({ where: { feedKey_userId: { feedKey, userId } } })
@@ -693,7 +694,7 @@ export const getActivityComments = async (req: Request, res: Response) => {
     const activity = await resolveFeedActivity(feedKey)
     if (!activity) return res.status(404).json({ error: 'Aktivite bulunamadı.' })
     if (activity.privacy === 'private' && activity.ownerId !== viewerId) {
-      return res.status(403).json({ error: 'Bu aktiviteye erişiminiz yok.' })
+      return res.status(404).json({ error: 'Aktivite bulunamadı.' })
     }
     const all = await prisma.activityComment.findMany({
       where: { feedKey },
@@ -728,8 +729,9 @@ export const addActivityComment = async (req: Request, res: Response) => {
     // Aktivite gerçekten var mı + erişebilir miyim (gizli değilse/kendiminse)
     const activity = await resolveFeedActivity(feedKey)
     if (!activity) return res.status(404).json({ error: 'Aktivite bulunamadı.' })
+    // Gizli aktivite: 403 DEĞİL 404 — "var ama gizli" ile "hiç yok" ayırt edilmemeli (existence-oracle).
     if (activity.privacy === 'private' && activity.ownerId !== userId) {
-      return res.status(403).json({ error: 'Bu aktiviteye erişiminiz yok.' })
+      return res.status(404).json({ error: 'Aktivite bulunamadı.' })
     }
 
     let parentComment = null

@@ -11,7 +11,7 @@ import { syncUserBadges } from '../utils/badges'
 import { seasonLabelsFromKey } from '../utils/season'
 import { purgeUserReviews, purgeUserComments } from '../utils/moderation'
 import { sendPushNotification } from '../utils/push'
-import { isValidEmail, MIN_PASSWORD, clampStr } from '../utils/validate'
+import { MIN_PASSWORD, clampStr, isValidEmail, parseIntSafe } from '../utils/validate'
 
 // KAYIT OL
 export const register = async (req: Request, res: Response) => {
@@ -397,7 +397,10 @@ export const updateProfile = async (req: Request, res: Response) => {
     if (bio !== undefined) data.bio = clampStr(bio, 500)
     if (avatarUrl !== undefined) data.avatarUrl = clampStr(avatarUrl, 500)
     if (neighborhoodId !== undefined) {
-      data.neighborhoodId = parseInt(neighborhoodId)
+      // parseInt yerine parseIntSafe: 'abc'/taşma/NaN doğrudan Prisma'ya gidip 500 veriyordu.
+      const nb = parseIntSafe(neighborhoodId)
+      if (nb === undefined) return res.status(400).json({ error: 'Geçersiz mahalle.' })
+      data.neighborhoodId = nb
       data.cityId = 1
     }
 

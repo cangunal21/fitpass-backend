@@ -1975,6 +1975,55 @@ async function run() {
     await prisma.venue.deleteMany({ where: { id: TV } }).catch(() => {})
   })
 
+  // ================== GİRDİ/INJECTION REGRESYONLARI (denetim turu 16) ==================
+  await check('Girdi: cashback e-postası classTitle esc()\'li (stored XSS guard, kaynak)', async () => {
+    const fs = require('fs')
+    const src = fs.readFileSync(__dirname + '/../src/utils/email.ts', 'utf8')
+    // sendCashbackEmail gövdesinde classTitle YALNIZ esc() ile geçmeli. Ham ${classTitle} (esc'siz) regresyon.
+    const fnStart = src.indexOf('export const sendCashbackEmail')
+    const fnBody = src.slice(fnStart, fnStart + 2500)
+    // esc'siz ${classTitle} arıyoruz: "${classTitle" ama öncesinde "esc(" yok
+    if (/\$\{classTitle\}/.test(fnBody) && !/\$\{esc\(classTitle\)\}/.test(fnBody)) {
+      throw new Error('sendCashbackEmail classTitle\'i esc()\'siz kullanıyor (stored XSS)')
+    }
+  })
+
+  await check('Girdi: updateClass başlığı 120 karaktere kırpar (createClass ile simetrik)', async () => {
+    const UV = 991001, UC = 991001
+    await prisma.venue.upsert({ where: { id: UV }, update: { isApproved: true, isActive: true }, create: { id: UV, name: 'UpV', email: `upv${UV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: UC }, update: {}, create: { id: UC, venueId: UV, title: 'Eski', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const vtok = jwt.sign({ venueId: UV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const longTitle = 'A'.repeat(300)
+    const r = await http(`/api/venue/classes/${UC}`, { method: 'PUT', token: vtok, body: { title: longTitle, description: 'D'.repeat(5000), basePrice: 'abc' } })
+    if (r.status !== 200) throw new Error(`updateClass: ${r.status} ${r.text.slice(0,120)}`)
+    const cls = await prisma.class.findUnique({ where: { id: UC }, select: { title: true, description: true } })
+    if ((cls!.title?.length || 0) > 120) throw new Error(`title kırpılmadı: ${cls!.title?.length} karakter`)
+    if ((cls!.description?.length || 0) > 2000) throw new Error(`description kırpılmadı: ${cls!.description?.length}`)
+    await prisma.class.deleteMany({ where: { id: UC } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: UV } }).catch(() => {})
+  })
+
+  await check('Girdi: geçersiz mahalle → 400 (parseIntSafe, 500 değil)', async () => {
+    const PU = 991002
+    await prisma.user.upsert({ where: { id: PU }, update: {}, create: { id: PU, username: `pf_${PU}`, email: `pf_${PU}@x.com`, passwordHash: 'x', fullName: 'Pf', tierSportCounts: {} } })
+    const tok = jwt.sign({ userId: PU, email: `pf_${PU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http('/api/auth/profile', { method: 'PUT', token: tok, body: { neighborhoodId: 'abc' } })
+    if (r.status === 500) throw new Error('geçersiz mahalle 500 verdi (parseIntSafe yok)')
+    if (r.status !== 400) throw new Error(`geçersiz mahalle ${r.status} (400 bekleniyor)`)
+    await prisma.user.deleteMany({ where: { id: PU } }).catch(() => {})
+  })
+
+  await check('Girdi: gizli aktivite like → 404 (existence-oracle kapalı)', async () => {
+    // Var olmayan feedKey de 404 dönmeli; gizli-var-olan da 404 — ikisi ayırt edilememeli.
+    const XU = 991003
+    await prisma.user.upsert({ where: { id: XU }, update: {}, create: { id: XU, username: `lk_${XU}`, email: `lk_${XU}@x.com`, passwordHash: 'x', fullName: 'Lk', tierSportCounts: {} } })
+    const tok = jwt.sign({ userId: XU, email: `lk_${XU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http('/api/social/feed/booking_999999999/like', { method: 'POST', token: tok })
+    // Olmayan aktivite 404 olmalı (403 değil) — gizli olanla aynı yanıt
+    if (r.status === 403) throw new Error('feed like 403 döndürdü (existence-oracle — 404 olmalı)')
+    await prisma.user.deleteMany({ where: { id: XU } }).catch(() => {})
+  })
+
   // ================== HATA YOLLARI REGRESYONLARI (denetim turu 15) ==================
   await check('Hata yolu: şifre değişince TÜM refresh oturumları iptal edilir (atomik)', async () => {
     const CU = 990901

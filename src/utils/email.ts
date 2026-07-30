@@ -538,7 +538,7 @@ export const sendCashbackEmail = async (
         <h2 style="font-size:22px;font-weight:800;color:#111;margin:0;">${amount} Puan Kazandın!</h2>
       </div>
       <p style="font-size:15px;color:#555;line-height:1.7;margin:0 0 20px;">
-        Merhaba ${esc(fullName)}, <strong>${classTitle}</strong> rezervasyonundan <strong>${amount} puan</strong> kazandın. Puanlarını biriktirip ödüllerde kullanabilirsin.
+        Merhaba ${esc(fullName)}, <strong>${esc(classTitle)}</strong> rezervasyonundan <strong>${amount} puan</strong> kazandın. Puanlarını biriktirip ödüllerde kullanabilirsin.
       </p>
       <div style="background:#F0FDF4;border-radius:16px;padding:20px;margin-bottom:24px;border:1px solid #BBF7D0;text-align:center;">
         <p style="font-size:13px;color:#15803D;margin:0 0 4px;">Güncel puanın</p>

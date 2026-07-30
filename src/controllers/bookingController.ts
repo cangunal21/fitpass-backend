@@ -942,7 +942,9 @@ export const checkInDropIn = async (req: Request, res: Response) => {
     }
 
     if (participant.slot?.venueId !== venueId) {
-      return res.status(403).json({ error: 'Bu katılım salonunuza ait değil.' })
+      // 403 DEĞİL 404: sahip-olunmayan kod, bulunamayan kodla aynı yanıtı vermeli (existence-oracle
+      // kapalı; checkInBooking/checkInInstructorBooking ile simetrik).
+      return res.status(404).json({ error: 'Geçersiz kod. Katılım bulunamadı.' })
     }
 
     // ZAMAN PENCERESİ: checkInBooking (satır ~941) ve checkInInstructorBooking bu kapıyı uygularken

@@ -157,7 +157,7 @@ export const venueRegister = async (req: Request, res: Response) => {
       await prisma.instructor.create({
         data: {
           venueId: venue.id,
-          fullName: instructor.fullName,
+          fullName: clampStr(instructor.fullName, 80) || '', // createInstructor/updateInstructor ile aynı sınır
           bio: null,
         }
       })
@@ -424,16 +424,26 @@ export const updateClass = async (req: Request, res: Response) => {
       sportCategoryId = sportCat?.id ?? undefined
     }
 
-    // Başlık değiştiyse İngilizce karşılığını yeniden üret
-    const titleEn = (title && title !== existing.title) ? await translateClassTitle(title) : undefined
+    // clampStr: createClass (satir ~377) title'i 120, description'i 2000'e keser; UPDATE yolu bu
+    // sınırı ATLIYORDU → ~100KB ham metin DB'ye yazılıyor, ham başlık AI çevirisine (Groq) girip
+    // token maliyetini şişiriyordu. UPDATE de aynı sınırlara uymalı.
+    const safeTitle = title !== undefined ? (clampStr(title, 120) || '') : undefined
+    const safeDesc = description !== undefined ? clampStr(description, 2000) : undefined
+    // Başlık değiştiyse İngilizce karşılığını yeniden üret — KIRPILMIŞ değerle (AI token koruması).
+    const titleEn = (safeTitle && safeTitle !== existing.title) ? await translateClassTitle(safeTitle) : undefined
+    // basePrice: parseFloat('abc')=NaN Float kolonda Prisma 500 verirdi → geçerli sayı değilse yok say.
+    const priceNum = basePrice !== undefined && basePrice !== '' ? parseFloat(basePrice) : undefined
+    const safePrice = (priceNum !== undefined && Number.isFinite(priceNum) && priceNum >= 0) ? priceNum : undefined
 
     const updated = await prisma.class.update({
       where: { id: classId },
       data: {
-        title, description, category,
+        ...(safeTitle !== undefined ? { title: safeTitle } : {}),
+        ...(safeDesc !== undefined ? { description: safeDesc } : {}),
+        category,
         ...(titleEn !== undefined ? { titleEn } : {}),
         ...(sportCategoryId !== undefined ? { sportCategoryId } : {}),
-        basePrice: basePrice ? parseFloat(basePrice) : undefined,
+        basePrice: safePrice,
         duration: duration ? parseInt(duration) : undefined,
         durationMinutes: duration ? parseInt(duration) : undefined,
         capacity: capacity ? parseInt(capacity) : undefined,
@@ -650,8 +660,11 @@ export const createDropInSlot = async (req: Request, res: Response) => {
         totalPrice: money(players * price), // money(): players*price float tozunu temizle (public API'de ₺333.299999... görünüyordu)
         pricePerPerson: money(price),
         status: 'open',
-        visibility: visibility || 'open',
-        privateCode: privateCode || null,
+        // visibility BEYAZ-LISTE: eskiden herhangi bir string geçiyordu (public listeleme filtresi
+        // status+visibility'ye göre → tanımsız değer slotu görünmez/tutarsız yapabilirdi).
+        visibility: visibility === 'private' ? 'private' : 'open',
+        // privateCode clampStr + yalnız private slotta anlamlı; ham sınırsız string yazılmasın.
+        privateCode: (visibility === 'private' && privateCode) ? (clampStr(String(privateCode), 32) || null) : null,
         bookedBy: null,
       }
     })
