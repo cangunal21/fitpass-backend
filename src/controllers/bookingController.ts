@@ -865,7 +865,7 @@ export const checkInDropIn = async (req: Request, res: Response) => {
       where: { checkInCode: code.trim().toUpperCase() },
       include: {
         user: { select: { fullName: true, username: true, avatarUrl: true } },
-        slot: { select: { title: true, venueId: true, startsAt: true } }
+        slot: { select: { title: true, venueId: true, startsAt: true, endsAt: true } }
       }
     })
 
@@ -876,6 +876,16 @@ export const checkInDropIn = async (req: Request, res: Response) => {
     if (participant.slot?.venueId !== venueId) {
       return res.status(403).json({ error: 'Bu katılım salonunuza ait değil.' })
     }
+
+    // ZAMAN PENCERESİ: checkInBooking (satır ~941) ve checkInInstructorBooking bu kapıyı uygularken
+    // drop-in'de HİÇ yoktu — kod geçmişte ya da haftalar sonrasında istenildiği an okutulabiliyordu.
+    // Salon, gelecekteki katılımları toplu check-in'leyip katılımcıların serisini/rozetini şişirebilir,
+    // kullanıcı da gelmediği bir etkinliği sonradan "gitmiş" gösterebilirdi.
+    const dSt = participant.slot?.startsAt ? new Date(participant.slot.startsAt).getTime() : null
+    const dEn = participant.slot?.endsAt ? new Date(participant.slot.endsAt).getTime() : null
+    const dNow = Date.now()
+    if (dSt != null && dNow < dSt - 60 * 60000) return res.status(400).json({ error: 'Check-in etkinlik saatine yakın açılır (henüz erken).' })
+    if (dEn != null && dNow > dEn + 180 * 60000) return res.status(400).json({ error: 'Check-in süresi doldu.' })
 
     if (participant.status !== 'confirmed') {
       return res.status(400).json({ error: 'Katılım onaylı değil.' })

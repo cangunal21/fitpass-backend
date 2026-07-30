@@ -1,7 +1,7 @@
 import prisma from '../utils/prisma'
 import { sendReminderEmail } from '../utils/email'
 import { sendPushNotification } from '../utils/push'
-import { trDate, trTime } from "../utils/trFormat"
+import { trDate, trDateShort, trTime, trYmd } from "../utils/trFormat"
 
 export const sendRemindersJob = async () => {
   try {
@@ -58,7 +58,11 @@ export const sendRemindersJob = async () => {
           await sendPushNotification(
             booking.user.pushToken,
             'Dersine 2 saat kaldı! ⏰',
-            `${classTitle} dersi bugün ${time}'de ${venueName} adresinde başlıyor.`
+            // "bugün" SABİT yazılıydı: hatırlatma penceresi (+90..+150 dk) İstanbul gece yarısını
+            // aştığında ders aslında ERTESİ gün oluyor (5 Ağu 22:30'da gönderilen push, 6 Ağu
+            // 00:30 dersi için "bugün" diyordu) — üstelik aynı anda giden e-posta trDate ile doğru
+            // tarihi yazıyor, kullanıcıya çelişkili iki tarih gidiyordu. Artık günü karşılaştırıyoruz.
+            `${classTitle} dersi ${trYmd(startsAt) === trYmd(new Date()) ? 'bugün' : trDateShort(startsAt)} ${time}'de ${venueName} adresinde başlıyor.`
           )
           console.log(`📱 Push bildirimi gönderildi: user#${booking.userId}`) // PII loglamıyoruz
         }

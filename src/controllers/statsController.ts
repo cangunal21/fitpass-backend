@@ -1,5 +1,6 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
+import { trWeekday, trMonthStart } from '../utils/trFormat'
 
 // Salon doluluk istatistikleri
 export const getVenueStats = async (req: Request, res: Response) => {
@@ -44,7 +45,10 @@ export const getVenueStats = async (req: Request, res: Response) => {
     for (let i = 0; i < 7; i++) byDay[i] = { total: 0, booked: 0, count: 0 }
 
     sessions.forEach(s => {
-      const day = new Date(s.startsAt).getDay()
+      // getDay() SUNUCUNUN gününü verir (Railway=UTC). İstanbul'da 00:00–02:59 başlayan seanslar
+      // bir önceki günün kutusuna düşüyordu: salon Pazartesi gecesi açtığı dersi Pazar performansı
+      // olarak görüyor, program kararını yanlış güne göre veriyordu.
+      const day = trWeekday(s.startsAt)
       byDay[day].count++
       byDay[day].total += s.availableSpots
       byDay[day].booked += occ(s)
@@ -131,8 +135,10 @@ export const getVenueRevenue = async (req: Request, res: Response) => {
     })
 
     // Bu ay / geçen ay
-    const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1)
-    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    // Ay sınırı İSTANBUL'da 00:00'dır. new Date(y, m, 1) sunucu yerelini (UTC) kullanıyordu →
+    // ayın ilk 3 saatinde yapılan ciro bir ÖNCEKİ aya yazılıyordu (gelir raporu yanlış).
+    const thisMonthStart = trMonthStart(now)
+    const lastMonthStart = trMonthStart(now, -1)
 
     const thisMonthBookings = bookings.filter(b => new Date(b.createdAt) >= thisMonthStart)
     const lastMonthBookings = bookings.filter(b => new Date(b.createdAt) >= lastMonthStart && new Date(b.createdAt) < thisMonthStart)

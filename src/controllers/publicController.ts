@@ -7,6 +7,7 @@ import { parseIntSafe, parseDateSafe } from '../utils/validate'
 import { sanitizeReview, hidePrivateReply } from '../utils/reviews'
 import { seasonLabelsFromKey } from '../utils/season'
 import { stripVenueSensitive, stripInstructorSensitive } from '../utils/sanitize'
+import { trInstant, trAddDays } from '../utils/trFormat'
 
 // GET /api/public/sessions
 export const getSessions = async (req: Request, res: Response) => {
@@ -30,16 +31,27 @@ export const getSessions = async (req: Request, res: Response) => {
     const dFrom = parseDateSafe(dateFrom)
     const dTo = parseDateSafe(dateTo)
     const dExact = parseDateSafe(date)
+    const now = new Date()
+    // Saatsiz 'YYYY-MM-DD' girdisi İSTANBUL gününü ifade eder. parseDateSafe bunu UTC gece yarısı
+    // yapıyordu → pencere İstanbul'da 03:00–03:00'a kayıyor, gece seansları yanlış güne düşüyordu
+    // (İstanbul 5 Ağu 01:00 dersi "4 Ağustos" filtresinde çıkıyor, "5 Ağustos"ta hiç görünmüyordu).
+    const isYmd = (v: unknown) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)
+    const asTrDay = (v: unknown, parsed?: Date) => (isYmd(v) ? trInstant(String(v), '00:00') : parsed)
+
     if (dFrom || dTo) {
       where.startsAt = {}
-      if (dFrom) where.startsAt.gte = dFrom
-      if (dTo) where.startsAt.lt = dTo
+      const from = asTrDay(dateFrom, dFrom)
+      // gte'yi ŞİMDİ ile kısıtla. Aksi halde "Bugün" filtresi günün başından itibaren sorguluyor ve
+      // SABAH BİTMİŞ seanslar listede "Rezerve et" ile çıkıyor; kullanıcı tıklayınca createBooking
+      // 400 "Bu seans başlamış" diyor. Filtre gün başını, rezervasyon kontrolü now'u referans alıyordu.
+      if (from) where.startsAt.gte = from > now ? from : now
+      if (dTo) where.startsAt.lt = asTrDay(dateTo, dTo)
     } else if (dExact) {
-      const nextDay = new Date(dExact)
-      nextDay.setDate(nextDay.getDate() + 1)
-      where.startsAt = { gte: dExact, lt: nextDay }
+      const start = asTrDay(date, dExact) as Date
+      const end = isYmd(date) ? trInstant(trAddDays(String(date), 1), '00:00') : new Date(start.getTime() + 86400000)
+      where.startsAt = { gte: start > now ? start : now, lt: end }
     } else {
-      where.startsAt = { gte: new Date() }
+      where.startsAt = { gte: now }
     }
 
     // Build class filter

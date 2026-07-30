@@ -59,12 +59,16 @@ export const sendStreakNudges = async () => {
         // Onaylı dersler + drop-in'ler (son 60 gün, gelecekteki bu hafta dahil)
         const [bookings, dropins] = await Promise.all([
           prisma.booking.findMany({
-            where: { userId, status: 'confirmed', checkedIn: true, session: { startsAt: { gte: lookback } } },
-            select: { session: { select: { startsAt: true } } },
+            // checkedIn FİLTRESİ KALDIRILDI: "bugün zaten gidiyor mu" kontrolü gelecekteki
+            // rezervasyonu da saymalı (yorum bunu söylüyordu ama sorgu yalnız check-in'lileri
+            // getiriyordu). Bugüne dersi olan ama henüz check-in yapmamış kullanıcı "serin kopuyor"
+            // dürtmesi alıyordu. Seri sayımı yine YALNIZ check-in'li geçmişten besleniyor.
+            where: { userId, status: 'confirmed', session: { startsAt: { gte: lookback } } },
+            select: { checkedIn: true, session: { select: { startsAt: true } } },
           }),
           prisma.dropInParticipant.findMany({
-            where: { userId, status: 'confirmed', checkedIn: true, slot: { startsAt: { gte: lookback } } },
-            select: { slot: { select: { startsAt: true } } },
+            where: { userId, status: 'confirmed', slot: { startsAt: { gte: lookback } } },
+            select: { checkedIn: true, slot: { select: { startsAt: true } } },
           }),
         ])
 
@@ -72,8 +76,13 @@ export const sendStreakNudges = async () => {
           ...bookings.map(b => b.session?.startsAt).filter(Boolean) as Date[],
           ...dropins.map(d => d.slot?.startsAt).filter(Boolean) as Date[],
         ]
-        // Seri sayımı geçmiş (gerçekleşmiş) aktivitelere göre
-        const pastDates = allDates.filter(d => d < now)
+        // Seri sayımı YALNIZ gerçekleşmiş (check-in yapılmış, geçmiş) aktivitelere göre —
+        // rezervasyon yapıp gitmemek seriyi büyütmemeli.
+        const checkedInDates: Date[] = [
+          ...bookings.filter(b => b.checkedIn).map(b => b.session?.startsAt).filter(Boolean) as Date[],
+          ...dropins.filter(d => d.checkedIn).map(d => d.slot?.startsAt).filter(Boolean) as Date[],
+        ]
+        const pastDates = checkedInDates.filter(d => d < now)
 
         const todayKey = istanbulDayKey(now)
         const thisMonday = istanbulMondayKey(now)

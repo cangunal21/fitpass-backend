@@ -1888,6 +1888,88 @@ async function run() {
     if (await prisma.user.findUnique({ where: { id: U } })) throw new Error('kullanıcı hâlâ DB\'de')
     if ((await prisma.booking.count({ where: { userId: U } })) > 0) throw new Error('booking temizlenmedi (FK sızıntısı)')
   })
+
+  // ================== SAAT DİLİMİ REGRESYONLARI ==================
+  // Bunlar denetim turu 11'de bulunan kaymaların geri gelmesini engeller. Sunucu UTC çalışırken
+  // (Railway) TR duvar-saatinin korunduğunu KANITLARLAR — testin kendisi sunucunun TZ'inden
+  // bağımsız olsun diye her yerde Europe/Istanbul ile karşılaştırma yapılır.
+  const trHM = (d: Date | string) => new Date(d).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Istanbul' })
+  const trWd = (d: Date | string) => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].indexOf(new Date(d).toLocaleDateString('en-US', { timeZone: 'Europe/Istanbul', weekday: 'short' }))
+
+  await check('Saat dilimi: tekrarlayan seans TR duvar-saatini korur (19:00 → 19:00)', async () => {
+    const TV = 990501, TC = 990501
+    await prisma.venue.upsert({ where: { id: TV }, update: { isApproved: true, isActive: true, isVerified: true }, create: { id: TV, name: 'TzVenue', email: `tz${TV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, isVerified: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: TC }, update: {}, create: { id: TC, venueId: TV, title: 'TzDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    await prisma.class_Session.deleteMany({ where: { classId: TC } })
+    const tok = jwt.sign({ venueId: TV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    // Pazartesi(1) + Perşembe(4), saat 19:00, 2 hafta
+    const r = await http(`/api/venue/classes/${TC}/sessions/recurring`, { method: 'POST', token: tok, body: { time: '19:00', capacity: 10, weekDays: [1, 4], weeks: 2 } })
+    if (r.status !== 201) throw new Error(`tekrarlayan seans: ${r.status} ${r.text.slice(0, 160)}`)
+    const created = await prisma.class_Session.findMany({ where: { classId: TC }, select: { startsAt: true } })
+    if (created.length === 0) throw new Error('hiç seans oluşmadı')
+    for (const s of created) {
+      // REGRESYON: setHours ile sunucu-yerel hesap yapılırsa UTC sunucuda burası '22:00' döner.
+      if (trHM(s.startsAt) !== '19:00') throw new Error(`seans saati İstanbul'da ${trHM(s.startsAt)} (19:00 bekleniyor) — sunucu TZ'ine kaymış`)
+      if (![1, 4].includes(trWd(s.startsAt))) throw new Error(`seans günü ${trWd(s.startsAt)} (Pzt=1/Per=4 bekleniyor) — gün kaymış`)
+    }
+    await prisma.class_Session.deleteMany({ where: { classId: TC } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: TC } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: TV } }).catch(() => {})
+  })
+
+  await check('Saat dilimi: tekrarlayan seans tek-seans yoluyla AYNI anı üretir', async () => {
+    const TV = 990502, TC = 990502
+    await prisma.venue.upsert({ where: { id: TV }, update: { isApproved: true, isActive: true, isVerified: true }, create: { id: TV, name: 'TzVenue2', email: `tz${TV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, isVerified: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: TC }, update: {}, create: { id: TC, venueId: TV, title: 'TzDers2', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    await prisma.class_Session.deleteMany({ where: { classId: TC } })
+    const tok = jwt.sign({ venueId: TV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const rr = await http(`/api/venue/classes/${TC}/sessions/recurring`, { method: 'POST', token: tok, body: { time: '20:30', capacity: 10, weekDays: [3], weeks: 1 } })
+    if (rr.status !== 201) throw new Error(`tekrarlayan: ${rr.status}`)
+    const rec = await prisma.class_Session.findFirst({ where: { classId: TC }, orderBy: { startsAt: 'asc' }, select: { startsAt: true } })
+    if (!rec) throw new Error('tekrarlayan seans oluşmadı (bu haftaki Çarşamba geçmiş olabilir)')
+    // Aynı günü tek-seans ucundan da ekle → iki yol AYNI anı vermeli (eskiden 3 saat fark vardı)
+    const ymd = new Date(rec.startsAt).toLocaleDateString('en-CA', { timeZone: 'Europe/Istanbul' })
+    const one = await http(`/api/venue/classes/${TC}/sessions`, { method: 'POST', token: tok, body: { date: ymd, time: '20:30', capacity: 10 } })
+    if (one.status !== 201) throw new Error(`tek seans: ${one.status} ${one.text.slice(0, 160)}`)
+    const single = await prisma.class_Session.findUnique({ where: { id: one.json.session.id }, select: { startsAt: true } })
+    if (new Date(single!.startsAt).getTime() !== new Date(rec.startsAt).getTime()) {
+      throw new Error(`iki yol farklı an üretti: tekrarlayan=${new Date(rec.startsAt).toISOString()} tek=${new Date(single!.startsAt).toISOString()}`)
+    }
+    await prisma.class_Session.deleteMany({ where: { classId: TC } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: TC } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: TV } }).catch(() => {})
+  })
+
+  await check('Drop-in check-in: etkinlikten çok önce okutulamaz (zaman penceresi)', async () => {
+    const TV = 990503, TU = 990503
+    await prisma.venue.upsert({ where: { id: TV }, update: { isApproved: true, isActive: true }, create: { id: TV, name: 'TzVenue3', email: `tz${TV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.user.upsert({ where: { id: TU }, update: {}, create: { id: TU, username: `tz_${TU}`, email: `tz_${TU}@x.com`, passwordHash: 'x', fullName: 'Tz', tierSportCounts: {} } })
+    const cat = await prisma.sportCategory.findFirst({ where: { name: { equals: catName, mode: 'insensitive' } }, select: { id: true } })
+    const far = new Date(Date.now() + 10 * 86400000) // 10 gün sonra
+    const slot = await prisma.dropInSlot.create({ data: { venueId: TV, sportCategoryId: cat!.id, title: 'TzDropIn', startsAt: far, endsAt: new Date(far.getTime() + 3600000), pricePerPerson: 100, totalPrice: 400, totalPlayers: 4, format: '2x2', status: 'open', visibility: 'open' } })
+    const code = `TZCODE${Date.now()}`.slice(0, 12).toUpperCase()
+    await prisma.dropInParticipant.create({ data: { slotId: slot.id, userId: TU, status: 'confirmed', checkInCode: code } })
+    const tok = jwt.sign({ venueId: TV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http('/api/bookings/dropin-checkin', { method: 'POST', token: tok, body: { code } })
+    // REGRESYON: pencere yokken 200 dönüyordu → salon gelecekteki katılımı check-in'leyip seri/rozet şişirebiliyordu
+    if (r.status !== 400) throw new Error(`10 gün sonraki drop-in check-in'i ${r.status} döndü (400 bekleniyor)`)
+    await prisma.dropInParticipant.deleteMany({ where: { slotId: slot.id } }).catch(() => {})
+    await prisma.dropInSlot.deleteMany({ where: { id: slot.id } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: TU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: TV } }).catch(() => {})
+  })
+
+  await check('Saat dilimi: trFormat yardımcıları gece yarısı sınırında doğru', async () => {
+    const { trYmd, trWeekday, trInstant, trAddDays, trMonthStart } = require('../src/utils/trFormat')
+    // İstanbul 5 Ağu 2026 01:00 = UTC 4 Ağu 22:00 → TR günü 5 Ağustos olmalı (UTC'de 4'ü)
+    const gece = new Date('2026-08-04T22:00:00.000Z')
+    if (trYmd(gece) !== '2026-08-05') throw new Error(`trYmd=${trYmd(gece)} (2026-08-05 bekleniyor)`)
+    if (trWeekday(gece) !== 3) throw new Error(`trWeekday=${trWeekday(gece)} (Çarşamba=3 bekleniyor)`)
+    if (trInstant('2026-08-03', '19:00').toISOString() !== '2026-08-03T16:00:00.000Z') throw new Error('trInstant TR duvar-saatini UTC\'ye çevirmiyor')
+    if (trAddDays('2026-08-31', 1) !== '2026-09-01') throw new Error('trAddDays ay sınırında hatalı')
+    if (trMonthStart(gece).toISOString() !== '2026-07-31T21:00:00.000Z') throw new Error(`trMonthStart=${trMonthStart(gece).toISOString()} (1 Ağu 00:00 TR bekleniyor)`)
+    if (trMonthStart(gece, -1).toISOString() !== '2026-06-30T21:00:00.000Z') throw new Error('trMonthStart(-1) hatalı')
+  })
 }
 
 async function main() {

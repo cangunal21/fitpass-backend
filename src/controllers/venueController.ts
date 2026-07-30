@@ -8,6 +8,7 @@ import { sendVenueRegistrationAdminEmail, sendVenuePasswordResetEmail } from '..
 import { sendPushNotification } from '../utils/push'
 import { isValidEmail, MIN_PASSWORD, parseIntSafe, clampStr } from '../utils/validate'
 import crypto from 'crypto'
+import { trYmd, trWeekday, trInstant, trAddDays } from '../utils/trFormat'
 
 // Bir seans/ders silinirken aktif rezervasyonları GÜVENLİ kaldırır:
 // puanları iade eder, FK'lı alt kayıtları temizler (Payment/Review/Commission/ActivityLog),
@@ -491,24 +492,28 @@ export const createRecurringSessions = async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Bu derse seans ekleme yetkiniz yok.' })
     }
 
-    const [h, m] = time.split(':').map(Number)
+    // Saat formatını DOĞRULA: trInstant'a çöp girerse Invalid Date olur ve DB'ye NULL/patlama gider.
+    if (!/^\d{2}:\d{2}$/.test(String(time))) {
+      return res.status(400).json({ error: 'Saat SS:DD biçiminde olmalı (örn. 19:00).' })
+    }
     const created: any[] = []
     const skipped: string[] = []
     const now = new Date()
     const totalWeeks = Math.min(parseInt(weeks), 12) // max 12 hafta
 
-    // Bu haftadan başla, toplam totalWeeks hafta
-    const startDate = new Date()
-    startDate.setHours(0, 0, 0, 0)
+    // Gün ve saat İSTANBUL'a göre hesaplanır — sunucu (Railway=UTC) saatiyle DEĞİL.
+    // Eski hali `new Date().setHours(0,0,0,0)` + `getDay()` + `setHours(h,m)` kullanıyordu; bu,
+    // salonun girdiği duvar-saatini sunucunun saati sanıyordu. Ölçüldü: UTC sunucuda "Pazartesi
+    // 19:00" → 2026-08-03T19:00Z = İstanbul 22:00 (3 saat ileri); saat 22:00 seçilirse gün de
+    // kayıp Salı 01:00 oluyordu. Tek-seans yolu (satır 450) zaten +03:00 kullandığından aynı
+    // dersin iki seansı 3 saat farkla yan yana duruyordu. Artık iki yol da aynı sözleşmede.
+    const todayYmd = trYmd(now)
+    const todayWeekday = trWeekday(now)
 
     for (let w = 0; w < totalWeeks; w++) {
       for (const day of days) {
-        const date = new Date(startDate)
-        // Bu haftanın başı (Pazartesi)
-        const dayOfWeek = date.getDay()
-        const diff = (day - dayOfWeek + 7) % 7
-        date.setDate(date.getDate() + diff + w * 7)
-        date.setHours(h, m, 0, 0)
+        const diff = (day - todayWeekday + 7) % 7
+        const date = trInstant(trAddDays(todayYmd, diff + w * 7), time)
 
         if (date <= now) continue // geçmiş, atla
 
