@@ -5,7 +5,8 @@
     "lib": ["ES2020"],
     "outDir": "dist",
     "rootDir": "src",
-    "strict": false,
+    "strict": true /* 2026-07-29: false idi -> backend (en kritik katman) web+mobilden ZAYIF tip
+       denetimine sahipti. Acmanin bedeli olculdu: yalnizca 2 hata (venue.email nullable), duzeltildi. */,
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "skipLibCheck": true

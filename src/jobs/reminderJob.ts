@@ -51,7 +51,7 @@ export const sendRemindersJob = async () => {
 
         if (booking.user?.email && booking.user.emailReminders !== false) {
           await sendReminderEmail(booking.user.email, booking.user.fullName, classTitle, date, time, venueName)
-          console.log(`✅ Hatırlatma maili gönderildi: ${booking.user.email}`)
+          console.log(`✅ Hatırlatma maili gönderildi: booking#${booking.id}`) // PII loglamıyoruz (KVKK + Sentry'ye sızmasın)
         }
 
         if (booking.user?.pushToken) {
@@ -60,7 +60,7 @@ export const sendRemindersJob = async () => {
             'Dersine 2 saat kaldı! ⏰',
             `${classTitle} dersi bugün ${time}'de ${venueName} adresinde başlıyor.`
           )
-          console.log(`📱 Push bildirimi gönderildi: ${booking.user.fullName}`)
+          console.log(`📱 Push bildirimi gönderildi: user#${booking.userId}`) // PII loglamıyoruz
         }
         // reminderSent zaten yukarıda atomik sahiplenmede işaretlendi.
       } catch (e) {

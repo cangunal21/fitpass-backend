@@ -3,18 +3,19 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "npm run smoke",
     "dev": "ts-node src/index.ts",
     "build": "npx prisma generate && tsc",
     "start": "npx prisma db push && node dist/index.js",
     "seed": "ts-node prisma/seed.ts",
-    "db:push:force": "npx prisma db push --accept-data-loss",
     "smoke": "ts-node scripts/smoke.ts",
     "iyzico:test": "ts-node scripts/iyzico-sandbox-test.ts",
     "stress": "ts-node scripts/stress.ts",
     "chaos": "ts-node scripts/chaos.ts",
     "fuzz": "ts-node scripts/fuzz.ts",
-    "backup:prod": "bash scripts/backup-prod.sh"
+    "backup:prod": "bash scripts/backup-prod.sh",
+    "typecheck": "tsc --noEmit",
+    "typecheck:ci": "tsc -p tsconfig.ci.json"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

@@ -9,10 +9,26 @@ const resend = {
         return
       }
       if (!_resend) _resend = new Resend(process.env.RESEND_API_KEY)
+      // TIMEOUT: createBooking gibi uclar rezervasyon isteginin ICINDE 3-4 Resend cagrisini SIRAYLA
+      // await ediyor. Timeout olmadan yavaslayan Resend, kullanicinin rezervasyon istegini (ve DB
+      // baglantisini) dakikalarca acik tutabiliyordu. push.ts'teki 8sn kalibinin aynisi.
       // Resend SDK API hatalarını FIRLATMAZ; `{ data: null, error }` döndürür. Dönüş değeri hiç
       // incelenmediği için her Resend-tarafı hata (geçersiz alıcı, kota, domain doğrulanmamış, 5xx)
       // GÖRÜNMEZDİ: log temiz, çağıran taraf "gönderildi" sanıyordu. Artık en azından loglanıyor.
-      const res: any = await _resend.emails.send(opts)
+      const ctrl = new AbortController()
+      const timer = setTimeout(() => ctrl.abort(), 8000)
+      let res: any
+      try {
+        res = await Promise.race([
+          _resend.emails.send(opts),
+          new Promise((_, rej) => ctrl.signal.addEventListener('abort', () => rej(new Error('resend timeout (8s)')))),
+        ])
+      } catch (e: any) {
+        console.error('[email FAIL]', opts.subject, '→', e?.message || e)
+        return { data: null, error: { message: String(e?.message || e) } }
+      } finally {
+        clearTimeout(timer)
+      }
       if (res?.error) {
         console.error('[email FAIL]', opts.subject, '→', res.error?.name || res.error?.message || res.error)
         return res

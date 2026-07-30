@@ -1,0 +1,12 @@
+{
+  // CI'a ozel: ana tsconfig yalnizca src/** kapsiyor -> scripts/ (smoke 182 KB, fuzz, stress, chaos)
+  // ve prisma/seed.ts BUGUNE DEK HIC tip denetiminden gecmemis (~220 KB test kodu).
+  // Test kodundaki bir tip hatasi, testin sessizce yanlis sey dogrulamasina yol acabilir.
+  // noEmit oldugu icin rootDir onemsiz; ana config'in rootDir:src kisitini geciyoruz.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src/**/*", "scripts/**/*", "prisma/**/*"]
+}

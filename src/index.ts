@@ -8,6 +8,7 @@ import cors from 'cors'
 import helmet from 'helmet'
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit'
 import { verifyToken } from './utils/jwt'
+import prisma from './utils/prisma'
 import { sendRemindersJob } from './jobs/reminderJob'
 import { sendStreakNudges } from './jobs/streakJob'
 import { sendRatingPrompts } from './jobs/ratingPromptJob'
@@ -195,6 +196,33 @@ app.get('/api/chat/history', authMiddleware, getChatHistory)
 // Test route
 app.get('/', (req, res) => {
   res.json({ message: 'Fitpass API çalışıyor 🚀', version: '1.0.0' })
+})
+
+// SAĞLIK UÇLARI — dış izleme (uptime) ve Railway healthcheck için. `/api` prefix'i DIŞINDA,
+// dolayısıyla generalLimiter'a takılmazlar (izleme her dakika vurabilir).
+//
+// Neden İKİ ayrı uç: süreç `uncaughtException`/`unhandledRejection` yakalayıp KASTEN ayakta kaldığı
+// için "process çalışıyor" ≠ "sistem çalışıyor". DB düşse bile /health 200 döner; bunu ayırt etmek
+// için readiness ucu gerekiyor. Railway healthcheck'i /health (liveness) kullanmalı — /health/ready
+// kullanılırsa geçici bir DB kesintisi deploy'u geri alır.
+app.get('/health', (req, res) => {
+  res.json({
+    ok: true,
+    uptime: Math.round(process.uptime()),
+    release: process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 7) || null,
+  })
+})
+
+app.get('/health/ready', async (req, res) => {
+  // 2sn timeout: DB asılıysa izleme ucu de asılmasın
+  const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('db timeout')), 2000))
+  try {
+    await Promise.race([prisma.$queryRaw`SELECT 1`, timeout])
+    res.json({ ok: true })
+  } catch {
+    // Dışarıya ayrıntı verme (altyapı bilgisi sızmasın); log tarafında zaten görünür
+    res.status(503).json({ ok: false })
+  }
 })
 
 // KAOS test route'ları — SADECE CHAOS_TEST=true iken mount edilir (prod'da asla aktif değil).

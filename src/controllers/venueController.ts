@@ -156,7 +156,7 @@ export const venueRegister = async (req: Request, res: Response) => {
       console.error('Admin notification email error:', e)
     }
 
-    const token = generateToken({ venueId: venue.id, email: venue.email, role: 'venue' })
+    const token = generateToken({ venueId: venue.id, email: venue.email ?? cleanEmail, role: 'venue' })
 
     return res.status(201).json({ message: 'Salon kaydı oluşturuldu! Onay bekleniyor.', token, venue })
   } catch (err: any) {
@@ -196,7 +196,7 @@ export const venueLogin = async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Hesabınız askıya alınmıştır. Destek için admin@sipsakspor.com ile iletişime geçin.' })
     }
 
-    const token = generateToken({ venueId: venue.id, email: venue.email, role: 'venue' })
+    const token = generateToken({ venueId: venue.id, email: venue.email ?? cleanEmail, role: 'venue' })
 
     return res.json({
       message: 'Giriş başarılı!',

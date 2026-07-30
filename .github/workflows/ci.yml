@@ -16,10 +16,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: tip kontrolü + smoke (93 kontrol)
+  static:
+    name: statik kontroller (tip + şema)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - name: TypeScript (src) — strict
+        run: npx tsc --noEmit
+      - name: TypeScript (src + scripts + prisma)
+        # Ana tsconfig yalnızca src/** kapsıyordu → smoke(182KB)/fuzz/stress/chaos/seed HİÇ tip
+        # denetiminden geçmiyordu. Test kodundaki tip hatası, testin yanlış şeyi doğrulamasına yol açar.
+        run: npm run typecheck:ci
+      - name: prisma şeması geçerli mi
+        run: npx prisma validate
+
+  test:
+    name: ${{ matrix.suite }} (gerçek PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        # Her harness KENDİ sunucusunu ayrı portta açıyor (smoke:3199, fuzz:3194, chaos:3197) ve
+        # ID aralıkları da ayrı → paralel koşabilirler. stress nightly'ye bırakıldı (uzun sürüyor).
+        suite: [smoke, fuzz, chaos]
 
     services:
       postgres:
@@ -56,14 +83,8 @@ jobs:
       - name: bağımlılıklar
         run: npm ci
 
-      - name: prisma şeması geçerli mi
-        run: npx prisma validate
-
       - name: prisma client üret
         run: npx prisma generate
-
-      - name: TypeScript tip kontrolü
-        run: npx tsc --noEmit
 
       - name: şemayı CI veritabanına uygula
         # NOT: Prisma 7'de `--skip-generate` KALDIRILDI (yerel simülasyonda "unknown option" ile
@@ -73,5 +94,5 @@ jobs:
       - name: temel veriyi ekle (kategori/ilçe — smoke bunları bekliyor)
         run: npm run seed
 
-      - name: smoke testi
-        run: npm run smoke
+      - name: ${{ matrix.suite }} koşusu
+        run: npm run ${{ matrix.suite }}
