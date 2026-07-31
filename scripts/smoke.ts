@@ -620,8 +620,13 @@ async function run() {
     let rs = await prisma.user.findUnique({ where: { id: R.id }, select: { rewardPoints: true, referralCount: true } })
     if (rs?.referralCount !== 1) throw new Error(`R.referralCount ${rs?.referralCount} (1)`)
     if (rs?.rewardPoints !== 0) throw new Error(`R puan ${rs?.rewardPoints} (0 — henüz ücretli ders yok)`)
-    // B ücretli ders alır → completeReferral: iki tarafa da 100
+    // B ücretli ders alır → check-in'de completeReferral: iki tarafa da 100 (puan/referral artık check-in'de)
     if ((await http('/api/bookings', { method: 'POST', token: B.token, body: { sessionId: S } })).status !== 201) throw new Error('B rezervasyon başarısız')
+    const bBooking = await prisma.booking.findFirst({ where: { userId: B.id, sessionId: S }, select: { id: true } })
+    if (!bBooking) throw new Error('B booking bulunamadı')
+    // Derse GİTTİ (check-in) → gerçek awardAttendanceOnCheckin yolu (referral + cashback burada tetiklenir)
+    await prisma.booking.update({ where: { id: bBooking.id }, data: { checkedIn: true, checkedInAt: new Date() } })
+    await require('../src/controllers/bookingController').awardAttendanceOnCheckin(bBooking.id)
     await new Promise(r => setTimeout(r, 400))
     if ((await prisma.referral.findFirst({ where: { id: refRow.id } }))?.status !== 'completed') throw new Error('referral completed olmadı')
     rs = await prisma.user.findUnique({ where: { id: R.id }, select: { rewardPoints: true, referralCount: true } })
@@ -1551,7 +1556,7 @@ async function run() {
     await prisma.user.upsert({ where: { id: EU }, update: { rewardPoints: 30 }, create: { id: EU, username: `econc_${EU}`, email: `econc_${EU}@x.com`, passwordHash: 'x', fullName: 'EconC', tierSportCounts: {}, rewardPoints: 30 } })
     await prisma.booking.deleteMany({ where: { userId: EU } }); await prisma.rewardPoint.deleteMany({ where: { userId: EU } })
     // Bakiye 30 ama booking pointsEarned 50 (yıllık reset sonrası senaryosu) → clamp min(50,30)=30 → 0, NEGATİF değil
-    await prisma.booking.create({ data: { userId: EU, sessionId: SC, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, pointsEarned: 50, bookingNumber: `ECC-${Date.now()}`, checkInCode: `ECC${Date.now() % 100000}` } })
+    await prisma.booking.create({ data: { userId: EU, sessionId: SC, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, pointsEarned: 50, checkedIn: true, checkedInAt: new Date(), bookingNumber: `ECC-${Date.now()}`, checkInCode: `ECC${Date.now() % 100000}` } }) // checkedIn: puan check-in'de kredilenir, silmede geri-alma yalniz kredilenmis booking'e uygulanir
     const vtok = jwt.sign({ venueId: EV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
     const del = await http(`/api/venue/classes/${CC}`, { method: 'DELETE', token: vtok })
     if (del.status >= 400) throw new Error(`ders silme: ${del.status} ${del.text.slice(0, 120)}`)
@@ -1976,6 +1981,40 @@ async function run() {
   })
 
   // ================== GAMIFICATION REGRESYONLARI (denetim turu 19) ==================
+  await check('Gamification: puan REZERVASYONDA verilmez, check-in\'de verilir (no-show farming kapalı)', async () => {
+    const PV = 991211, PC = 991211, PS = 991211, PU = 991211
+    await prisma.venue.upsert({ where: { id: PV }, update: { isApproved: true, isActive: true }, create: { id: PV, name: 'PtV', email: `ptv${PV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: PC }, update: {}, create: { id: PC, venueId: PV, title: 'PtDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const soon = new Date(Date.now() + 2 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: PS }, update: { startsAt: soon }, create: { id: PS, classId: PC, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    // Sporcu tier (pointRate %2) — booking pointsEarned=round(100*0.02)=2
+    await prisma.user.upsert({ where: { id: PU }, update: { rewardPoints: 0, tierId: 2 }, create: { id: PU, username: `pt_${PU}`, email: `pt_${PU}@x.com`, passwordHash: 'x', fullName: 'Pt', rewardPoints: 0, tierId: 2, tierSportCounts: {} } })
+    await prisma.booking.deleteMany({ where: { userId: PU } }); await prisma.rewardPoint.deleteMany({ where: { userId: PU } })
+    const utok = jwt.sign({ userId: PU, email: `pt_${PU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const bk = await http('/api/bookings', { method: 'POST', token: utok, body: { sessionId: PS } })
+    if (bk.status !== 201) throw new Error(`rezervasyon: ${bk.status} ${bk.text.slice(0,120)}`)
+    // REZERVASYON ANINDA puan 0 olmalı (no-show ile puan biriktirilemez)
+    let u = await prisma.user.findUnique({ where: { id: PU }, select: { rewardPoints: true } })
+    if (u?.rewardPoints !== 0) throw new Error(`rezervasyonda puan verildi: ${u?.rewardPoints} (0 bekleniyor — no-show farming)`)
+    const bid = bk.json?.booking?.id || (await prisma.booking.findFirst({ where: { userId: PU }, select: { id: true } }))?.id
+    // CHECK-IN → puan şimdi kredilenmeli (pointsEarned=2)
+    await prisma.booking.update({ where: { id: bid }, data: { checkedIn: true, checkedInAt: new Date() } })
+    await require('../src/controllers/bookingController').awardAttendanceOnCheckin(bid)
+    u = await prisma.user.findUnique({ where: { id: PU }, select: { rewardPoints: true } })
+    if (u?.rewardPoints !== 2) throw new Error(`check-in'de puan kredilenmedi: ${u?.rewardPoints} (2 bekleniyor)`)
+    // İdempotent: ikinci çağrı çift kredilemez
+    await require('../src/controllers/bookingController').awardAttendanceOnCheckin(bid)
+    u = await prisma.user.findUnique({ where: { id: PU }, select: { rewardPoints: true } })
+    if (u?.rewardPoints !== 2) throw new Error(`idempotent değil: ${u?.rewardPoints} (2 bekleniyor, çift kredi)`)
+    await prisma.rewardPoint.deleteMany({ where: { userId: PU } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { userId: PU } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: PS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: PC } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: PV } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: PU } }).catch(() => {})
+  })
+
+
   await check('Gamification: liderlik branş filtresi kanonik kategoriyi kullanır (case drift yok)', async () => {
     // Kategori adı 'Yoga' ama ders category alanı 'yoga' (küçük) girilirse: eski filtre class.category='Yoga'
     // (case-sensitive) → kullanıcı liderlikte GÖRÜNMEZDİ. Kanonik sportCategory.name filtresi bunu düzeltir.

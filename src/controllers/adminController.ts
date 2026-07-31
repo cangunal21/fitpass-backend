@@ -179,13 +179,13 @@ export const deleteVenue = async (req: Request, res: Response) => {
       if (orBooking.length) {
         const bookings = await tx.booking.findMany({
           where: { OR: orBooking },
-          select: { id: true, userId: true, pointsEarned: true, status: true, createdAt: true },
+          select: { id: true, userId: true, pointsEarned: true, status: true, createdAt: true, checkedIn: true },
         })
         const bookingIds = bookings.map((b) => b.id)
         for (const b of bookings) {
           if (b.status === 'confirmed' || b.status === 'pending') {
             affected.add(b.userId) // aktif rezervasyonu olan kullanıcı → bilgilendirilecek
-            if (b.pointsEarned > 0) {
+            if (b.checkedIn && b.pointsEarned > 0) { // puan yalniz check-in'de kredilenir
               // CLAMP: bakiyeyi NEGATİFE düşürme (cancelBooking ile aynı invariant — FOR UPDATE + Math.min)
               await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${b.userId} FOR UPDATE`
               const cur = await tx.user.findUnique({ where: { id: b.userId }, select: { rewardPoints: true, rewardPointsYear: true } })

@@ -37,12 +37,12 @@ async function purgeBookingsForSessions(tx: any, sessionIds: number[]) {
   // defterde aynı bookingId için iki ters kayıt kalırdı).
   const bookings = await tx.booking.findMany({
     where: { sessionId: { in: sessionIds } },
-    select: { id: true, userId: true, pointsEarned: true, status: true, createdAt: true },
+    select: { id: true, userId: true, pointsEarned: true, status: true, createdAt: true, checkedIn: true },
   })
   if (bookings.length === 0) return []
   const ids = bookings.map((b: any) => b.id)
   for (const b of bookings) {
-    if (b.pointsEarned > 0 && (b.status === 'confirmed' || b.status === 'pending')) {
+    if (b.checkedIn && b.pointsEarned > 0 && (b.status === 'confirmed' || b.status === 'pending')) { // puan yalniz check-in'de kredilenir → yalniz kredilenmis (checkedIn) booking'i geri al
       // CLAMP: bakiyeyi NEGATİFE düşürme (yıllık reset/redemption sonrası pointsEarned > güncel bakiye olabilir).
       // cancelBooking/transferBooking ile aynı invariant — Math.min. (User kilidi yukarıda,
       // döngüden ÖNCE ve id sırasıyla alındı: hem deadlock sırası sabit hem tx daha kısa.)

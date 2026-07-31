@@ -181,15 +181,8 @@ export const createBooking = async (req: Request, res: Response) => {
         if (coupon) {
           await tx.coupon.update({ where: { id: coupon.id }, data: { usedCount: { increment: 1 } } })
         }
-        if (pointsEarned > 0) {
-          await tx.user.update({
-            where: { id: userId },
-            data: { rewardPoints: { increment: pointsEarned } },
-          })
-          await tx.rewardPoint.create({
-            data: { userId, points: pointsEarned, source: 'booking', bookingId: created.id },
-          })
-        }
+        // NOT: puan artik REZERVASYONDA kredilenmez — check-in'de (awardAttendanceOnCheckin) verilir.
+        // pointsEarned yine kaydedilir (oran booking aninda kilitlenir), kredilenme derse gidince olur.
 
         // Rezervasyon yapan kullanıcı bu seansın bekleme listesindeyse çıkar
         // (aksi halde hem "kayıtlı" hem "bekliyor" kalır → şişik sayaç + onWaitlist:true)
@@ -254,22 +247,7 @@ export const createBooking = async (req: Request, res: Response) => {
       console.error('User confirmation email error:', emailErr)
     }
 
-    // Puan kazanıldıysa bilgilendirme (e-posta + push)
-    if (booking.pointsEarned > 0) {
-      try {
-        const u = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, fullName: true, rewardPoints: true, pushToken: true, emailReminders: true } })
-        // emailReminders opt-out'una SAYGI (streak/reminder/tag e-postalarıyla tutarlı; cashback de
-        // teşvik/gamification e-postasıdır). Push+in-app bundan bağımsız gider.
-        if (u?.email && u.emailReminders !== false) {
-          await sendCashbackEmail(u.email, u.fullName, booking.pointsEarned, booking.session!.class.title, u.rewardPoints)
-        }
-        if (u?.pushToken) {
-          sendPushNotification(u.pushToken, 'Puan kazandın! 🎉', `${booking.session!.class.title} rezervasyonundan ${booking.pointsEarned} puan kazandın.`).catch(() => {})
-        }
-      } catch (cbErr) {
-        console.error('Cashback notify error:', cbErr)
-      }
-    }
+    // (Cashback bildirimi check-in'e taşındı — awardAttendanceOnCheckin. Rezervasyonda puan verilmiyor.)
 
     // Etiketlenen kullanıcılara bildirim gönder
     if (cleanTags.length > 0) {
@@ -325,10 +303,7 @@ export const createBooking = async (req: Request, res: Response) => {
       }
     }
 
-    // İlk ödeme tamamlandıysa referral'ı tamamla (davet edene kredi ver)
-    if (finalAmount > 0) {
-      completeReferral(userId).catch(() => {})
-    }
+    // (Referral tamamlama check-in'e taşındı — awardAttendanceOnCheckin. Booking anında değil, ilk ücretli ders GERÇEKLEŞİNCE.)
 
     res.status(201).json({ message: 'Rezervasyon başarıyla oluşturuldu!', booking, taggedCount: cleanTags.length, pointsEarned: booking.pointsEarned })
   } catch (err) {
@@ -544,10 +519,11 @@ export const cancelBooking = async (req: Request, res: Response) => {
       const refundType = rType
       const refundAmount = rAmount
 
-      // Rezervasyon gerçekleşmediği için kazandığı puanı geri al (yalnızca iptali biz yaptıysak).
-      // Bakiyeden FAZLA düşme: yıllık puan sıfırlaması sonrası eski booking iptal edilince
-      // bakiye NEGATİFE düşerdi (redemption gelince bedava kredi istismarı). min ile clamp.
-      if (booking.pointsEarned > 0) {
+      // Puan geri-alma: puan artık YALNIZ check-in'de kredilenir; iptal ise check-in'den önce olur
+      // (12-saat iptal kapısı vs check-in penceresi çakışmaz) → checkedIn=false iken kredilenmiş puan
+      // YOKTUR, geri alma da yapılmamalı (aksi halde hiç verilmemiş puanı düşerdi). Yalnız check-in
+      // yapılmış (dolayısıyla kredilenmiş) bir booking iptal/temizlenirse geri al.
+      if (booking.checkedIn && booking.pointsEarned > 0) {
         // User satırını FOR UPDATE kilitle → aynı kullanıcının EŞZAMANLI iki iptali serileşir; ikincisi
         // ilkinin düşürdüğü GÜNCEL bakiyeyi okur. Kilitsizken ikisi de stale bakiye okuyup min-clamp'i
         // atlar ve rewardPoints NEGATİFE düşerdi.
@@ -736,6 +712,42 @@ export const getTransferOptions = async (req: Request, res: Response) => {
 }
 
 // Rezervasyonu başka bir seansa transfer et (aynı salon, aynı/ucuz, %50+ boş)
+// CHECK-IN'DE ATTENDANCE PUANI: puan ve referral odulu artik REZERVASYONDA degil, kullanici
+// derse GERCEKTEN gidince (check-in) verilir. Boylece tier/streak/liderligin "yalniz checkedIn"
+// kurali ile tutarli olur ve no-show ile puan/referral farming'i kapanir. pointsEarned booking
+// aninda hesaplanip saklanir (oran o an kilitlenir), kredilenme check-in'de olur.
+// Idempotent: 'attendance' defter satiri varsa tekrar kredilemez (CAS kazanani cagirir ama cift-guard).
+export async function awardAttendanceOnCheckin(bookingId: number) {
+  try {
+    const b = await prisma.booking.findUnique({
+      where: { id: bookingId },
+      select: { id: true, userId: true, pointsEarned: true, finalAmount: true, session: { select: { class: { select: { title: true } } } } },
+    })
+    if (!b) return
+    if (b.pointsEarned > 0) {
+      await resetYearlyPointsIfNeeded(b.userId).catch(() => {})
+      const credited = await prisma.$transaction(async (tx) => {
+        const exists = await tx.rewardPoint.findFirst({ where: { bookingId: b.id, source: 'attendance' }, select: { id: true } })
+        if (exists) return false
+        await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${b.userId} FOR UPDATE`
+        await tx.user.update({ where: { id: b.userId }, data: { rewardPoints: { increment: b.pointsEarned } } })
+        await tx.rewardPoint.create({ data: { userId: b.userId, points: b.pointsEarned, source: 'attendance', bookingId: b.id } })
+        return true
+      })
+      if (credited) {
+        const u = await prisma.user.findUnique({ where: { id: b.userId }, select: { email: true, fullName: true, rewardPoints: true, pushToken: true, emailReminders: true } })
+        const title = b.session?.class?.title || 'Ders'
+        if (u?.email && u.emailReminders !== false) sendCashbackEmail(u.email, u.fullName, b.pointsEarned, title, u.rewardPoints).catch(() => {})
+        if (u?.pushToken) sendPushNotification(u.pushToken, 'Puan kazandın! 🎉', `${title} dersine katıldın, ${b.pointsEarned} puan kazandın.`).catch(() => {})
+      }
+    }
+    // Referral: davet edilenin ilk UCRETLI dersi GERCEKLESINCE (check-in) tamamlanir (booking aninda DEGIL).
+    if ((b.finalAmount || 0) > 0) completeReferral(b.userId).catch(() => {})
+  } catch (e) {
+    console.error('awardAttendanceOnCheckin error:', e)
+  }
+}
+
 export const transferBooking = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId
@@ -1064,6 +1076,9 @@ export const checkInBooking = async (req: Request, res: Response) => {
     if (claim.count === 0) {
       return res.json({ alreadyCheckedIn: true, message: 'Bu rezervasyon zaten check-in yapılmış.', booking: already })
     }
+
+    // Attendance puani + referral: derse GERCEKTEN gidildi (check-in) → şimdi kredile (best-effort).
+    awardAttendanceOnCheckin(booking.id).catch(() => {})
 
     return res.json({
       success: true,

@@ -2,6 +2,7 @@ import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import { clampStr, parseIntSafe } from '../utils/validate'
 import { translateClassTitle, translateSpecialty, translateInstructorBio } from '../utils/translate'
+import { awardAttendanceOnCheckin } from './bookingController'
 
 // Eğitmen portalı — kendi profili + kendi dersleri + kendi öğrencilerini check-in.
 // GÜVENLİK: hepsi instructorAuthMiddleware (role='instructor', req.instructorId) arkasında; JWT venueId
@@ -236,6 +237,8 @@ export const checkInInstructorBooking = async (req: Request, res: Response) => {
     if (claim.count === 0) {
       return res.json({ alreadyCheckedIn: true, message: 'Bu rezervasyon zaten check-in yapılmış.', booking: payload })
     }
+    // Attendance puani + referral (check-in'de kredilenir; salon ve egitmen check-in'i ayni davranis).
+    awardAttendanceOnCheckin(booking.id).catch(() => {})
     return res.json({ success: true, message: 'Check-in başarılı!', booking: { ...payload, checkedInAt: new Date() } })
   } catch (err) {
     console.error(err)
