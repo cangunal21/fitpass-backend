@@ -1975,6 +1975,41 @@ async function run() {
     await prisma.venue.deleteMany({ where: { id: TV } }).catch(() => {})
   })
 
+  // ================== GAMIFICATION REGRESYONLARI (denetim turu 19) ==================
+  await check('Gamification: liderlik branş filtresi kanonik kategoriyi kullanır (case drift yok)', async () => {
+    // Kategori adı 'Yoga' ama ders category alanı 'yoga' (küçük) girilirse: eski filtre class.category='Yoga'
+    // (case-sensitive) → kullanıcı liderlikte GÖRÜNMEZDİ. Kanonik sportCategory.name filtresi bunu düzeltir.
+    const LV = 991201, LC = 991201, LS = 991201, LU = 991201
+    const cat = await prisma.sportCategory.findFirst({ where: { name: { equals: catName, mode: 'insensitive' } }, select: { id: true, name: true } })
+    await prisma.venue.upsert({ where: { id: LV }, update: { isApproved: true, isActive: true }, create: { id: LV, name: 'LbV', email: `lbv${LV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    // class.category KASITLI küçük harf (drift), ama sportCategoryId kanonik
+    await prisma.class.upsert({ where: { id: LC }, update: { category: catName.toLowerCase(), sportCategoryId: cat!.id }, create: { id: LC, venueId: LV, title: 'LbDers', category: catName.toLowerCase(), sportCategoryId: cat!.id, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const past = new Date(Date.now() - 2 * 86400000) // sezon içi geçmiş
+    await prisma.class_Session.upsert({ where: { id: LS }, update: { startsAt: past }, create: { id: LS, classId: LC, startsAt: past, endsAt: past, availableSpots: 20, status: 'open' } })
+    await prisma.user.upsert({ where: { id: LU }, update: {}, create: { id: LU, username: `lb_${LU}`, email: `lb_${LU}@x.com`, passwordHash: 'x', fullName: 'Lb', neighborhoodId: V, tierSportCounts: {} } })
+    await prisma.booking.deleteMany({ where: { userId: LU } })
+    await prisma.booking.create({ data: { userId: LU, sessionId: LS, status: 'confirmed', checkedIn: true, checkedInAt: past, bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, venuePayout: 100, finalAmount: 100, bookingNumber: `LB-${Date.now()}` } })
+    // branş = kanonik kategori adı (büyük harf) → kullanıcı GÖRÜNMELİ (ders category küçük harf olsa da)
+    const r = await http(`/api/social/leaderboard/users?branch=${encodeURIComponent(cat!.name)}`)
+    if (r.status !== 200) throw new Error(`liderlik: ${r.status} ${r.text.slice(0,120)}`)
+    const found = Array.isArray(r.json?.leaderboard) && r.json.leaderboard.some((u: any) => u.username === `lb_${LU}`)
+    if (!found) throw new Error('case-drift kullanıcı branş liderliğinde görünmedi (kanonik filtre yok)')
+    await prisma.booking.deleteMany({ where: { userId: LU } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: LS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: LC } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: LV } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: LU } }).catch(() => {})
+  })
+
+  await check('Gamification: kayıtta tierId atanır (ilk booking pointRate 0 değil)', async () => {
+    const email = `tiertest_${Date.now()}@x.com`
+    const r = await http('/api/auth/register', { method: 'POST', body: { fullName: 'Tier Test', username: `tiertest${Date.now()}`.slice(0, 20), email, password: 'GecerliSifre123' } })
+    if (r.status !== 201 && r.status !== 200) throw new Error(`kayıt: ${r.status} ${r.text.slice(0,120)}`)
+    const u = await prisma.user.findUnique({ where: { email }, select: { id: true, tierId: true } })
+    if (u?.tierId !== 1) throw new Error(`kayıtta tierId ${u?.tierId} (1=Aday bekleniyor) → ilk booking pointRate 0 olurdu`)
+    await prisma.user.deleteMany({ where: { email } }).catch(() => {})
+  })
+
   // ================== BİLDİRİM REGRESYONLARI (denetim turu 18) ==================
   await check('Bildirim: salon seansı silince pushToken\'siz kullanıcıya in-app Notification yazılır', async () => {
     const NV = 991101, NC = 991101, NS = 991101, NU = 991101

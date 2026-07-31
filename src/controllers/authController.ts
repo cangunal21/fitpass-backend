@@ -62,6 +62,7 @@ export const register = async (req: Request, res: Response) => {
         phone: clampStr(phone, 30) || null,
         passwordHash,
         fullName: clampStr(fullName, 80) || '',
+        tierId: 1, // Aday tier (pointRate %1) — atanmazsa ilk getMe'ye kadar tier null → ilk booking pointRate 0
         tierSportCounts: {},
         preferredSports: cleanSports,
         preferredNeighborhoods: cleanNeighborhoods,

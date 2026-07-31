@@ -114,7 +114,7 @@ export async function syncUserBadges(userId: number): Promise<string[]> {
       // Kurucu: ilk 500 kayıttan biri + en az 1 ders (İlk adım ile birlikte düşer)
       case 'founder': {
         if (totalLessons < 1 || !user?.createdAt) { ok = false; break }
-        if (regRank === null) regRank = await prisma.user.count({ where: { createdAt: { lte: user.createdAt } } })
+        if (regRank === null) regRank = await prisma.user.count({ where: { createdAt: { lte: user.createdAt }, banned: false } }) // banli hesaplar erken-uye sirasini kaydirmasin
         ok = regRank <= (badge.criteriaValue || 500)
         break
       }

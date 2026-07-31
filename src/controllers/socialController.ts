@@ -184,7 +184,7 @@ export const getUserLeaderboard = async (req: Request, res: Response) => {
         checkedIn: true,
         session: {
           startsAt: { gte: seasonStart, lt: now },
-          ...(branch ? { class: { category: branch as string } } : {}),
+          ...(branch ? { class: { sportCategory: { name: branch as string } } } : {}), // KANONIK FK (championJob ile ayni); serbest-metin class.category case-sensitive drift uretiyordu
         },
       }
       const users = await prisma.user.findMany({
@@ -208,7 +208,7 @@ export const getUserLeaderboard = async (req: Request, res: Response) => {
               checkedIn: true,
               session: {
                 startsAt: { gte: seasonStart, lt: now },
-                ...(branch ? { class: { category: branch as string } } : {}),
+                ...(branch ? { class: { sportCategory: { name: branch as string } } } : {}), // KANONIK FK (championJob ile ayni); serbest-metin class.category case-sensitive drift uretiyordu
               },
             },
             select: { id: true }
@@ -218,7 +218,7 @@ export const getUserLeaderboard = async (req: Request, res: Response) => {
       return users
         .map(u => ({ ...u, lessonCount: u.bookings.length, bookings: undefined }))
         .filter(u => u.lessonCount > 0)
-        .sort((a, b) => b.lessonCount - a.lessonCount)
+        .sort((a, b) => (b.lessonCount - a.lessonCount) || (a.id - b.id)) // esitlikte deterministik: kucuk id once
         .slice(0, 50)
     })
 
@@ -257,7 +257,7 @@ export const getStreakLeaderboard = async (req: Request, res: Response) => {
             checkedIn: true, // seri = GERÇEKTEN gidilmiş (kullanıcının kendi takvimiyle tutarlı)
             session: {
               startsAt: { gte: season.start, lt: now }, // seri de her mevsim sıfırlanır
-              ...(branch ? { class: { category: branch as string } } : {}),
+              ...(branch ? { class: { sportCategory: { name: branch as string } } } : {}), // KANONIK FK (championJob ile ayni); serbest-metin class.category case-sensitive drift uretiyordu
             },
           },
           select: { session: { select: { startsAt: true } } },
@@ -294,7 +294,7 @@ export const getStreakLeaderboard = async (req: Request, res: Response) => {
         }
       })
       .filter(u => u.streak >= 2) // en az 2 gün üst üste
-      .sort((a, b) => b.streak - a.streak)
+      .sort((a, b) => (b.streak - a.streak) || (a.id - b.id)) // esitlikte deterministik ikincil anahtar
       .slice(0, 50)
     })
 
