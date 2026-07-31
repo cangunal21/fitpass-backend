@@ -1980,6 +1980,112 @@ async function run() {
     await prisma.venue.deleteMany({ where: { id: TV } }).catch(() => {})
   })
 
+  // ================== TEST BORCU KAPATMA (turlar 12/13/18 testsiz düzeltmeler) ==================
+  await check('Test borcu: getMyBookings komisyon kırılımını GİZLER (T13)', async () => {
+    const MU = 991301
+    await prisma.user.upsert({ where: { id: MU }, update: {}, create: { id: MU, username: `mb_${MU}`, email: `mb_${MU}@x.com`, passwordHash: 'x', fullName: 'Mb', tierSportCounts: {} } })
+    await prisma.booking.deleteMany({ where: { userId: MU } })
+    await prisma.booking.create({ data: { userId: MU, sessionId: S, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 15, venueCommission: 15, userCommission: 0, venuePayout: 85, finalAmount: 100, bookingNumber: `MB-${Date.now()}` } })
+    const tok = jwt.sign({ userId: MU, email: `mb_${MU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http('/api/bookings/my', { token: tok })
+    if (r.status !== 200) throw new Error(`my: ${r.status}`)
+    const blob = JSON.stringify(r.json)
+    // REGRESYON: komisyon/payout müşteriye dönmemeli (iş modeli verisi)
+    for (const f of ['commissionAmount', 'venueCommission', 'venuePayout', 'userCommission']) {
+      if (blob.includes(f)) throw new Error(`getMyBookings ${f} sızdırıyor`)
+    }
+    await prisma.booking.deleteMany({ where: { userId: MU } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: MU } }).catch(() => {})
+  })
+
+  await check('Test borcu: askıya alınmış salonun eğitmeni GİRİŞ yapamaz (T13)', async () => {
+    const SV = 991302, SI = 991302
+    const bcryptLib = require('bcryptjs')
+    await prisma.venue.upsert({ where: { id: SV }, update: { isApproved: true, isActive: false, isSuspended: true }, create: { id: SV, name: 'SuspLoginV', email: `slv${SV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: false, isSuspended: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.instructor.upsert({ where: { id: SI }, update: { venueId: SV, isActive: true, passwordHash: await bcryptLib.hash('EgitmenSifre1', 12), email: `slins${SI}@x.com` }, create: { id: SI, venueId: SV, fullName: 'Susp Login Hoca', isActive: true, passwordHash: await bcryptLib.hash('EgitmenSifre1', 12), email: `slins${SI}@x.com` } })
+    const r = await http('/api/instructor/login', { method: 'POST', body: { email: `slins${SI}@x.com`, password: 'EgitmenSifre1' } })
+    // REGRESYON: donmuş salonun eğitmeni yeni token üretememeli (kök neden)
+    if (r.status === 200 && r.json?.token) throw new Error('askıya alınmış salonun eğitmeni giriş yapabildi')
+    await prisma.instructor.deleteMany({ where: { id: SI } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: SV } }).catch(() => {})
+  })
+
+  await check('Test borcu: referral kodu çağrılar arası SABİT kalır (T12 koşullu yazma)', async () => {
+    const RU = 991303
+    await prisma.user.upsert({ where: { id: RU }, update: { referralCode: null }, create: { id: RU, username: `rc_${RU}`, email: `rc_${RU}@x.com`, passwordHash: 'x', fullName: 'Rc', tierSportCounts: {} } })
+    const tok = jwt.sign({ userId: RU, email: `rc_${RU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const c1 = (await http('/api/referral', { token: tok })).json?.referralCode
+    const c2 = (await http('/api/referral', { token: tok })).json?.referralCode
+    if (!c1 || c1 !== c2) throw new Error(`referral kodu değişti: ${c1} → ${c2} (koşullu yazma yok)`)
+    await prisma.user.deleteMany({ where: { id: RU } }).catch(() => {})
+  })
+
+  await check('Test borcu: transferBooking eski seansın waitlist\'ini bilgilendirir (T18)', async () => {
+    const TV = 991305, TC = 991305, S1 = 991305, S2 = 991306, UA = 991305, UB = 991306
+    await prisma.venue.upsert({ where: { id: TV }, update: { isApproved: true, isActive: true }, create: { id: TV, name: 'TrWlV', email: `trwl${TV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: TC }, update: {}, create: { id: TC, venueId: TV, title: 'TrWlD', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const soon = new Date(Date.now() + 3 * 86400000)
+    // Kaynak seans kapasite 1 (A ile dolu → B beklemede); hedef seans boş
+    await prisma.class_Session.upsert({ where: { id: S1 }, update: { startsAt: soon, availableSpots: 1 }, create: { id: S1, classId: TC, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), availableSpots: 1, status: 'open' } })
+    const soon2 = new Date(soon.getTime() + 2 * 3600000) // farklı saat: (classId,startsAt) tekillik indeksi (T12)
+    await prisma.class_Session.upsert({ where: { id: S2 }, update: { startsAt: soon2, availableSpots: 20 }, create: { id: S2, classId: TC, startsAt: soon2, endsAt: new Date(soon2.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.user.upsert({ where: { id: UA }, update: {}, create: { id: UA, username: `ta_${UA}`, email: `ta_${UA}@x.com`, passwordHash: 'x', fullName: 'Ta', tierSportCounts: {} } })
+    await prisma.user.upsert({ where: { id: UB }, update: {}, create: { id: UB, username: `tb_${UB}`, email: `tb_${UB}@x.com`, passwordHash: 'x', fullName: 'Tb', tierSportCounts: {} } })
+    await prisma.booking.deleteMany({ where: { userId: { in: [UA, UB] } } })
+    await prisma.waitlist.deleteMany({ where: { sessionId: { in: [S1, S2] } } })
+    const bkA = await prisma.booking.create({ data: { userId: UA, sessionId: S1, status: 'confirmed', bookingType: 'class', groupSize: 1, baseAmount: 100, commissionAmount: 0, venueCommission: 0, venuePayout: 100, finalAmount: 100, bookingNumber: `TA-${Date.now()}` } })
+    // B kaynak seansın beklemesinde
+    await prisma.waitlist.create({ data: { sessionId: S1, userId: UB, status: 'waiting' } })
+    const aTok = jwt.sign({ userId: UA, email: `ta_${UA}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http(`/api/bookings/${bkA.id}/transfer`, { method: 'PUT', token: aTok, body: { targetSessionId: S2 } })
+    if (r.status !== 200) throw new Error(`transfer: ${r.status} ${r.text.slice(0,120)}`)
+    await new Promise(res => setTimeout(res, 300)) // notifyFirstWaitlistUser fire-and-forget
+    // REGRESYON: eski seans (S1) boşaldı → B 'notified' olmalı (eskiden hiç bildirilmiyordu)
+    const wl = await prisma.waitlist.findFirst({ where: { sessionId: S1, userId: UB }, select: { status: true } })
+    if (wl?.status !== 'notified') throw new Error(`transfer sonrası eski seans waitlist'i bildirilmedi (status=${wl?.status})`)
+    await prisma.notification.deleteMany({ where: { userId: { in: [UA, UB] } } }).catch(() => {}) // waitlist_open bildirimi temizle (yetim FK)
+    await prisma.waitlist.deleteMany({ where: { sessionId: { in: [S1, S2] } } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { userId: { in: [UA, UB] } } }).catch(() => {})
+    for (const id of [S1, S2]) await prisma.class_Session.deleteMany({ where: { id } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: TC } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: TV } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: { in: [UA, UB] } } }).catch(() => {})
+  })
+
+  await check('Test borcu: drop-in visibility beyaz-liste (geçersiz → open) (T16)', async () => {
+    const DV = 991307
+    await prisma.venue.upsert({ where: { id: DV }, update: { isApproved: true, isActive: true, isVerified: true }, create: { id: DV, name: 'VisV', email: `visv${DV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, isVerified: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.sportCategory.upsert({ where: { id: 991307 }, update: {}, create: { id: 991307, name: 'Basketbol', iconUrl: 'basketball', colorHex: '#F59E0B' } }).catch(() => {})
+    const vtok = jwt.sign({ venueId: DV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    // Geçersiz visibility → beyaz-liste 'open'a çekmeli
+    const r = await http('/api/venue/dropin', { method: 'POST', token: vtok, body: { sport: 'Basketbol', format: '5v5 Tam Saha', date: '2027-01-01', time: '19:00', pricePerPerson: 100, visibility: 'hacker-value' } })
+    if (r.status !== 201) throw new Error(`dropin: ${r.status} ${r.text.slice(0,120)}`)
+    const slot = await prisma.dropInSlot.findFirst({ where: { venueId: DV }, orderBy: { id: 'desc' }, select: { visibility: true } })
+    if (slot?.visibility !== 'open') throw new Error(`geçersiz visibility beyaz-listeye çekilmedi: ${slot?.visibility}`)
+    await prisma.dropInSlot.deleteMany({ where: { venueId: DV } }).catch(() => {})
+    await prisma.sportCategory.deleteMany({ where: { id: 991307 } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: DV } }).catch(() => {})
+  })
+
+  await check('Test borcu: deleteDropInSlot slot + katılımcıları BİRLİKTE siler (T12 transaction)', async () => {
+    const DV = 991304, DU = 991304
+    await prisma.venue.upsert({ where: { id: DV }, update: { isApproved: true, isActive: true }, create: { id: DV, name: 'DelDropV', email: `ddv${DV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.user.upsert({ where: { id: DU }, update: {}, create: { id: DU, username: `dd_${DU}`, email: `dd_${DU}@x.com`, passwordHash: 'x', fullName: 'Dd', tierSportCounts: {} } })
+    const cat = await prisma.sportCategory.findFirst({ where: { name: { equals: catName, mode: 'insensitive' } }, select: { id: true } })
+    const soon = new Date(Date.now() + 5 * 86400000)
+    const slot = await prisma.dropInSlot.create({ data: { venueId: DV, sportCategoryId: cat!.id, title: 'DelSlot', startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), pricePerPerson: 100, totalPrice: 400, totalPlayers: 4, format: '2x2', status: 'open', visibility: 'open' } })
+    await prisma.dropInParticipant.create({ data: { slotId: slot.id, userId: DU, status: 'confirmed', checkInCode: `DD${Date.now() % 100000}` } })
+    const vtok = jwt.sign({ venueId: DV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http(`/api/venue/dropin/${slot.id}`, { method: 'DELETE', token: vtok })
+    if (r.status !== 200) throw new Error(`dropin sil: ${r.status} ${r.text.slice(0,120)}`)
+    // İkisi de gitmiş olmalı (yarım-durum yok)
+    const slotLeft = await prisma.dropInSlot.count({ where: { id: slot.id } })
+    const partLeft = await prisma.dropInParticipant.count({ where: { slotId: slot.id } })
+    if (slotLeft !== 0 || partLeft !== 0) throw new Error(`yarım silme: slot=${slotLeft} participant=${partLeft} (0/0 bekleniyor)`)
+    await prisma.venue.deleteMany({ where: { id: DV } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: DU } }).catch(() => {})
+  })
+
   // ================== GAMIFICATION REGRESYONLARI (denetim turu 19) ==================
   await check('Gamification: puan REZERVASYONDA verilmez, check-in\'de verilir (no-show farming kapalı)', async () => {
     const PV = 991211, PC = 991211, PS = 991211, PU = 991211
