@@ -4,11 +4,11 @@ const VENUE_DUMMY_HASH = bcrypt.hashSync('sipsakspor-venue-timing-guard', 12) //
 import prisma from '../utils/prisma'
 import { translateClassTitle } from '../utils/translate'
 import { generateToken } from '../utils/jwt'
-import { sendVenueRegistrationAdminEmail, sendVenuePasswordResetEmail } from '../utils/email'
+import { sendCancellationEmail, sendVenuePasswordResetEmail, sendVenueRegistrationAdminEmail } from '../utils/email'
 import { sendPushNotification } from '../utils/push'
 import { isValidEmail, MIN_PASSWORD, parseIntSafe, clampStr } from '../utils/validate'
 import crypto from 'crypto'
-import { trYmd, trWeekday, trInstant, trAddDays } from '../utils/trFormat'
+import { trAddDays, trDate, trInstant, trTime, trWeekday, trYmd } from '../utils/trFormat'
 import { reversiblePoints } from '../utils/tier'
 const money = (x: number) => Math.round(x * 100) / 100 // bookingController ile aynı 2-ondalık yuvarlama
 
@@ -84,9 +84,18 @@ async function recomputeVenueRating(tx: any, venueId: number) {
 async function notifyRemovedBookings(affected: { userId: number; status: string }[], classTitle: string) {
   const userIds = [...new Set(affected.filter(b => b.status === 'confirmed' || b.status === 'pending').map(b => b.userId))]
   if (userIds.length === 0) return
-  const users = await prisma.user.findMany({ where: { id: { in: userIds }, pushToken: { not: null } }, select: { pushToken: true } })
+  const msg = `${classTitle} dersi salon tarafından kaldırıldı. Ödemen iade edilecektir.`
+  // ÜÇ KANAL. Eskiden YALNIZCA pushToken!=null olanlara push atılıyordu → web kullanıcısı (token yok)
+  // ya da push izni vermeyen mobil kullanıcı iptalden HİÇ haberdar olmuyordu (booking hard-delete
+  // edildiği için geriye taranacak kayıt da kalmıyordu). Artık admin deleteVenue deseniyle aynı:
+  // herkese in-app Notification + e-posta, pushToken varsa ek push.
+  const users = await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, email: true, fullName: true, pushToken: true, emailReminders: true } })
   for (const u of users) {
-    if (u.pushToken) sendPushNotification(u.pushToken, 'Rezervasyonun iptal edildi', `${classTitle} dersi salon tarafından kaldırıldı. Ödemen iade edilecektir.`).catch(() => {})
+    await prisma.notification.create({ data: { userId: u.id, type: 'booking_cancelled', message: msg } }).catch(() => {})
+    if (u.pushToken) sendPushNotification(u.pushToken, 'Rezervasyonun iptal edildi', msg).catch(() => {})
+    // İptal/iade işlemsel bir bildirimdir (opt-out'a tabi değil) — kullanıcı parasının iade
+    // edileceğini bilmeli. E-posta yalnız adresi olana.
+    if (u.email) sendCancellationEmail(u.email, u.fullName || '', classTitle, '', '').catch(() => {})
   }
 }
 
@@ -817,10 +826,32 @@ export const updateSession = async (req: Request, res: Response) => {
     }
     const endsAt = new Date(startsAt.getTime() + (session.class.durationMinutes || session.class.duration || 60) * 60000)
 
+    const eskiStartsAt = session.startsAt
     const updated = await prisma.class_Session.update({
       where: { id: sessionId },
       data: { startsAt, endsAt, availableSpots: parseInt(capacity) }
     })
+
+    // YENİDEN-PLANLAMA BİLDİRİMİ: seans yeni saate taşındı; rezervasyonlu kullanıcılar HABERSİZ
+    // kalıp eski saatte boş stüdyoya gelmesin. Eskiden hiçbir kanal yoktu. Saat gerçekten değiştiyse
+    // bildir + reminderSent=false yap (düzeltilmiş hatırlatma tekrar gitsin, aksi halde eski saatli
+    // hatırlatma kalıcı bastırılıyordu).
+    if (eskiStartsAt.getTime() !== startsAt.getTime()) {
+      const yeniTarih = trDate(startsAt), yeniSaat = trTime(startsAt)
+      await prisma.booking.updateMany({ where: { sessionId, status: 'confirmed' }, data: { reminderSent: false } }).catch(() => {})
+      const affected = await prisma.booking.findMany({
+        where: { sessionId, status: 'confirmed' },
+        select: { user: { select: { id: true, email: true, fullName: true, pushToken: true } } },
+      })
+      const msg = `"${session.class.title}" dersinin saati değişti: yeni tarih ${yeniTarih} ${yeniSaat}.`
+      for (const b of affected) {
+        const u = b.user
+        if (!u) continue
+        await prisma.notification.create({ data: { userId: u.id, type: 'session_rescheduled', message: msg } }).catch(() => {})
+        if (u.pushToken) sendPushNotification(u.pushToken, 'Ders saati değişti', msg).catch(() => {})
+        if (u.email) sendCancellationEmail(u.email, u.fullName || '', `${session.class.title} (yeni saat: ${yeniTarih} ${yeniSaat})`, yeniTarih, yeniSaat).catch(() => {})
+      }
+    }
 
     return res.json({ message: 'Seans güncellendi!', session: updated })
   } catch (err) {

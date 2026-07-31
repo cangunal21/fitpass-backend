@@ -257,8 +257,10 @@ export const createBooking = async (req: Request, res: Response) => {
     // Puan kazanıldıysa bilgilendirme (e-posta + push)
     if (booking.pointsEarned > 0) {
       try {
-        const u = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, fullName: true, rewardPoints: true, pushToken: true } })
-        if (u?.email) {
+        const u = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, fullName: true, rewardPoints: true, pushToken: true, emailReminders: true } })
+        // emailReminders opt-out'una SAYGI (streak/reminder/tag e-postalarıyla tutarlı; cashback de
+        // teşvik/gamification e-postasıdır). Push+in-app bundan bağımsız gider.
+        if (u?.email && u.emailReminders !== false) {
           await sendCashbackEmail(u.email, u.fullName, booking.pointsEarned, booking.session!.class.title, u.rewardPoints)
         }
         if (u?.pushToken) {
@@ -881,7 +883,7 @@ export const transferBooking = async (req: Request, res: Response) => {
           include: { session: { include: { class: true } } },
         })
 
-        return { updated, priceRefund }
+        return { updated, priceRefund, oldSessionId: booking.sessionId }
       })
     } catch (e: any) {
       if (e instanceof BookingError) return res.status(e.status).json({ error: e.message })
@@ -904,6 +906,15 @@ export const transferBooking = async (req: Request, res: Response) => {
       }
     } catch (mailErr) {
       console.error('Transfer notify error:', mailErr)
+    }
+
+    // Transfer ESKİ seansta bir yer açar; cancelBooking'de olan waitlist bildirimi burada YOKTU →
+    // eski seansı bekleyen kişi hiç haber almıyordu. Serbest kalan yeri sıradakine duyur.
+    try {
+      const { notifyFirstWaitlistUser } = await import('./waitlistController')
+      if (result.oldSessionId) await notifyFirstWaitlistUser(result.oldSessionId)
+    } catch (e) {
+      console.error('Transfer waitlist notify error:', e)
     }
 
     return res.json({

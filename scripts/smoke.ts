@@ -1975,6 +1975,59 @@ async function run() {
     await prisma.venue.deleteMany({ where: { id: TV } }).catch(() => {})
   })
 
+  // ================== BİLDİRİM REGRESYONLARI (denetim turu 18) ==================
+  await check('Bildirim: salon seansı silince pushToken\'siz kullanıcıya in-app Notification yazılır', async () => {
+    const NV = 991101, NC = 991101, NS = 991101, NU = 991101
+    await prisma.venue.upsert({ where: { id: NV }, update: { isApproved: true, isActive: true }, create: { id: NV, name: 'NotifV', email: `ntv${NV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: NC }, update: {}, create: { id: NC, venueId: NV, title: 'NotifDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const soon = new Date(Date.now() + 3 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: NS }, update: { startsAt: soon }, create: { id: NS, classId: NC, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    // pushToken YOK (web kullanıcısı) → eskiden hiçbir bildirim almıyordu
+    await prisma.user.upsert({ where: { id: NU }, update: { pushToken: null }, create: { id: NU, username: `ntf_${NU}`, email: `ntf_${NU}@x.com`, passwordHash: 'x', fullName: 'Ntf', pushToken: null, tierSportCounts: {} } })
+    await prisma.booking.deleteMany({ where: { userId: NU } })
+    await prisma.notification.deleteMany({ where: { userId: NU } })
+    await prisma.booking.create({ data: { userId: NU, sessionId: NS, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, venuePayout: 100, finalAmount: 100, bookingNumber: `NT-${Date.now()}` } })
+    const vtok = jwt.sign({ venueId: NV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http(`/api/venue/classes/${NC}/sessions/${NS}`, { method: 'DELETE', token: vtok })
+    if (r.status !== 200) throw new Error(`seans silme: ${r.status} ${r.text.slice(0,120)}`)
+    // REGRESYON: eskiden pushToken filtresi kullanıcıyı eliyordu → hiç bildirim yoktu
+    const notif = await prisma.notification.count({ where: { userId: NU, type: 'booking_cancelled' } })
+    if (notif === 0) throw new Error('pushToken\'siz kullanıcıya iptal in-app Notification yazılmadı')
+    await prisma.notification.deleteMany({ where: { userId: NU } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: NC } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: NV } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: NU } }).catch(() => {})
+  })
+
+  await check('Bildirim: seans saati değişince rezervasyon sahibine bildirim + reminderSent sıfırlanır', async () => {
+    const NV = 991102, NC = 991102, NS = 991102, NU = 991102
+    await prisma.venue.upsert({ where: { id: NV }, update: { isApproved: true, isActive: true, isVerified: true }, create: { id: NV, name: 'ReschedV', email: `rsv${NV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, isVerified: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: NC }, update: {}, create: { id: NC, venueId: NV, title: 'ReschedDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const soon = new Date(Date.now() + 3 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: NS }, update: { startsAt: soon }, create: { id: NS, classId: NC, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.user.upsert({ where: { id: NU }, update: {}, create: { id: NU, username: `rsc_${NU}`, email: `rsc_${NU}@x.com`, passwordHash: 'x', fullName: 'Rsc', tierSportCounts: {} } })
+    await prisma.booking.deleteMany({ where: { userId: NU } })
+    await prisma.notification.deleteMany({ where: { userId: NU } })
+    // reminderSent=true → yeniden-planlama bunu false yapmalı (düzeltilmiş hatırlatma tekrar gitsin)
+    await prisma.booking.create({ data: { userId: NU, sessionId: NS, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, venuePayout: 100, finalAmount: 100, bookingNumber: `RS-${Date.now()}`, reminderSent: true } })
+    const vtok = jwt.sign({ venueId: NV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    // Yeni saat: 5 gün sonra farklı bir saat
+    const newDay = new Date(Date.now() + 5 * 86400000)
+    const ymd = newDay.toLocaleDateString('en-CA', { timeZone: 'Europe/Istanbul' })
+    const r = await http(`/api/venue/classes/${NC}/sessions/${NS}`, { method: 'PUT', token: vtok, body: { date: ymd, time: '18:00', capacity: 20 } })
+    if (r.status !== 200) throw new Error(`seans güncelle: ${r.status} ${r.text.slice(0,120)}`)
+    const notif = await prisma.notification.count({ where: { userId: NU, type: 'session_rescheduled' } })
+    if (notif === 0) throw new Error('yeniden-planlamada rezervasyon sahibine bildirim yazılmadı')
+    const bk = await prisma.booking.findFirst({ where: { userId: NU }, select: { reminderSent: true } })
+    if (bk?.reminderSent !== false) throw new Error('reminderSent sıfırlanmadı (düzeltilmiş hatırlatma bastırılır)')
+    await prisma.notification.deleteMany({ where: { userId: NU } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { userId: NU } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: NS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: NC } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: NV } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: NU } }).catch(() => {})
+  })
+
   // ================== GİRDİ/INJECTION REGRESYONLARI (denetim turu 16) ==================
   await check('Girdi: cashback e-postası classTitle esc()\'li (stored XSS guard, kaynak)', async () => {
     const fs = require('fs')

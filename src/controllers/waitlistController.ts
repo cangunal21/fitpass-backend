@@ -137,7 +137,7 @@ export const notifyFirstWaitlistUser = async (sessionId: number) => {
         where: { id: rows[0].id },
         data: { status: 'notified', notifiedAt: new Date() },
         include: {
-          user: { select: { email: true, fullName: true, pushToken: true } },
+          user: { select: { id: true, email: true, fullName: true, pushToken: true, emailReminders: true } },
           session: { include: { class: true } },
         },
       })
@@ -148,11 +148,18 @@ export const notifyFirstWaitlistUser = async (sessionId: number) => {
     const startsAt = new Date(first.session.startsAt)
     const date = trDate(startsAt)
     const time = trTime(startsAt)
-    if (first.user?.email) {
+    const wlMsg = `${first.session.class.title} (${date} ${time}) dersinde yer açıldı, hemen kaydol!`
+    // IN-APP Notification eklendi (eskiden yalnız e-posta+push vardı → kullanıcı uygulamada göremiyordu).
+    if (first.user?.id) {
+      await prisma.notification.create({ data: { userId: first.user.id, type: 'waitlist_open', message: wlMsg } }).catch(() => {})
+    }
+    // E-posta emailReminders opt-out'una saygı (diğer hatırlatma e-postalarıyla tutarlı). Push+in-app
+    // her durumda gider → opt-out eden kullanıcı da beklediği yerden mahrum kalmaz.
+    if (first.user?.email && first.user.emailReminders !== false) {
       await sendWaitlistNotificationEmail(first.user.email, first.user.fullName, first.session.class.title, date, time)
     }
     if (first.user?.pushToken) {
-      sendPushNotification(first.user.pushToken, 'Yer açıldı! 🎉', `${first.session.class.title} (${date} ${time}) dersinde yer açıldı, hemen kaydol!`).catch(() => {})
+      sendPushNotification(first.user.pushToken, 'Yer açıldı! 🎉', wlMsg).catch(() => {})
     }
   } catch (e) {
     console.error('Waitlist notification error:', e)

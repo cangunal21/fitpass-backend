@@ -205,13 +205,13 @@ export const getMe = async (req: Request & { userId?: number }, res: Response) =
         const newBadges = await syncUserBadges(req.userId)
         // Yeni rozet kazanıldıysa bildir (push + e-posta + uygulama içi)
         if (newBadges.length > 0) {
-          const u = await prisma.user.findUnique({ where: { id: req.userId }, select: { pushToken: true, email: true, fullName: true } })
+          const u = await prisma.user.findUnique({ where: { id: req.userId }, select: { pushToken: true, email: true, fullName: true, emailReminders: true } })
           const msg = newBadges.length === 1
             ? `"${newBadges[0]}" rozetini kazandın! 🎉`
             : `${newBadges.length} yeni rozet kazandın! 🎉`
           await prisma.notification.create({ data: { userId: req.userId, type: 'badge', message: msg } }).catch(() => {})
           if (u?.pushToken) sendPushNotification(u.pushToken, 'Yeni rozet! 🏅', msg).catch(() => {})
-          if (u?.email) sendBadgeEmail(u.email, u.fullName, newBadges).catch(() => {})
+          if (u?.email && u.emailReminders !== false) sendBadgeEmail(u.email, u.fullName, newBadges).catch(() => {}) // opt-out saygı (cashback/streak ile tutarlı)
         }
       } catch (e) {
         console.error('Tier/badge sync error:', e)
