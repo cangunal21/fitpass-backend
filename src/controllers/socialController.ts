@@ -5,6 +5,8 @@ import { longestDailyStreak, currentDailyStreak, currentWeeklyStreak } from '../
 import { cached } from '../utils/cache'
 import { seasonInfo } from '../utils/season'
 import { parseIntSafe } from '../utils/validate'
+import { notifyFields, notifyPush, notifyText } from '../utils/notifyText'
+import { Locale } from '../utils/locale'
 
 // Liderlik/sıralama sorgu paramlarını NORMALIZE et. Aksi halde doğrulanmamış ?branch=<rastgele> her istekte
 // YENİ cache anahtarı üretip 45sn cache'i baypas ediyor + tüm-kullanıcı taramasını tetikliyordu (DoS + bellek).
@@ -21,7 +23,7 @@ export const followUser = async (req: Request, res: Response) => {
   try {
     const followerId = (req as any).userId
     const username = String(req.params.username)
-    const target = await prisma.user.findUnique({ where: { username }, select: { id: true, profilePrivacy: true, pushToken: true } })
+    const target = await prisma.user.findUnique({ where: { username }, select: { id: true, profilePrivacy: true, pushToken: true, locale: true } })
     if (!target) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
     if (target.id === followerId) return res.status(400).json({ error: 'Kendinizi takip edemezsiniz.' })
 
@@ -33,11 +35,14 @@ export const followUser = async (req: Request, res: Response) => {
     const status = isPrivate ? 'pending' : 'accepted'
     await prisma.follow.create({ data: { followerId, followingId: target.id, status } })
 
-    // Hedefe bildirim (uygulama içi + push) — takipçiye/isteğe göre
+    // Hedefe bildirim (uygulama içi + push) — takipçiye/isteğe göre. Metin ALICININ diliyle üretilir.
     const me = await prisma.user.findUnique({ where: { id: followerId }, select: { username: true } })
-    const msg = isPrivate ? `@${me?.username} seni takip etmek istiyor` : `@${me?.username} seni takip etmeye başladı`
-    await prisma.notification.create({ data: { userId: target.id, type: isPrivate ? 'follow_request' : 'follow', message: msg, relatedUserId: followerId } }).catch(() => {})
-    if (target.pushToken) sendPushNotification(target.pushToken, isPrivate ? 'Yeni takip isteği' : 'Yeni takipçi 👋', msg).catch(() => {})
+    const loc = (target.locale || 'tr') as Locale
+    const key = isPrivate ? 'follow_request' : 'follow'
+    const params = { username: me?.username || '' }
+    await prisma.notification.create({ data: { userId: target.id, type: key, ...notifyFields(loc, key, params), relatedUserId: followerId } }).catch(() => {})
+    const push = notifyPush(loc, key, params)
+    if (target.pushToken && push) sendPushNotification(target.pushToken, push.title, push.body).catch(() => {})
 
     return res.json({ message: isPrivate ? 'Takip isteği gönderildi.' : 'Takip edildi.', status })
   } catch (err: any) {
@@ -51,13 +56,16 @@ export const acceptFollowRequest = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId
     const username = String(req.params.username)
-    const follower = await prisma.user.findUnique({ where: { username }, select: { id: true, pushToken: true } })
+    const follower = await prisma.user.findUnique({ where: { username }, select: { id: true, pushToken: true, locale: true } })
     if (!follower) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
     const upd = await prisma.follow.updateMany({ where: { followerId: follower.id, followingId: userId, status: 'pending' }, data: { status: 'accepted' } })
     if (upd.count === 0) return res.status(404).json({ error: 'Bekleyen istek yok.' })
     const me = await prisma.user.findUnique({ where: { id: userId }, select: { username: true } })
-    await prisma.notification.create({ data: { userId: follower.id, type: 'follow_accept', message: `@${me?.username} takip isteğini kabul etti`, relatedUserId: userId } }).catch(() => {})
-    if (follower.pushToken) sendPushNotification(follower.pushToken, 'Takip isteğin kabul edildi 🎉', `@${me?.username} takip isteğini kabul etti`).catch(() => {})
+    const fLoc = (follower.locale || 'tr') as Locale
+    const fParams = { username: me?.username || '' }
+    await prisma.notification.create({ data: { userId: follower.id, type: 'follow_accept', ...notifyFields(fLoc, 'follow_accept', fParams), relatedUserId: userId } }).catch(() => {})
+    const fPush = notifyPush(fLoc, 'follow_accept', fParams)
+    if (follower.pushToken && fPush) sendPushNotification(follower.pushToken, fPush.title, fPush.body).catch(() => {})
     return res.json({ message: 'İstek kabul edildi.' })
   } catch (err) { return res.status(500).json({ error: 'Sunucu hatası.' }) }
 }
@@ -677,17 +685,16 @@ export const likeActivity = async (req: Request, res: Response) => {
         })
         if (!recentLike) {
           const liker = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } })
+          const owner = await prisma.user.findUnique({ where: { id: ownerId }, select: { pushToken: true, locale: true } })
+          const oLoc = (owner?.locale || 'tr') as Locale
+          // Ad boşsa anonim etiketi de ALICININ diliyle ("Bir kullanıcı" / "Someone")
+          const lParams = { name: liker?.fullName || notifyText(oLoc, 'anonymous_user') }
           await prisma.notification.create({
-            data: {
-              userId: ownerId,
-              type: 'like',
-              message: `${liker?.fullName || 'Bir kullanıcı'} aktiviteni beğendi.`,
-              relatedUserId: userId,
-            },
+            data: { userId: ownerId, type: 'like', ...notifyFields(oLoc, 'like', lParams), relatedUserId: userId },
           })
-          const owner = await prisma.user.findUnique({ where: { id: ownerId }, select: { pushToken: true } })
-          if (owner?.pushToken) {
-            sendPushNotification(owner.pushToken, 'Yeni beğeni ❤️', `${liker?.fullName || 'Bir kullanıcı'} aktiviteni beğendi.`).catch(() => {})
+          const lPush = notifyPush(oLoc, 'like', lParams)
+          if (owner?.pushToken && lPush) {
+            sendPushNotification(owner.pushToken, lPush.title, lPush.body).catch(() => {})
           }
         }
       } catch (notifyErr) {
@@ -784,34 +791,31 @@ export const addActivityComment = async (req: Request, res: Response) => {
     const commenter = await prisma.user.findUnique({ where: { id: userId }, select: { fullName: true } })
 
     if (parentComment && parentComment.userId !== userId) {
-      // Yoruma cevap verildi — yorumu yazana bildirim
+      // Yoruma cevap verildi — yorumu yazana bildirim. type 'comment' KALIR (istemci yönlendirmesi
+      // buna bakıyor); ayrışma metin anahtarında: comment_reply vs comment.
+      const parentUser = await prisma.user.findUnique({ where: { id: parentComment.userId }, select: { pushToken: true, locale: true } })
+      const pLoc = (parentUser?.locale || 'tr') as Locale
+      const pParams = { name: commenter?.fullName || notifyText(pLoc, 'anonymous_user'), excerpt: comment.content.slice(0, 80) }
       await prisma.notification.create({
-        data: {
-          userId: parentComment.userId,
-          type: 'comment',
-          message: `${commenter?.fullName || 'Bir kullanıcı'} yorumuna cevap verdi: "${comment.content.slice(0, 80)}"`,
-          relatedUserId: userId,
-        },
+        data: { userId: parentComment.userId, type: 'comment', ...notifyFields(pLoc, 'comment_reply', pParams), relatedUserId: userId },
       })
-      const parentUser = await prisma.user.findUnique({ where: { id: parentComment.userId }, select: { pushToken: true } })
-      if (parentUser?.pushToken) {
-        sendPushNotification(parentUser.pushToken, 'Yeni cevap 💬', `${commenter?.fullName || 'Bir kullanıcı'} yorumuna cevap verdi.`).catch(() => {})
+      const pPush = notifyPush(pLoc, 'comment_reply', pParams)
+      if (parentUser?.pushToken && pPush) {
+        sendPushNotification(parentUser.pushToken, pPush.title, pPush.body).catch(() => {})
       }
     } else if (!parentComment) {
       // Yeni üst seviye yorum — aktivite sahibine bildirim
       const ownerId = activity.ownerId
       if (ownerId && ownerId !== userId) {
+        const owner = await prisma.user.findUnique({ where: { id: ownerId }, select: { pushToken: true, locale: true } })
+        const cLoc = (owner?.locale || 'tr') as Locale
+        const cParams = { name: commenter?.fullName || notifyText(cLoc, 'anonymous_user'), excerpt: comment.content.slice(0, 80) }
         await prisma.notification.create({
-          data: {
-            userId: ownerId,
-            type: 'comment',
-            message: `${commenter?.fullName || 'Bir kullanıcı'} aktivitene yorum yaptı: "${comment.content.slice(0, 80)}"`,
-            relatedUserId: userId,
-          },
+          data: { userId: ownerId, type: 'comment', ...notifyFields(cLoc, 'comment', cParams), relatedUserId: userId },
         })
-        const owner = await prisma.user.findUnique({ where: { id: ownerId }, select: { pushToken: true } })
-        if (owner?.pushToken) {
-          sendPushNotification(owner.pushToken, 'Yeni yorum 💬', `${commenter?.fullName || 'Bir kullanıcı'} aktivitene yorum yaptı.`).catch(() => {})
+        const cPush = notifyPush(cLoc, 'comment', cParams)
+        if (owner?.pushToken && cPush) {
+          sendPushNotification(owner.pushToken, cPush.title, cPush.body).catch(() => {})
         }
       }
     }

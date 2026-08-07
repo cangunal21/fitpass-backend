@@ -2,6 +2,8 @@ import prisma from '../utils/prisma'
 import { sendReminderEmail } from '../utils/email'
 import { sendPushNotification } from '../utils/push'
 import { trDate, trDateShort, trTime, trYmd } from "../utils/trFormat"
+import { notifyPush, notifyText } from '../utils/notifyText'
+import { Locale } from '../utils/locale' 
 
 export const sendRemindersJob = async () => {
   try {
@@ -21,7 +23,7 @@ export const sendRemindersJob = async () => {
         session: { startsAt: { gte: from, lte: to } }
       },
       include: {
-        user: { select: { email: true, fullName: true, emailReminders: true, pushToken: true } },
+        user: { select: { email: true, fullName: true, emailReminders: true, pushToken: true, locale: true } },
         session: {
           include: {
             class: { include: { venue: { select: { name: true } } } }
@@ -49,21 +51,20 @@ export const sendRemindersJob = async () => {
         const venueName = booking.session!.class.venue?.name || ''
         const classTitle = booking.session!.class.title
 
+        const rLoc = (booking.user?.locale || 'tr') as Locale
         if (booking.user?.email && booking.user.emailReminders !== false) {
-          await sendReminderEmail(booking.user.email, booking.user.fullName, classTitle, date, time, venueName)
+          await sendReminderEmail(booking.user.email, booking.user.fullName, classTitle, date, time, venueName, rLoc)
           console.log(`✅ Hatırlatma maili gönderildi: booking#${booking.id}`) // PII loglamıyoruz (KVKK + Sentry'ye sızmasın)
         }
 
-        if (booking.user?.pushToken) {
-          await sendPushNotification(
-            booking.user.pushToken,
-            'Dersine 2 saat kaldı! ⏰',
-            // "bugün" SABİT yazılıydı: hatırlatma penceresi (+90..+150 dk) İstanbul gece yarısını
-            // aştığında ders aslında ERTESİ gün oluyor (5 Ağu 22:30'da gönderilen push, 6 Ağu
-            // 00:30 dersi için "bugün" diyordu) — üstelik aynı anda giden e-posta trDate ile doğru
-            // tarihi yazıyor, kullanıcıya çelişkili iki tarih gidiyordu. Artık günü karşılaştırıyoruz.
-            `${classTitle} dersi ${trYmd(startsAt) === trYmd(new Date()) ? 'bugün' : trDateShort(startsAt)} ${time}'de ${venueName} adresinde başlıyor.`
-          )
+        // "bugün" SABİT yazılıydı: hatırlatma penceresi (+90..+150 dk) İstanbul gece yarısını
+        // aştığında ders aslında ERTESİ gün oluyor (5 Ağu 22:30'da gönderilen push, 6 Ağu
+        // 00:30 dersi için "bugün" diyordu) — üstelik aynı anda giden e-posta trDate ile doğru
+        // tarihi yazıyor, kullanıcıya çelişkili iki tarih gidiyordu. Artık günü karşılaştırıyoruz.
+        const dayLabel = trYmd(startsAt) === trYmd(new Date()) ? notifyText(rLoc, 'reminder_today') : trDateShort(startsAt)
+        const rPush = notifyPush(rLoc, 'class_reminder', { classTitle, date: dayLabel, time, venue: venueName })
+        if (booking.user?.pushToken && rPush) {
+          await sendPushNotification(booking.user.pushToken, rPush.title, rPush.body)
           console.log(`📱 Push bildirimi gönderildi: user#${booking.userId}`) // PII loglamıyoruz
         }
         // reminderSent zaten yukarıda atomik sahiplenmede işaretlendi.

@@ -1,7 +1,8 @@
 import { Request, Response, NextFunction } from 'express'
 import { verifyToken } from '../utils/jwt'
 import prisma from '../utils/prisma'
-import { cached } from '../utils/cache'
+import { cached, invalidate } from '../utils/cache'
+import { localeFromReq, Locale } from '../utils/locale'
 
 export interface AuthRequest extends Request {
   userId?: number
@@ -10,13 +11,27 @@ export interface AuthRequest extends Request {
 
 // Kullanıcı token'ının o anki durumu — 60sn cache (ucuz; ban/silme anında invalidate edilebilir).
 // 'ok' geçerli, 'banned' askıda, 'missing' hesap silinmiş/yok. authMiddleware + optionalAuth ortak.
+// locale de burada taşınır → dil senkronu için AYRI bir sorgu açılmaz.
 type UserAuthState = 'ok' | 'banned' | 'missing'
-async function userAuthState(userId: number): Promise<UserAuthState> {
+type AuthSnapshot = { state: UserAuthState; locale: Locale | null }
+async function userAuthSnapshot(userId: number): Promise<AuthSnapshot> {
   return cached(`authstate:${userId}`, 60000, async () => {
-    const u = await prisma.user.findUnique({ where: { id: userId }, select: { banned: true } })
-    if (!u) return 'missing'
-    return u.banned ? 'banned' : 'ok'
+    const u = await prisma.user.findUnique({ where: { id: userId }, select: { banned: true, locale: true } })
+    if (!u) return { state: 'missing' as UserAuthState, locale: null }
+    return { state: (u.banned ? 'banned' : 'ok') as UserAuthState, locale: (u.locale as Locale) || 'tr' }
   })
+}
+
+// DİL SENKRONU: istemci her istekte `X-Locale` yollar. Kullanıcının kayıtlı dili DEĞİŞTİYSE
+// güncelleriz — böylece e-posta/push kullanıcının o anki arayüz diliyle gider.
+// DİRTY-CHECK ŞART: okuma yolunda koşulsuz User write yapmak (eski syncUserTier hatası) her
+// istekte bir yazma demekti. Burada yazma yalnız dil GERÇEKTEN değişince olur (yılda birkaç kez).
+async function syncLocale(userId: number, snap: AuthSnapshot, req: Request) {
+  const want = localeFromReq(req)
+  if (!req.headers['x-locale']) return          // istemci dil bildirmiyorsa dokunma
+  if (snap.locale === null || snap.locale === want) return
+  await prisma.user.update({ where: { id: userId }, data: { locale: want } }).catch(() => {})
+  invalidate(`authstate:${userId}`)             // cache'i düşür → sonraki istek yeni dili görsün
 }
 
 export const optionalAuthMiddleware = async (req: Request, res: Response, next: NextFunction) => {
@@ -34,8 +49,8 @@ export const optionalAuthMiddleware = async (req: Request, res: Response, next: 
         // Banlıysa viewer kimliğini DÜŞÜR → istek anonim/giriş-yapılmamış gibi işlenir.
         // SİLİNEN KULLANICI: hesap silindiyse (JWT ~1sa hâlâ geçerli olabilir) state 'missing' döner →
         // viewer kimliği düşürülür (silinmiş id ile "giriş yapmış" muamelesi görmesin).
-        const state = await userAuthState(decoded.userId)
-        if (state === 'ok') (req as any).userId = decoded.userId
+        const snap = await userAuthSnapshot(decoded.userId)
+        if (snap.state === 'ok') (req as any).userId = decoded.userId
       }
     } catch {}
   }
@@ -64,9 +79,11 @@ export const authMiddleware = async (req: AuthRequest, res: Response, next: Next
     // Silinen kullanıcı da içeride kalmasın: hesabı silinince JWT ~1sa daha imzalı-geçerli olur; DB'de yoksa
     // req.userId silinmiş bir id'ye set edilir ve `where:{userId}` sorguları o id ile çalışır (çoğu boş/404
     // döner ama yeni bir aynı-id kaydı olsaydı karışırdı) → 'missing' ise 401.
-    const state = await userAuthState(decoded.userId)
-    if (state === 'banned') return res.status(403).json({ error: 'Hesabınız askıya alınmıştır.' })
-    if (state === 'missing') return res.status(401).json({ error: 'Geçersiz token.' })
+    const snap = await userAuthSnapshot(decoded.userId)
+    if (snap.state === 'banned') return res.status(403).json({ error: 'Hesabınız askıya alınmıştır.' })
+    if (snap.state === 'missing') return res.status(401).json({ error: 'Geçersiz token.' })
+    // Dil değiştiyse kaydet (dirty-check'li; yazma yalnız gerçek değişimde) — bildirimler güncel dille gitsin.
+    syncLocale(decoded.userId, snap, req).catch(() => {})
     req.userId = decoded.userId
     req.userEmail = decoded.email
     next()

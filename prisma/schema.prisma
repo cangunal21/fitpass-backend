@@ -147,6 +147,9 @@ model User {
   activityPrivacy        String        @default("public")
   emailReminders         Boolean       @default(true)
   smsReminders           Boolean       @default(false)
+  // Bildirim dili: e-posta/push metinleri bu dille üretilir (in-app bildirimler anahtar+parametre
+  // saklandığı için istemcide çevrilir). İstemci dil değiştirince PUT /api/auth/locale ile günceller.
+  locale                 String        @default("tr")
   pushToken              String?
   tier                   Tier?         @relation(fields: [tierId], references: [id])
   tierId                 Int?
@@ -639,7 +642,13 @@ model Notification {
   user          User     @relation("NotificationRecipient", fields: [userId], references: [id])
   userId        Int
   type          String // "group_invite" | "like" | "comment" | "follow" | ...
+  // message = OLUŞTURMA ANINDA üretilmiş düz metin. Artık yalnız GERİYE DÖNÜK FALLBACK:
+  // eski satırlarda (ve messageKey'i olmayan her satırda) istemci bunu gösterir.
   message       String
+  // ÇOKLU DİL: yeni bildirimler metin yerine anahtar+parametre saklar → istemci kendi diliyle
+  // render eder, kullanıcı dili değiştirince GEÇMİŞ bildirimler de çevrilir. (notifyText.ts katalog)
+  messageKey    String?
+  messageParams Json?
   relatedUserId Int?
   isRead        Boolean  @default(false)
   createdAt     DateTime @default(now())

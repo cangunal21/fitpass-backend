@@ -8,6 +8,8 @@ import { resetYearlyPointsIfNeeded, reversiblePoints } from '../utils/tier'
 import { clampStr } from '../utils/validate'
 import { stripVenueSensitive } from '../utils/sanitize'
 import { trDate, trTime } from "../utils/trFormat"
+import { notifyFields, notifyPush, notifyText } from '../utils/notifyText'
+import { Locale } from '../utils/locale'
 
 class BookingError extends Error {
   status: number
@@ -236,12 +238,12 @@ export const createBooking = async (req: Request, res: Response) => {
 
     // Kullanıcıya onay emaili
     try {
-      const userForEmail = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, fullName: true } })
+      const userForEmail = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, fullName: true, locale: true } })
       if (userForEmail?.email) {
         const startsAt = new Date(booking.session!.startsAt)
         const date = trDate(startsAt)
         const time = trTime(startsAt)
-        await sendBookingConfirmationEmail(userForEmail.email, userForEmail.fullName, booking.session!.class.title, date, time, booking.finalAmount)
+        await sendBookingConfirmationEmail(userForEmail.email, userForEmail.fullName, booking.session!.class.title, date, time, booking.finalAmount, (userForEmail.locale as Locale) || 'tr')
       }
     } catch (emailErr) {
       console.error('User confirmation email error:', emailErr)
@@ -265,37 +267,39 @@ export const createBooking = async (req: Request, res: Response) => {
         for (const username of cleanTags) {
           const taggedUser = await prisma.user.findFirst({
             where: { username: { equals: username, mode: 'insensitive' }, banned: false },
-            select: { id: true, email: true, fullName: true, emailReminders: true, pushToken: true }
+            select: { id: true, email: true, fullName: true, emailReminders: true, pushToken: true, locale: true }
           })
           if (!taggedUser) continue
+
+          const tLoc = (taggedUser.locale || 'tr') as Locale
+          const bookerName = booker?.fullName || notifyText(tLoc, 'anonymous_user')
 
           if (taggedUser.email && taggedUser.emailReminders !== false) {
             await sendGroupTagNotificationEmail(
               taggedUser.email,
               taggedUser.fullName,
-              booker?.fullName || 'Bir kullanıcı',
+              bookerName,
               booking.session!.class.title,
               date,
               time,
-              venueName
+              venueName,
+              tLoc
             )
           }
 
+          const giParams = { name: bookerName, category: categoryName }
           await prisma.notification.create({
             data: {
               userId: taggedUser.id,
               type: 'group_invite',
-              message: `${booker?.fullName || 'Bir kullanıcı'} sizi ${categoryName} sporuna davet etti.`,
+              ...notifyFields(tLoc, 'group_invite', giParams),
               relatedUserId: userId,
             },
           })
 
-          if (taggedUser.pushToken) {
-            sendPushNotification(
-              taggedUser.pushToken,
-              'Yeni davet! 🎉',
-              `${booker?.fullName || 'Bir kullanıcı'} sizi ${categoryName} sporuna davet etti.`
-            ).catch(() => {})
+          const giPush = notifyPush(tLoc, 'group_invite', giParams)
+          if (taggedUser.pushToken && giPush) {
+            sendPushNotification(taggedUser.pushToken, giPush.title, giPush.body).catch(() => {})
           }
         }
       } catch (tagErr) {
@@ -593,7 +597,7 @@ export const cancelBooking = async (req: Request, res: Response) => {
       const fullBooking = await prisma.booking.findUnique({
         where: { id: bookingId },
         include: {
-          user: { select: { fullName: true, email: true, pushToken: true } },
+          user: { select: { fullName: true, email: true, pushToken: true, locale: true } },
           session: { include: { class: { include: { venue: { select: { email: true, name: true } } } } } },
         },
       })
@@ -605,12 +609,17 @@ export const cancelBooking = async (req: Request, res: Response) => {
         const classTitle = fullBooking.session!.class.title
         const venue = fullBooking.session!.class.venue
 
-        // Kullanıcıya iptal bildirimi (e-posta + push)
+        // Kullanıcıya iptal bildirimi (e-posta + push) — kullanıcının diliyle
+        const cLoc = (fullBooking.user?.locale || 'tr') as Locale
         if (fullBooking.user?.email) {
-          await sendCancellationEmail(fullBooking.user.email, fullBooking.user.fullName, classTitle, date, time)
+          await sendCancellationEmail(fullBooking.user.email, fullBooking.user.fullName, classTitle, date, time, cLoc)
         }
-        if (fullBooking.user?.pushToken) {
-          sendPushNotification(fullBooking.user.pushToken, 'Rezervasyon iptal edildi', `${classTitle} · ${date} ${time} iptal edildi. ${refundType === 'full' ? 'Tam' : 'Yarım'} iade uygulandı.`).catch(() => {})
+        const cPush = notifyPush(cLoc, 'booking_cancelled_self', {
+          classTitle, date, time,
+          refund: notifyText(cLoc, refundType === 'full' ? 'refund_full' : 'refund_half'),
+        })
+        if (fullBooking.user?.pushToken && cPush) {
+          sendPushNotification(fullBooking.user.pushToken, cPush.title, cPush.body).catch(() => {})
         }
 
         // Salona iptal bildirimi
@@ -748,10 +757,12 @@ export async function awardAttendanceOnCheckin(bookingId: number) {
         return pts
       })
       if (credited > 0) {
-        const u = await prisma.user.findUnique({ where: { id: b.userId }, select: { email: true, fullName: true, rewardPoints: true, pushToken: true, emailReminders: true } })
-        const title = b.session?.class?.title || 'Ders'
-        if (u?.email && u.emailReminders !== false) sendCashbackEmail(u.email, u.fullName, credited, title, u.rewardPoints).catch(() => {})
-        if (u?.pushToken) sendPushNotification(u.pushToken, 'Puan kazandın! 🎉', `${title} dersine katıldın, ${credited} puan kazandın.`).catch(() => {})
+        const u = await prisma.user.findUnique({ where: { id: b.userId }, select: { email: true, fullName: true, rewardPoints: true, pushToken: true, emailReminders: true, locale: true } })
+        const pLoc = (u?.locale || 'tr') as Locale
+        const title = b.session?.class?.title || notifyText(pLoc, 'class_fallback')
+        if (u?.email && u.emailReminders !== false) sendCashbackEmail(u.email, u.fullName, credited, title, u.rewardPoints, pLoc).catch(() => {})
+        const pPush = notifyPush(pLoc, 'points_earned', { classTitle: title, points: credited })
+        if (u?.pushToken && pPush) sendPushNotification(u.pushToken, pPush.title, pPush.body).catch(() => {})
       }
     }
     // Referral: davet edilenin ilk UCRETLI dersi GERCEKLESINCE (check-in) tamamlanir (booking aninda DEGIL).
@@ -915,18 +926,20 @@ export const transferBooking = async (req: Request, res: Response) => {
       throw e
     }
 
-    // Bilgilendirme (e-posta + push) (yeni ders + varsa kredi iadesi)
+    // Bilgilendirme (e-posta + push) (yeni ders + varsa fiyat farkı iadesi)
     try {
-      const u = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, fullName: true, pushToken: true } })
+      const u = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, fullName: true, pushToken: true, locale: true } })
       const sess = result.updated.session
       if (sess) {
         const startsAt = new Date(sess.startsAt)
         const date = trDate(startsAt)
         const time = trTime(startsAt)
-        if (u?.email) await sendTransferEmail(u.email, u.fullName, sess.class.title, date, time, result.priceRefund)
-        if (u?.pushToken) {
-          const refundTxt = result.priceRefund > 0 ? ` ₺${result.priceRefund} kredi iade edildi.` : ''
-          sendPushNotification(u.pushToken, 'Dersin değiştirildi 🔄', `${sess.class.title} · ${date} ${time}.${refundTxt}`).catch(() => {})
+        const tLoc = (u?.locale || 'tr') as Locale
+        if (u?.email) await sendTransferEmail(u.email, u.fullName, sess.class.title, date, time, result.priceRefund, tLoc)
+        const refundTxt = result.priceRefund > 0 ? notifyText(tLoc, 'refund_note', { refund: result.priceRefund }) : ''
+        const tPush = notifyPush(tLoc, 'booking_transferred', { classTitle: sess.class.title, date, time, refund: refundTxt })
+        if (u?.pushToken && tPush) {
+          sendPushNotification(u.pushToken, tPush.title, tPush.body).catch(() => {})
         }
       }
     } catch (mailErr) {

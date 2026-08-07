@@ -3,6 +3,8 @@ import prisma from '../utils/prisma'
 import { sendWaitlistNotificationEmail } from '../utils/email'
 import { sendPushNotification } from '../utils/push'
 import { trDate, trTime } from "../utils/trFormat"
+import { notifyFields, notifyPush } from '../utils/notifyText'
+import { Locale } from '../utils/locale'
 
 // Bekleme listesine katıl
 export const joinWaitlist = async (req: Request, res: Response) => {
@@ -137,7 +139,7 @@ export const notifyFirstWaitlistUser = async (sessionId: number) => {
         where: { id: rows[0].id },
         data: { status: 'notified', notifiedAt: new Date() },
         include: {
-          user: { select: { id: true, email: true, fullName: true, pushToken: true, emailReminders: true } },
+          user: { select: { id: true, email: true, fullName: true, pushToken: true, emailReminders: true, locale: true } },
           session: { include: { class: true } },
         },
       })
@@ -148,18 +150,20 @@ export const notifyFirstWaitlistUser = async (sessionId: number) => {
     const startsAt = new Date(first.session.startsAt)
     const date = trDate(startsAt)
     const time = trTime(startsAt)
-    const wlMsg = `${first.session.class.title} (${date} ${time}) dersinde yer açıldı, hemen kaydol!`
+    const wlLoc = (first.user?.locale || 'tr') as Locale
+    const wlParams = { classTitle: first.session.class.title, date, time }
     // IN-APP Notification eklendi (eskiden yalnız e-posta+push vardı → kullanıcı uygulamada göremiyordu).
     if (first.user?.id) {
-      await prisma.notification.create({ data: { userId: first.user.id, type: 'waitlist_open', message: wlMsg } }).catch(() => {})
+      await prisma.notification.create({ data: { userId: first.user.id, type: 'waitlist_open', ...notifyFields(wlLoc, 'waitlist_open', wlParams) } }).catch(() => {})
     }
     // E-posta emailReminders opt-out'una saygı (diğer hatırlatma e-postalarıyla tutarlı). Push+in-app
     // her durumda gider → opt-out eden kullanıcı da beklediği yerden mahrum kalmaz.
     if (first.user?.email && first.user.emailReminders !== false) {
-      await sendWaitlistNotificationEmail(first.user.email, first.user.fullName, first.session.class.title, date, time)
+      await sendWaitlistNotificationEmail(first.user.email, first.user.fullName, first.session.class.title, date, time, wlLoc)
     }
-    if (first.user?.pushToken) {
-      sendPushNotification(first.user.pushToken, 'Yer açıldı! 🎉', wlMsg).catch(() => {})
+    const wlPush = notifyPush(wlLoc, 'waitlist_open', wlParams)
+    if (first.user?.pushToken && wlPush) {
+      sendPushNotification(first.user.pushToken, wlPush.title, wlPush.body).catch(() => {})
     }
   } catch (e) {
     console.error('Waitlist notification error:', e)

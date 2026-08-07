@@ -1,4 +1,5 @@
 import { Resend } from 'resend'
+import { Locale } from './locale'
 
 let _resend: Resend | null = null
 const resend = {
@@ -42,12 +43,21 @@ const FROM_EMAIL = 'Şipşakspor <noreply@sipsakspor.com>'
 const BRAND_COLOR = '#4F46E5'
 const SITE_URL = 'https://sipsakspor.com'
 
-const baseTemplate = (content: string) => `
+// ÇOKLU DİL: kullanıcıya giden e-postalar alıcının `User.locale` diliyle üretilir. Her şablon kendi
+// metin bloğunu İÇİNDE taşır (tek dev sözlük yerine) → şablon okunurken çevirisi de gözle görülür,
+// biri değişince diğeri unutulmaz.
+// KAPSAM (ürün kararı): yalnız KULLANICI e-postaları çok dilli. Salon/eğitmen/admin e-postaları
+// Türkçe kalır — hedef kitle İstanbul'daki Türk işletmeler ve Venue/Instructor'da locale alanı yok.
+const tt = <T extends Record<string, string>>(locale: Locale, d: { tr: T; en: T }): T => (locale === 'en' ? d.en : d.tr)
+// Şablon içi başlık/etiket sözlüğü kullanılırken varsayılan dil TR (çağıran locale vermezse davranış değişmez).
+const L = (locale?: Locale): Locale => (locale === 'en' ? 'en' : 'tr')
+
+const baseTemplate = (content: string, locale?: Locale) => `
   <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto; background: #F5F5F5; padding: 40px 20px;">
     <div style="background: #fff; border-radius: 24px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,0.06);">
       <div style="background: linear-gradient(135deg, #4F46E5 0%, #6366F1 50%, #818CF8 100%); padding: 32px; text-align: center;">
         <h1 style="font-size: 26px; font-weight: 800; color: #fff; margin: 0; letter-spacing: -0.5px;">şipşakspor</h1>
-        <p style="font-size: 13px; color: rgba(255,255,255,0.7); margin: 6px 0 0;">İstanbul'un spor platformu</p>
+        <p style="font-size: 13px; color: rgba(255,255,255,0.7); margin: 6px 0 0;">${L(locale) === 'en' ? "Istanbul's sports platform" : "İstanbul'un spor platformu"}</p>
       </div>
       <div style="padding: 36px 40px;">
         ${content}
@@ -59,51 +69,93 @@ const baseTemplate = (content: string) => `
   </div>
 `
 
-export const sendWelcomeEmail = async (to: string, fullName: string) => {
+export const sendWelcomeEmail = async (to: string, fullName: string, locale?: Locale) => {
+  const loc = L(locale)
+  const T = tt(loc, {
+    tr: {
+      subject: 'Şipşakspor\'a Hoş Geldin!',
+      greeting: `Merhaba ${esc(fullName)}! 👋`,
+      body1: "Şipşakspor ailesine hoş geldin! Artık İstanbul'un en iyi spor derslerine tek platformdan erişebilirsin.",
+      featuresTitle: 'Neler yapabilirsin?',
+      item1: 'Yoga, Pilates, Boks ve daha fazlasına katıl',
+      item2: 'Halı saha, basketbol, padel maçlarına kaydol',
+      item3: 'Arkadaşlarınla birlikte antrenman yap',
+      item4: 'Tier sistemiyle indirimler kazan',
+      cta: 'Ders Bulmaya Başla →',
+    },
+    en: {
+      subject: 'Welcome to Şipşakspor!',
+      greeting: `Hi ${esc(fullName)}! 👋`,
+      // NOT: İngilizce metinde exonim "Istanbul" (noktalı İ değil) — bazı e-posta istemcilerinde bozuk görünür.
+      body1: "Welcome to the Şipşakspor family! You can now reach Istanbul's best classes from a single platform.",
+      featuresTitle: 'What can you do?',
+      item1: 'Join Yoga, Pilates, Boxing and more',
+      item2: 'Sign up for football, basketball and padel matches',
+      item3: 'Train together with your friends',
+      item4: 'Earn discounts with the tier system',
+      cta: 'Start Finding Classes →',
+    },
+  })
   await resend.emails.send({
     from: FROM_EMAIL,
     to,
-    subject: 'Şipşakspor\'a Hoş Geldin!',
+    subject: T.subject,
     html: baseTemplate(`
-      <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0 0 8px;">Merhaba ${esc(fullName)}! 👋</h2>
+      <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0 0 8px;">${T.greeting}</h2>
       <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
-        Şipşakspor ailesine hoş geldin! Artık İstanbul'un en iyi spor derslerine tek platformdan erişebilirsin.
+        ${T.body1}
       </p>
       <div style="background: #EEF2FF; border-radius: 16px; padding: 20px; margin-bottom: 28px;">
-        <p style="font-size: 14px; color: ${BRAND_COLOR}; font-weight: 700; margin: 0 0 10px;">Neler yapabilirsin?</p>
+        <p style="font-size: 14px; color: ${BRAND_COLOR}; font-weight: 700; margin: 0 0 10px;">${T.featuresTitle}</p>
         <ul style="font-size: 14px; color: #555; line-height: 2; margin: 0; padding-left: 20px;">
-          <li>Yoga, Pilates, Boks ve daha fazlasına katıl</li>
-          <li>Halı saha, basketbol, padel maçlarına kaydol</li>
-          <li>Arkadaşlarınla birlikte antrenman yap</li>
-          <li>Tier sistemiyle indirimler kazan</li>
+          <li>${T.item1}</li>
+          <li>${T.item2}</li>
+          <li>${T.item3}</li>
+          <li>${T.item4}</li>
         </ul>
       </div>
       <div style="text-align: center;">
-        <a href="${SITE_URL}" style="display: inline-block; padding: 14px 32px; background: ${BRAND_COLOR}; color: #fff; border-radius: 14px; text-decoration: none; font-size: 15px; font-weight: 700;">Ders Bulmaya Başla →</a>
+        <a href="${SITE_URL}" style="display: inline-block; padding: 14px 32px; background: ${BRAND_COLOR}; color: #fff; border-radius: 14px; text-decoration: none; font-size: 15px; font-weight: 700;">${T.cta}</a>
       </div>
-    `),
+    `, loc),
   })
 }
 
-export const sendPasswordResetEmail = async (to: string, fullName: string, resetToken: string) => {
+export const sendPasswordResetEmail = async (to: string, fullName: string, resetToken: string, locale?: Locale) => {
   const resetUrl = `${SITE_URL}/sifre-sifirla?token=${resetToken}`
-
+  const loc = L(locale)
+  const T = tt(loc, {
+    tr: {
+      subject: 'Şipşakspor — Şifre Sıfırlama',
+      heading: 'Şifre Sıfırlama',
+      body1: `Merhaba ${esc(fullName)}, şifre sıfırlama talebinde bulundun. Aşağıdaki butona tıklayarak yeni şifreni belirleyebilirsin.`,
+      cta: 'Şifremi Sıfırla →',
+      warning: '⚠️ Bu link 1 saat geçerlidir. Eğer bu talebi sen yapmadıysan bu emaili görmezden gelebilirsin.',
+    },
+    en: {
+      subject: 'Şipşakspor — Password Reset',
+      heading: 'Password Reset',
+      body1: `Hi ${esc(fullName)}, you requested a password reset. Tap the button below to set your new password.`,
+      cta: 'Reset My Password →',
+      warning: "⚠️ This link is valid for 1 hour. If you didn't request this, you can safely ignore this email.",
+    },
+  })
   await resend.emails.send({
     from: FROM_EMAIL,
     to,
-    subject: 'Şipşakspor — Şifre Sıfırlama',
+    subject: T.subject,
     html: baseTemplate(`
-      <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0 0 8px;">Şifre Sıfırlama</h2>
+      <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0 0 8px;">${T.heading}</h2>
       <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
-        Merhaba ${esc(fullName)}, şifre sıfırlama talebinde bulundun. Aşağıdaki butona tıklayarak yeni şifreni belirleyebilirsin.
+        ${T.body1}
       </p>
       <div style="text-align: center; margin-bottom: 24px;">
-        <a href="${resetUrl}" style="display: inline-block; padding: 14px 32px; background: ${BRAND_COLOR}; color: #fff; border-radius: 14px; text-decoration: none; font-size: 15px; font-weight: 700;">Şifremi Sıfırla →</a>
+        <a href="${resetUrl}" style="display: inline-block; padding: 14px 32px; background: ${BRAND_COLOR}; color: #fff; border-radius: 14px; text-decoration: none; font-size: 15px; font-weight: 700;">${T.cta}</a>
       </div>
       <div style="background: #FEF2F2; border-radius: 12px; padding: 14px;">
-        <p style="font-size: 13px; color: #DC2626; margin: 0;">⚠️ Bu link 1 saat geçerlidir. Eğer bu talebi sen yapmadıysan bu emaili görmezden gelebilirsin.</p>
+        <p style="font-size: 13px; color: #DC2626; margin: 0;">${T.warning}</p>
       </div>
-    `),
+    `, loc),
   })
 }
 
@@ -179,46 +231,56 @@ export const sendBookingConfirmationEmail = async (
   classTitle: string,
   date: string,
   time: string,
-  price: number
+  price: number,
+  locale?: Locale
 ) => {
+  const loc = L(locale)
+  const T = tt(loc, {
+    tr: { heading: 'Rezervasyon Onaylandı!', body1: `Merhaba ${esc(fullName)}, rezervasyonun başarıyla oluşturuldu!`,
+          lblDate: 'Tarih', lblTime: 'Saat', lblPrice: 'Ücret',
+          note: '🔒 12 saat öncesine kadar ücretsiz iptal hakkın var.', cta: 'Rezervasyonlarımı Gör →' },
+    en: { heading: 'Booking Confirmed!', body1: `Hi ${esc(fullName)}, your booking is all set!`,
+          lblDate: 'Date', lblTime: 'Time', lblPrice: 'Price',
+          note: '🔒 You can cancel for free up to 12 hours before.', cta: 'View My Bookings →' },
+  })
   await resend.emails.send({
     from: FROM_EMAIL,
     to,
-    subject: `Rezervasyon Onaylandı: ${classTitle}`,
+    subject: loc === 'en' ? `Booking Confirmed: ${classTitle}` : `Rezervasyon Onaylandı: ${classTitle}`,
     html: baseTemplate(`
       <div style="text-align: center; margin-bottom: 28px;">
         <div style="width: 64px; height: 64px; background: #EEF2FF; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 16px;">
           <span style="font-size: 32px;">🎉</span>
         </div>
-        <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0;">Rezervasyon Onaylandı!</h2>
+        <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0;">${T.heading}</h2>
       </div>
       <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
-        Merhaba ${esc(fullName)}, rezervasyonun başarıyla oluşturuldu!
+        ${T.body1}
       </p>
       <div style="background: #FAFAFA; border-radius: 16px; padding: 20px; margin-bottom: 24px; border: 1px solid #F0F0F0;">
         <p style="font-size: 17px; font-weight: 700; color: #111; margin: 0 0 16px;">${esc(classTitle)}</p>
         <div style="display: flex; gap: 24px;">
           <div>
-            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Tarih</p>
+            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">${T.lblDate}</p>
             <p style="font-size: 14px; font-weight: 600; color: #111; margin: 0;">${date}</p>
           </div>
           <div>
-            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Saat</p>
+            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">${T.lblTime}</p>
             <p style="font-size: 14px; font-weight: 600; color: #111; margin: 0;">${time}</p>
           </div>
           <div>
-            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Ücret</p>
+            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">${T.lblPrice}</p>
             <p style="font-size: 14px; font-weight: 700; color: ${BRAND_COLOR}; margin: 0;">₺${price}</p>
           </div>
         </div>
       </div>
       <div style="background: #FFF7ED; border-radius: 12px; padding: 14px; margin-bottom: 24px;">
-        <p style="font-size: 13px; color: #92400E; margin: 0;">🔒 12 saat öncesine kadar ücretsiz iptal hakkın var.</p>
+        <p style="font-size: 13px; color: #92400E; margin: 0;">${T.note}</p>
       </div>
       <div style="text-align: center;">
-        <a href="${SITE_URL}/profil" style="display: inline-block; padding: 12px 28px; background: ${BRAND_COLOR}; color: #fff; border-radius: 12px; text-decoration: none; font-size: 14px; font-weight: 700;">Rezervasyonlarımı Gör →</a>
+        <a href="${SITE_URL}/profil" style="display: inline-block; padding: 12px 28px; background: ${BRAND_COLOR}; color: #fff; border-radius: 12px; text-decoration: none; font-size: 14px; font-weight: 700;">${T.cta}</a>
       </div>
-    `),
+    `, loc),
   })
 }
 
@@ -228,41 +290,49 @@ export const sendCancellationEmail = async (
   classTitle: string,
   date: string,
   time: string,
+  locale?: Locale,
 ) => {
+  const loc = L(locale)
+  const T = tt(loc, {
+    tr: { heading: 'Rezervasyon İptal Edildi', body1: `Merhaba ${esc(fullName)}, aşağıdaki rezervasyonun iptal edildi.`,
+          lblDate: 'Tarih', lblTime: 'Saat', note: 'Başka bir derse katılmak için platformumuzu ziyaret edebilirsin.', cta: 'Ders Bul →' },
+    en: { heading: 'Booking Cancelled', body1: `Hi ${esc(fullName)}, the booking below has been cancelled.`,
+          lblDate: 'Date', lblTime: 'Time', note: 'Hop back on the platform anytime to join another class.', cta: 'Find a Class →' },
+  })
   await resend.emails.send({
     from: FROM_EMAIL,
     to,
-    subject: `Rezervasyon İptal Edildi: ${classTitle}`,
+    subject: loc === 'en' ? `Booking Cancelled: ${classTitle}` : `Rezervasyon İptal Edildi: ${classTitle}`,
     html: baseTemplate(`
       <div style="text-align: center; margin-bottom: 28px;">
         <div style="width: 64px; height: 64px; background: #FEF2F2; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 16px;">
           <span style="font-size: 32px;">❌</span>
         </div>
-        <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0;">Rezervasyon İptal Edildi</h2>
+        <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0;">${T.heading}</h2>
       </div>
       <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
-        Merhaba ${esc(fullName)}, aşağıdaki rezervasyonun iptal edildi.
+        ${T.body1}
       </p>
       <div style="background: #FAFAFA; border-radius: 16px; padding: 20px; margin-bottom: 24px; border: 1px solid #F0F0F0;">
         <p style="font-size: 17px; font-weight: 700; color: #111; margin: 0 0 16px;">${esc(classTitle)}</p>
         <div style="display: flex; gap: 24px;">
           <div>
-            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Tarih</p>
+            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">${T.lblDate}</p>
             <p style="font-size: 14px; font-weight: 600; color: #111; margin: 0;">${date}</p>
           </div>
           <div>
-            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Saat</p>
+            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">${T.lblTime}</p>
             <p style="font-size: 14px; font-weight: 600; color: #111; margin: 0;">${time}</p>
           </div>
         </div>
       </div>
       <div style="background: #EEF2FF; border-radius: 12px; padding: 14px; margin-bottom: 24px;">
-        <p style="font-size: 13px; color: ${BRAND_COLOR}; margin: 0;">Başka bir derse katılmak için platformumuzu ziyaret edebilirsin.</p>
+        <p style="font-size: 13px; color: ${BRAND_COLOR}; margin: 0;">${T.note}</p>
       </div>
       <div style="text-align: center;">
-        <a href="${SITE_URL}" style="display: inline-block; padding: 12px 28px; background: ${BRAND_COLOR}; color: #fff; border-radius: 12px; text-decoration: none; font-size: 14px; font-weight: 700;">Ders Bul →</a>
+        <a href="${SITE_URL}" style="display: inline-block; padding: 12px 28px; background: ${BRAND_COLOR}; color: #fff; border-radius: 12px; text-decoration: none; font-size: 14px; font-weight: 700;">${T.cta}</a>
       </div>
-    `),
+    `, loc),
   })
 }
 
@@ -412,39 +482,57 @@ export const sendVenueRegistrationAdminEmail = async (
   })
 }
 
-export const sendReminderEmail = async (to: string, fullName: string, classTitle: string, date: string, time: string, venueName: string) => {
+export const sendReminderEmail = async (to: string, fullName: string, classTitle: string, date: string, time: string, venueName: string, locale?: Locale) => {
+  const loc = L(locale)
+  const T = tt(loc, {
+    tr: { subject: `⏰ Dersiniz 2 saat sonra başlıyor — ${classTitle}`, heading: 'Dersiniz yaklaşıyor! ⏰',
+          body1: `Merhaba <strong>${esc(fullName)}</strong>, bugünkü dersinizi hatırlatmak istedik.`,
+          note: 'Unutma: derse 12 saatten az kaldığında iptal yapılamaz.' },
+    en: { subject: `⏰ Your class starts in 2 hours — ${classTitle}`, heading: 'Your class is coming up! ⏰',
+          body1: `Hi <strong>${esc(fullName)}</strong>, just a quick reminder about your class today.`,
+          note: "Heads up: you can't cancel within 12 hours of the class." },
+  })
   await resend.emails.send({
     from: FROM_EMAIL,
     to,
-    subject: `⏰ Dersiniz 2 saat sonra başlıyor — ${classTitle}`,
+    subject: T.subject,
     html: baseTemplate(`
-      <h2 style="font-size:22px;font-weight:800;color:#1a1a1a;margin:0 0 8px;">Dersiniz yaklaşıyor! ⏰</h2>
-      <p style="color:#555;font-size:15px;margin:0 0 24px;">Merhaba <strong>${esc(fullName)}</strong>, bugünkü dersinizi hatırlatmak istedik.</p>
+      <h2 style="font-size:22px;font-weight:800;color:#1a1a1a;margin:0 0 8px;">${T.heading}</h2>
+      <p style="color:#555;font-size:15px;margin:0 0 24px;">${T.body1}</p>
       <div style="background:#F5F3FF;border-radius:12px;padding:20px 24px;margin-bottom:24px;">
         <p style="margin:0 0 8px;font-size:16px;font-weight:700;color:#4F46E5;">${esc(classTitle)}</p>
         <p style="margin:0 0 4px;color:#555;font-size:14px;">📍 ${esc(venueName)}</p>
         <p style="margin:0;color:#555;font-size:14px;">🗓 ${date} · ⏰ ${time}</p>
       </div>
-      <p style="color:#888;font-size:13px;">Unutma: derse 12 saatten az kaldığında iptal yapılamaz.</p>
-    `)
+      <p style="color:#888;font-size:13px;">${T.note}</p>
+    `, loc)
   })
 }
 
-export const sendWaitlistNotificationEmail = async (to: string, fullName: string, classTitle: string, date: string, time: string) => {
+export const sendWaitlistNotificationEmail = async (to: string, fullName: string, classTitle: string, date: string, time: string, locale?: Locale) => {
+  const loc = L(locale)
+  const T = tt(loc, {
+    tr: { subject: `🎉 Yer açıldı! ${classTitle} dersine katılabilirsiniz`, heading: 'Yer açıldı! 🎉',
+          body1: `Merhaba <strong>${esc(fullName)}</strong>, bekleme listesinde olduğunuz ders için yer açıldı!`,
+          note: 'Hemen rezervasyon yap, yer dolmadan önce!', cta: 'Hemen Rezervasyon Yap' },
+    en: { subject: `🎉 A spot opened up! You can join ${classTitle}`, heading: 'A spot opened up! 🎉',
+          body1: `Hi <strong>${esc(fullName)}</strong>, a spot just opened up in the class you were waiting for!`,
+          note: 'Book now, before the spot is gone!', cta: 'Book Now' },
+  })
   await resend.emails.send({
     from: FROM_EMAIL,
     to,
-    subject: `🎉 Yer açıldı! ${classTitle} dersine katılabilirsiniz`,
+    subject: T.subject,
     html: baseTemplate(`
-      <h2 style="font-size:22px;font-weight:800;color:#1a1a1a;margin:0 0 8px;">Yer açıldı! 🎉</h2>
-      <p style="color:#555;font-size:15px;margin:0 0 24px;">Merhaba <strong>${esc(fullName)}</strong>, bekleme listesinde olduğunuz ders için yer açıldı!</p>
+      <h2 style="font-size:22px;font-weight:800;color:#1a1a1a;margin:0 0 8px;">${T.heading}</h2>
+      <p style="color:#555;font-size:15px;margin:0 0 24px;">${T.body1}</p>
       <div style="background:#F0FDF4;border-radius:12px;padding:20px 24px;margin-bottom:24px;">
         <p style="margin:0 0 8px;font-size:16px;font-weight:700;color:#16a34a;">${esc(classTitle)}</p>
         <p style="margin:0;color:#555;font-size:14px;">🗓 ${date} · ⏰ ${time}</p>
       </div>
-      <p style="color:#888;font-size:13px;">Hemen rezervasyon yap, yer dolmadan önce!</p>
-      <a href="${process.env.SITE_URL || 'https://sipsakspor.com'}" style="display:inline-block;margin-top:16px;padding:14px 28px;background:#4F46E5;color:#fff;border-radius:12px;text-decoration:none;font-weight:700;font-size:15px;">Hemen Rezervasyon Yap</a>
-    `)
+      <p style="color:#888;font-size:13px;">${T.note}</p>
+      <a href="${process.env.SITE_URL || 'https://sipsakspor.com'}" style="display:inline-block;margin-top:16px;padding:14px 28px;background:#4F46E5;color:#fff;border-radius:12px;text-decoration:none;font-weight:700;font-size:15px;">${T.cta}</a>
+    `, loc)
   })
 }
 
@@ -525,29 +613,42 @@ export const sendCashbackEmail = async (
   amount: number,
   classTitle: string,
   newBalance: number,
+  locale?: Locale,
 ) => {
+  const loc = L(locale)
+  const T = tt(loc, {
+    // "Kredimi Gör" ARTIĞI DÜZELTİLDİ: cashback/kredi sistemi puana çevrildiğinde (ürün kararı)
+    // arayüzden "kredi" terimi kaldırıldı ama bu butonda kalmıştı → kullanıcıya iki ayrı bakiye
+    // varmış izlenimi veriyordu. Doğru terim: puan.
+    tr: { subject: `${amount} puan kazandın! 🎉`, heading: `${amount} Puan Kazandın!`,
+          body1: `Merhaba ${esc(fullName)}, <strong>${esc(classTitle)}</strong> rezervasyonundan <strong>${amount} puan</strong> kazandın. Puanlarını biriktirip ödüllerde kullanabilirsin.`,
+          balance: 'Güncel puanın', cta: 'Puanlarımı Gör →' },
+    en: { subject: `You earned ${amount} points! 🎉`, heading: `You Earned ${amount} Points!`,
+          body1: `Hi ${esc(fullName)}, you earned <strong>${amount} points</strong> from your <strong>${esc(classTitle)}</strong> booking. Collect your points and spend them on rewards.`,
+          balance: 'Your current points', cta: 'View My Points →' },
+  })
   await resend.emails.send({
     from: FROM_EMAIL,
     to,
-    subject: `${amount} puan kazandın! 🎉`,
+    subject: T.subject,
     html: baseTemplate(`
       <div style="text-align:center;margin-bottom:24px;">
         <div style="width:64px;height:64px;background:#F0FDF4;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;margin-bottom:16px;">
           <span style="font-size:32px;">🎁</span>
         </div>
-        <h2 style="font-size:22px;font-weight:800;color:#111;margin:0;">${amount} Puan Kazandın!</h2>
+        <h2 style="font-size:22px;font-weight:800;color:#111;margin:0;">${T.heading}</h2>
       </div>
       <p style="font-size:15px;color:#555;line-height:1.7;margin:0 0 20px;">
-        Merhaba ${esc(fullName)}, <strong>${esc(classTitle)}</strong> rezervasyonundan <strong>${amount} puan</strong> kazandın. Puanlarını biriktirip ödüllerde kullanabilirsin.
+        ${T.body1}
       </p>
       <div style="background:#F0FDF4;border-radius:16px;padding:20px;margin-bottom:24px;border:1px solid #BBF7D0;text-align:center;">
-        <p style="font-size:13px;color:#15803D;margin:0 0 4px;">Güncel puanın</p>
+        <p style="font-size:13px;color:#15803D;margin:0 0 4px;">${T.balance}</p>
         <p style="font-size:28px;font-weight:800;color:#15803D;margin:0;">${newBalance}</p>
       </div>
       <div style="text-align:center;">
-        <a href="${SITE_URL}/profil" style="display:inline-block;padding:12px 28px;background:${BRAND_COLOR};color:#fff;border-radius:12px;text-decoration:none;font-size:14px;font-weight:700;">Kredimi Gör →</a>
+        <a href="${SITE_URL}/profil" style="display:inline-block;padding:12px 28px;background:${BRAND_COLOR};color:#fff;border-radius:12px;text-decoration:none;font-size:14px;font-weight:700;">${T.cta}</a>
       </div>
-    `),
+    `, loc),
   })
 }
 
@@ -559,20 +660,32 @@ export const sendTransferEmail = async (
   date: string,
   time: string,
   priceRefund: number,
+  locale?: Locale,
 ) => {
+  const loc = L(locale)
+  const T = tt(loc, {
+    tr: { subject: `Dersin değiştirildi: ${newClassTitle}`, heading: 'Rezervasyonun Taşındı',
+          body1: `Merhaba ${esc(fullName)}, rezervasyonun başarıyla yeni derse taşındı.`,
+          refund: `💰 Fiyat farkı olan <strong>₺${priceRefund}</strong> tutarı iade edilecektir.`,
+          cta: 'Rezervasyonlarımı Gör →' },
+    en: { subject: `Your class has changed: ${newClassTitle}`, heading: 'Your Booking Was Moved',
+          body1: `Hi ${esc(fullName)}, your booking has been moved to the new class.`,
+          refund: `💰 The <strong>₺${priceRefund}</strong> price difference will be refunded to you.`,
+          cta: 'View My Bookings →' },
+  })
   await resend.emails.send({
     from: FROM_EMAIL,
     to,
-    subject: `Dersin değiştirildi: ${newClassTitle}`,
+    subject: T.subject,
     html: baseTemplate(`
       <div style="text-align:center;margin-bottom:24px;">
         <div style="width:64px;height:64px;background:#EEF2FF;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;margin-bottom:16px;">
           <span style="font-size:32px;">🔄</span>
         </div>
-        <h2 style="font-size:22px;font-weight:800;color:#111;margin:0;">Rezervasyonun Taşındı</h2>
+        <h2 style="font-size:22px;font-weight:800;color:#111;margin:0;">${T.heading}</h2>
       </div>
       <p style="font-size:15px;color:#555;line-height:1.7;margin:0 0 20px;">
-        Merhaba ${esc(fullName)}, rezervasyonun başarıyla yeni derse taşındı.
+        ${T.body1}
       </p>
       <div style="background:#FAFAFA;border-radius:16px;padding:20px;margin-bottom:20px;border:1px solid #F0F0F0;">
         <p style="font-size:17px;font-weight:700;color:#111;margin:0 0 12px;">${esc(newClassTitle)}</p>
@@ -580,12 +693,12 @@ export const sendTransferEmail = async (
       </div>
       ${priceRefund > 0 ? `
       <div style="background:#F0FDF4;border-radius:12px;padding:16px;margin-bottom:24px;border:1px solid #BBF7D0;text-align:center;">
-        <p style="font-size:14px;color:#15803D;margin:0;font-weight:600;">💰 Fiyat farkı olan <strong>₺${priceRefund}</strong> tutarı iade edilecektir.</p>
+        <p style="font-size:14px;color:#15803D;margin:0;font-weight:600;">${T.refund}</p>
       </div>` : ''}
       <div style="text-align:center;">
-        <a href="${SITE_URL}/profil" style="display:inline-block;padding:12px 28px;background:${BRAND_COLOR};color:#fff;border-radius:12px;text-decoration:none;font-size:14px;font-weight:700;">Rezervasyonlarımı Gör →</a>
+        <a href="${SITE_URL}/profil" style="display:inline-block;padding:12px 28px;background:${BRAND_COLOR};color:#fff;border-radius:12px;text-decoration:none;font-size:14px;font-weight:700;">${T.cta}</a>
       </div>
-    `),
+    `, loc),
   })
 }
 
@@ -595,19 +708,34 @@ export const sendStreakNudgeEmail = async (
   fullName: string,
   type: 'daily' | 'weekly',
   streakCount: number,
+  locale?: Locale,
 ) => {
   const next = streakCount + 1
   const isDaily = type === 'daily'
-  const unit = isDaily ? 'gün' : 'hafta'
-  const subject = isDaily
-    ? `🔥 ${streakCount} günlük serini bozma!`
-    : `🔥 ${streakCount} haftalık serini sürdür!`
-  const headline = isDaily
-    ? `${streakCount} gündür üst üste spordasın!`
-    : `${streakCount} haftadır her hafta spordasın!`
-  const body = isDaily
-    ? `Bugün de bir derse katılırsan serini <strong>${next} güne</strong> çıkarırsın. Bırakma, momentum sende! 💪`
-    : `Bu hafta da bir derse katılırsan serini <strong>${next} haftaya</strong> taşırsın. Serini bozma! 💪`
+  const loc = L(locale)
+  const T = tt(loc, {
+    tr: {
+      unit: isDaily ? 'gün' : 'hafta',
+      subject: isDaily ? `🔥 ${streakCount} günlük serini bozma!` : `🔥 ${streakCount} haftalık serini sürdür!`,
+      headline: isDaily ? `${streakCount} gündür üst üste spordasın!` : `${streakCount} haftadır her hafta spordasın!`,
+      body: isDaily
+        ? `Bugün de bir derse katılırsan serini <strong>${next} güne</strong> çıkarırsın. Bırakma, momentum sende! 💪`
+        : `Bu hafta da bir derse katılırsan serini <strong>${next} haftaya</strong> taşırsın. Serini bozma! 💪`,
+      greeting: `Merhaba ${esc(fullName)}, `,
+      streakLabel: 'Güncel serin', cta: 'Hemen Ders Bul →',
+    },
+    en: {
+      unit: isDaily ? (streakCount === 1 ? 'day' : 'days') : (streakCount === 1 ? 'week' : 'weeks'),
+      subject: isDaily ? `🔥 Don't break your ${streakCount}-day streak!` : `🔥 Keep your ${streakCount}-week streak going!`,
+      headline: isDaily ? `You've been training ${streakCount} days in a row!` : `You've been training every week for ${streakCount} weeks!`,
+      body: isDaily
+        ? `Join a class today and you'll push your streak to <strong>${next} days</strong>. Don't stop now, the momentum is yours! 💪`
+        : `Join a class this week and you'll take your streak to <strong>${next} weeks</strong>. Don't break it now! 💪`,
+      greeting: `Hi ${esc(fullName)}, `,
+      streakLabel: 'Your current streak', cta: 'Find a Class Now →',
+    },
+  })
+  const { subject, headline, body, unit } = T
   await resend.emails.send({
     from: FROM_EMAIL,
     to,
@@ -618,16 +746,16 @@ export const sendStreakNudgeEmail = async (
         <h2 style="font-size:22px;font-weight:800;color:#111;margin:0;">${headline}</h2>
       </div>
       <div style="background:#FFF7ED;border:1px solid #FED7AA;border-radius:16px;padding:20px;margin-bottom:20px;text-align:center;">
-        <p style="font-size:13px;color:#9A3412;margin:0 0 4px;">Güncel serin</p>
+        <p style="font-size:13px;color:#9A3412;margin:0 0 4px;">${T.streakLabel}</p>
         <p style="font-size:32px;font-weight:800;color:#F97316;margin:0;">${streakCount} ${unit}</p>
       </div>
       <p style="font-size:15px;color:#555;line-height:1.7;margin:0 0 24px;text-align:center;">
-        Merhaba ${esc(fullName)}, ${body}
+        ${T.greeting}${body}
       </p>
       <div style="text-align:center;">
-        <a href="${SITE_URL}" style="display:inline-block;padding:14px 30px;background:${BRAND_COLOR};color:#fff;border-radius:12px;text-decoration:none;font-size:15px;font-weight:700;">Hemen Ders Bul →</a>
+        <a href="${SITE_URL}" style="display:inline-block;padding:14px 30px;background:${BRAND_COLOR};color:#fff;border-radius:12px;text-decoration:none;font-size:15px;font-weight:700;">${T.cta}</a>
       </div>
-    `),
+    `, loc),
   })
 }
 
@@ -636,27 +764,38 @@ export const sendBadgeEmail = async (
   to: string,
   fullName: string,
   badgeNames: string[],
+  locale?: Locale,
 ) => {
   const single = badgeNames.length === 1
+  const loc = L(locale)
+  // NOT: rozet ADLARI DB'de Türkçe seed'li (ensureBadges) → liste içeriği çevrilmez, çerçeve metni çevrilir.
+  const T = tt(loc, {
+    tr: { subject: single ? `Yeni rozet: ${badgeNames[0]} 🏅` : `${badgeNames.length} yeni rozet kazandın! 🏅`,
+          heading: single ? 'Yeni Rozet Kazandın!' : `${badgeNames.length} Yeni Rozet!`,
+          body1: `Merhaba ${esc(fullName)}, tebrikler! Şu rozetleri kazandın:`, cta: 'Rozetlerimi Gör →' },
+    en: { subject: single ? `New badge: ${badgeNames[0]} 🏅` : `You earned ${badgeNames.length} new badges! 🏅`,
+          heading: single ? 'You Earned a New Badge!' : `${badgeNames.length} New Badges!`,
+          body1: `Hi ${esc(fullName)}, congrats! You just earned these badges:`, cta: 'View My Badges →' },
+  })
   await resend.emails.send({
     from: FROM_EMAIL,
     to,
-    subject: single ? `Yeni rozet: ${badgeNames[0]} 🏅` : `${badgeNames.length} yeni rozet kazandın! 🏅`,
+    subject: T.subject,
     html: baseTemplate(`
       <div style="text-align:center;margin-bottom:24px;">
         <div style="font-size:64px;line-height:1;margin-bottom:8px;">🏅</div>
-        <h2 style="font-size:22px;font-weight:800;color:#111;margin:0;">${single ? 'Yeni Rozet Kazandın!' : `${badgeNames.length} Yeni Rozet!`}</h2>
+        <h2 style="font-size:22px;font-weight:800;color:#111;margin:0;">${T.heading}</h2>
       </div>
       <p style="font-size:15px;color:#555;line-height:1.7;margin:0 0 20px;text-align:center;">
-        Merhaba ${esc(fullName)}, tebrikler! Şu rozetleri kazandın:
+        ${T.body1}
       </p>
       <div style="background:#EEF2FF;border:1px solid #C7D2FE;border-radius:16px;padding:18px 20px;margin-bottom:24px;">
         ${badgeNames.map(n => `<p style="margin:6px 0;font-size:15px;font-weight:700;color:#4F46E5;">🏅 ${esc(n)}</p>`).join('')}
       </div>
       <div style="text-align:center;">
-        <a href="${SITE_URL}/profil" style="display:inline-block;padding:14px 30px;background:${BRAND_COLOR};color:#fff;border-radius:12px;text-decoration:none;font-size:15px;font-weight:700;">Rozetlerimi Gör →</a>
+        <a href="${SITE_URL}/profil" style="display:inline-block;padding:14px 30px;background:${BRAND_COLOR};color:#fff;border-radius:12px;text-decoration:none;font-size:15px;font-weight:700;">${T.cta}</a>
       </div>
-    `),
+    `, loc),
   })
 }
 
@@ -702,40 +841,50 @@ export const sendGroupTagNotificationEmail = async (
   classTitle: string,
   date: string,
   time: string,
-  venueName: string
+  venueName: string,
+  locale?: Locale
 ) => {
+  const loc = L(locale)
+  const T = tt(loc, {
+    tr: { subject: `${bookerName} seni bir derse ekledi!`, heading: 'Birlikte spora davetlisin!',
+          body1: `Merhaba ${esc(taggedName)}, <strong>${esc(bookerName)}</strong> seni bir grup rezervasyonuna ekledi.`,
+          lblDate: 'Tarih', lblTime: 'Saat', cta: "Şipşakspor'a Git →" },
+    en: { subject: `${bookerName} added you to a class!`, heading: "You're invited to train together!",
+          body1: `Hi ${esc(taggedName)}, <strong>${esc(bookerName)}</strong> added you to a group booking.`,
+          lblDate: 'Date', lblTime: 'Time', cta: 'Go to Şipşakspor →' },
+  })
   await resend.emails.send({
     from: FROM_EMAIL,
     to,
-    subject: `${bookerName} seni bir derse ekledi!`,
+    subject: T.subject,
     html: baseTemplate(`
       <div style="text-align: center; margin-bottom: 28px;">
         <div style="width: 64px; height: 64px; background: #EEF2FF; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 16px;">
           <span style="font-size: 32px;">🤝</span>
         </div>
-        <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0;">Birlikte spora davetlisin!</h2>
+        <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0;">${T.heading}</h2>
       </div>
       <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
-        Merhaba ${esc(taggedName)}, <strong>${esc(bookerName)}</strong> seni bir grup rezervasyonuna ekledi.
+        ${T.body1}
       </p>
       <div style="background: #FAFAFA; border-radius: 16px; padding: 20px; margin-bottom: 24px; border: 1px solid #F0F0F0;">
         <p style="font-size: 17px; font-weight: 700; color: #111; margin: 0 0 8px;">${esc(classTitle)}</p>
         <p style="font-size: 13px; color: #888; margin: 0 0 16px;">${esc(venueName)}</p>
         <div style="display: flex; gap: 24px;">
           <div>
-            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Tarih</p>
+            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">${T.lblDate}</p>
             <p style="font-size: 14px; font-weight: 600; color: #111; margin: 0;">${date}</p>
           </div>
           <div>
-            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Saat</p>
+            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">${T.lblTime}</p>
             <p style="font-size: 14px; font-weight: 600; color: #111; margin: 0;">${time}</p>
           </div>
         </div>
       </div>
       <div style="text-align: center;">
-        <a href="${SITE_URL}/profil" style="display: inline-block; padding: 12px 28px; background: ${BRAND_COLOR}; color: #fff; border-radius: 12px; text-decoration: none; font-size: 14px; font-weight: 700;">Şipşakspor'a Git →</a>
+        <a href="${SITE_URL}/profil" style="display: inline-block; padding: 12px 28px; background: ${BRAND_COLOR}; color: #fff; border-radius: 12px; text-decoration: none; font-size: 14px; font-weight: 700;">${T.cta}</a>
       </div>
-    `),
+    `, loc),
   })
 }
 
@@ -746,61 +895,92 @@ export const sendGroupInviteEmail = async (
   classTitle: string,
   date: string,
   time: string,
-  venueName: string
+  venueName: string,
+  locale?: Locale
 ) => {
+  // Alıcı henüz ÜYE DEĞİL (locale'i yok) → davet EDENİN dili kullanılır: arkadaşını hangi dilde
+  // kullanıyorsa muhtemelen aynı dili konuşuyordur. Verilmezse TR.
+  const loc = L(locale)
+  const T = tt(loc, {
+    tr: { subject: `${bookerName} seni Şipşakspor'a davet etti!`, heading: 'Spor yapmaya davetlisin!',
+          body1: `<strong>${esc(bookerName)}</strong> seni <strong>${esc(classTitle)}</strong> dersine davet etti.`,
+          lblDate: 'Tarih', lblTime: 'Saat',
+          body2: "Şipşakspor'a üye ol ve sporu birlikte keşfet!", cta: 'Üye Ol →' },
+    en: { subject: `${bookerName} invited you to Şipşakspor!`, heading: "You're invited to work out!",
+          body1: `<strong>${esc(bookerName)}</strong> invited you to the <strong>${esc(classTitle)}</strong> class.`,
+          lblDate: 'Date', lblTime: 'Time',
+          body2: 'Join Şipşakspor and discover sports together!', cta: 'Sign Up →' },
+  })
   await resend.emails.send({
     from: FROM_EMAIL,
     to,
-    subject: `${bookerName} seni Şipşakspor'a davet etti!`,
+    subject: T.subject,
     html: baseTemplate(`
       <div style="text-align: center; margin-bottom: 28px;">
         <div style="width: 64px; height: 64px; background: #EEF2FF; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 16px;">
           <span style="font-size: 32px;">🏃</span>
         </div>
-        <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0;">Spor yapmaya davetlisin!</h2>
+        <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0;">${T.heading}</h2>
       </div>
       <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
-        <strong>${esc(bookerName)}</strong> seni <strong>${esc(classTitle)}</strong> dersine davet etti.
+        ${T.body1}
       </p>
       <div style="background: #FAFAFA; border-radius: 16px; padding: 20px; margin-bottom: 24px; border: 1px solid #F0F0F0;">
         <p style="font-size: 17px; font-weight: 700; color: #111; margin: 0 0 8px;">${esc(classTitle)}</p>
         <p style="font-size: 13px; color: #888; margin: 0 0 16px;">${esc(venueName)}</p>
         <div style="display: flex; gap: 24px;">
           <div>
-            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Tarih</p>
+            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">${T.lblDate}</p>
             <p style="font-size: 14px; font-weight: 600; color: #111; margin: 0;">${date}</p>
           </div>
           <div>
-            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">Saat</p>
+            <p style="font-size: 11px; color: #aaa; font-weight: 600; text-transform: uppercase; margin: 0 0 4px;">${T.lblTime}</p>
             <p style="font-size: 14px; font-weight: 600; color: #111; margin: 0;">${time}</p>
           </div>
         </div>
       </div>
-      <p style="font-size: 14px; color: #555; text-align: center; margin-bottom: 20px;">Şipşakspor'a üye ol ve sporu birlikte keşfet!</p>
+      <p style="font-size: 14px; color: #555; text-align: center; margin-bottom: 20px;">${T.body2}</p>
       <div style="text-align: center;">
-        <a href="${SITE_URL}/kayit" style="display: inline-block; padding: 12px 28px; background: ${BRAND_COLOR}; color: #fff; border-radius: 12px; text-decoration: none; font-size: 14px; font-weight: 700;">Üye Ol →</a>
+        <a href="${SITE_URL}/kayit" style="display: inline-block; padding: 12px 28px; background: ${BRAND_COLOR}; color: #fff; border-radius: 12px; text-decoration: none; font-size: 14px; font-weight: 700;">${T.cta}</a>
       </div>
-    `),
+    `, loc),
   })
 }
 
-export const sendEmailVerificationEmail = async (to: string, fullName: string, token: string) => {
+export const sendEmailVerificationEmail = async (to: string, fullName: string, token: string, locale?: Locale) => {
   const verifyUrl = `${SITE_URL}/email-dogrula?token=${token}`
+  const loc = L(locale)
+  const T = tt(loc, {
+    tr: {
+      subject: 'Şipşakspor — Email Adresinizi Doğrulayın',
+      heading: 'Email Doğrulama',
+      body1: `Merhaba ${esc(fullName)}! Hesabınızı aktifleştirmek için aşağıdaki butona tıklayın.`,
+      cta: 'Emailimi Doğrula →',
+      warning: '⚠️ Bu link 24 saat geçerlidir. Eğer bu talebi sen yapmadıysan bu emaili görmezden gelebilirsin.',
+    },
+    en: {
+      subject: 'Şipşakspor — Verify Your Email Address',
+      heading: 'Email Verification',
+      body1: `Hi ${esc(fullName)}! Tap the button below to activate your account.`,
+      cta: 'Verify My Email →',
+      warning: "⚠️ This link is valid for 24 hours. If you didn't request this, you can safely ignore this email.",
+    },
+  })
   await resend.emails.send({
     from: FROM_EMAIL,
     to,
-    subject: 'Şipşakspor — Email Adresinizi Doğrulayın',
+    subject: T.subject,
     html: baseTemplate(`
-      <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0 0 8px;">Email Doğrulama</h2>
+      <h2 style="font-size: 22px; font-weight: 800; color: #111; margin: 0 0 8px;">${T.heading}</h2>
       <p style="font-size: 15px; color: #555; line-height: 1.7; margin: 0 0 24px;">
-        Merhaba ${esc(fullName)}! Hesabınızı aktifleştirmek için aşağıdaki butona tıklayın.
+        ${T.body1}
       </p>
       <div style="text-align: center; margin-bottom: 24px;">
-        <a href="${verifyUrl}" style="display: inline-block; padding: 14px 32px; background: ${BRAND_COLOR}; color: #fff; border-radius: 14px; text-decoration: none; font-size: 15px; font-weight: 700;">Emailimi Doğrula →</a>
+        <a href="${verifyUrl}" style="display: inline-block; padding: 14px 32px; background: ${BRAND_COLOR}; color: #fff; border-radius: 14px; text-decoration: none; font-size: 15px; font-weight: 700;">${T.cta}</a>
       </div>
       <div style="background: #FEF2F2; border-radius: 12px; padding: 14px;">
-        <p style="font-size: 13px; color: #DC2626; margin: 0;">⚠️ Bu link 24 saat geçerlidir. Eğer bu talebi sen yapmadıysan bu emaili görmezden gelebilirsin.</p>
+        <p style="font-size: 13px; color: #DC2626; margin: 0;">${T.warning}</p>
       </div>
-    `),
+    `, loc),
   })
 }

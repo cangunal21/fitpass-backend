@@ -1,6 +1,8 @@
 import prisma from '../utils/prisma'
 import { sendStreakNudgeEmail } from '../utils/email'
 import { sendPushNotification } from '../utils/push'
+import { notifyPush } from '../utils/notifyText'
+import { Locale } from '../utils/locale'
 import {
   istanbulDayKey, istanbulMondayKey, istanbulHour,
   currentDailyStreak, currentWeeklyStreak,
@@ -51,7 +53,7 @@ export const sendStreakNudges = async () => {
       try {
         const user = await prisma.user.findUnique({
           where: { id: userId },
-          select: { email: true, fullName: true, emailReminders: true, lastStreakNudgeAt: true, pushToken: true, banned: true },
+          select: { email: true, fullName: true, emailReminders: true, lastStreakNudgeAt: true, pushToken: true, banned: true, locale: true },
         })
         if (!user?.email || user.emailReminders === false || user.banned) continue // banlı kullanıcıya push/mail gitmesin
         if (user.lastStreakNudgeAt && user.lastStreakNudgeAt > guardWindow) continue
@@ -107,12 +109,15 @@ export const sendStreakNudges = async () => {
         })
         if (claim.count === 0) continue
 
+        const sLoc = (user.locale || 'tr') as Locale
         if (wantDaily) {
-          await sendStreakNudgeEmail(user.email, user.fullName, 'daily', dailyStreak)
-          if (user.pushToken) sendPushNotification(user.pushToken, `🔥 ${dailyStreak} günlük serini bozma!`, `Bugün de bir derse katıl, serini ${dailyStreak + 1} güne çıkar!`).catch(() => {})
+          await sendStreakNudgeEmail(user.email, user.fullName, 'daily', dailyStreak, sLoc)
+          const p = notifyPush(sLoc, 'streak_daily', { days: dailyStreak, nextDays: dailyStreak + 1 })
+          if (user.pushToken && p) sendPushNotification(user.pushToken, p.title, p.body).catch(() => {})
         } else {
-          await sendStreakNudgeEmail(user.email, user.fullName, 'weekly', weeklyStreak)
-          if (user.pushToken) sendPushNotification(user.pushToken, `🔥 ${weeklyStreak} haftalık serini sürdür!`, `Bu hafta da bir derse katıl, serini ${weeklyStreak + 1} haftaya taşı!`).catch(() => {})
+          await sendStreakNudgeEmail(user.email, user.fullName, 'weekly', weeklyStreak, sLoc)
+          const p = notifyPush(sLoc, 'streak_weekly', { weeks: weeklyStreak, nextWeeks: weeklyStreak + 1 })
+          if (user.pushToken && p) sendPushNotification(user.pushToken, p.title, p.body).catch(() => {})
         }
       } catch (uErr) {
         console.error('Streak nudge (user) error:', userId, uErr)

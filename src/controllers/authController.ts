@@ -11,6 +11,8 @@ import { syncUserBadges } from '../utils/badges'
 import { seasonLabelsFromKey } from '../utils/season'
 import { purgeUserReviews, purgeUserComments } from '../utils/moderation'
 import { invalidate } from '../utils/cache'
+import { localeFromReq, Locale } from '../utils/locale'
+import { notifyFields, notifyPush, NotifyParams } from '../utils/notifyText'
 import { sendPushNotification } from '../utils/push'
 import { MIN_PASSWORD, clampStr, isValidEmail, parseIntSafe } from '../utils/validate'
 
@@ -63,6 +65,9 @@ export const register = async (req: Request, res: Response) => {
         phone: clampStr(phone, 30) || null,
         passwordHash,
         fullName: clampStr(fullName, 80) || '',
+        // Kayıt anındaki arayüz dili: hoş geldin + doğrulama e-postası bu dille gider. Sonra her
+        // istekte X-Locale ile senkron kalır (authMiddleware.syncLocale).
+        locale: localeFromReq(req),
         tierId: 1, // Aday tier (pointRate %1) — atanmazsa ilk getMe'ye kadar tier null → ilk booking pointRate 0
         tierSportCounts: {},
         preferredSports: cleanSports,
@@ -88,7 +93,7 @@ export const register = async (req: Request, res: Response) => {
     await prisma.emailVerificationToken.create({
       data: { userId: user.id, token: verifyToken, expiresAt: verifyExpiresAt }
     })
-    sendEmailVerificationEmail(user.email, user.fullName, verifyToken).catch(err => console.error('Verify mail gönderilemedi:', err))
+    sendEmailVerificationEmail(user.email, user.fullName, verifyToken, localeFromReq(req)).catch(err => console.error('Verify mail gönderilemedi:', err))
 
     // Referral kodu varsa uygula
     if (referralCode) {
@@ -207,13 +212,17 @@ export const getMe = async (req: Request & { userId?: number }, res: Response) =
         const newBadges = await syncUserBadges(req.userId)
         // Yeni rozet kazanıldıysa bildir (push + e-posta + uygulama içi)
         if (newBadges.length > 0) {
-          const u = await prisma.user.findUnique({ where: { id: req.userId }, select: { pushToken: true, email: true, fullName: true, emailReminders: true } })
-          const msg = newBadges.length === 1
-            ? `"${newBadges[0]}" rozetini kazandın! 🎉`
-            : `${newBadges.length} yeni rozet kazandın! 🎉`
-          await prisma.notification.create({ data: { userId: req.userId, type: 'badge', message: msg } }).catch(() => {})
-          if (u?.pushToken) sendPushNotification(u.pushToken, 'Yeni rozet! 🏅', msg).catch(() => {})
-          if (u?.email && u.emailReminders !== false) sendBadgeEmail(u.email, u.fullName, newBadges).catch(() => {}) // opt-out saygı (cashback/streak ile tutarlı)
+          const u = await prisma.user.findUnique({ where: { id: req.userId }, select: { pushToken: true, email: true, fullName: true, emailReminders: true, locale: true } })
+          const bLoc = (u?.locale || 'tr') as Locale
+          // NOT: rozet ADLARI veritabanında Türkçe seed'li (ensureBadges) — bu parametre çevrilmez.
+          // Rozet adlarının da çevrilmesi ayrı iş (badges.ts'in ad yerine anahtar döndürmesi gerekir;
+          // "spor ustası" gibi dinamik adlar sabit anahtara oturmuyor).
+          const bKey = newBadges.length === 1 ? 'badge_one' : 'badge_many'
+          const bParams: NotifyParams = newBadges.length === 1 ? { badge: newBadges[0] } : { count: newBadges.length }
+          await prisma.notification.create({ data: { userId: req.userId, type: 'badge', ...notifyFields(bLoc, bKey, bParams) } }).catch(() => {})
+          const bPush = notifyPush(bLoc, bKey, bParams)
+          if (u?.pushToken && bPush) sendPushNotification(u.pushToken, bPush.title, bPush.body).catch(() => {})
+          if (u?.email && u.emailReminders !== false) sendBadgeEmail(u.email, u.fullName, newBadges, bLoc).catch(() => {}) // opt-out saygı (cashback/streak ile tutarlı)
         }
       } catch (e) {
         console.error('Tier/badge sync error:', e)
@@ -314,7 +323,7 @@ export const forgotPassword = async (req: Request, res: Response) => {
       data: { userId: user.id, token, expiresAt }
     })
 
-    sendPasswordResetEmail(user.email, user.fullName, token).catch(err =>
+    sendPasswordResetEmail(user.email, user.fullName, token, (user.locale as any) || localeFromReq(req)).catch(err =>
       console.error('Reset mail gönderilemedi:', err)
     )
 
@@ -629,7 +638,7 @@ export const resendVerification = async (req: Request & { userId?: number }, res
     const verifyToken = crypto.randomBytes(32).toString('hex')
     const verifyExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000)
     await prisma.emailVerificationToken.create({ data: { userId: req.userId!, token: verifyToken, expiresAt: verifyExpiresAt } })
-    sendEmailVerificationEmail(user.email, user.fullName, verifyToken).catch(err => console.error('Verify mail gönderilemedi:', err))
+    sendEmailVerificationEmail(user.email, user.fullName, verifyToken, localeFromReq(req)).catch(err => console.error('Verify mail gönderilemedi:', err))
 
     return res.json({ message: 'Doğrulama emaili tekrar gönderildi.' })
   } catch (error) {

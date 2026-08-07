@@ -5,6 +5,8 @@ import { invalidate } from '../utils/cache'
 import { purgeUserReviews, purgeUserComments, applyUserBan } from '../utils/moderation'
 import { sendPushNotification } from '../utils/push'
 import { reversiblePoints } from '../utils/tier'
+import { notifyFields, notifyPush } from '../utils/notifyText'
+import { Locale } from '../utils/locale'
 
 // İstatistikler
 export const getStats = async (req: Request, res: Response) => {
@@ -247,11 +249,13 @@ export const deleteVenue = async (req: Request, res: Response) => {
     // Aktif rezervasyonu olan kullanıcılara "salon kaldırıldı, rezervasyonun iptal edildi"
     // bildirimi (in-app + push, best-effort). deleteClass/deleteSession ile tutarlı.
     if (affectedUserIds.length) {
-      const msg = `${venue.name} kapatıldığı için ilgili rezervasyon(lar)ınız iptal edildi. Ödemeniz iade edilecektir.`
-      const users = await prisma.user.findMany({ where: { id: { in: affectedUserIds } }, select: { id: true, pushToken: true } }).catch(() => [])
+      const params = { venue: venue.name }
+      const users = await prisma.user.findMany({ where: { id: { in: affectedUserIds } }, select: { id: true, pushToken: true, locale: true } }).catch(() => [])
       for (const u of users) {
-        await prisma.notification.create({ data: { userId: u.id, type: 'booking_cancelled', message: msg } }).catch(() => {})
-        if (u.pushToken) sendPushNotification(u.pushToken, 'Rezervasyonun iptal edildi', msg).catch(() => {})
+        const loc = (u.locale || 'tr') as Locale
+        await prisma.notification.create({ data: { userId: u.id, type: 'booking_cancelled', ...notifyFields(loc, 'booking_cancelled_venue_closed', params) } }).catch(() => {})
+        const push = notifyPush(loc, 'booking_cancelled_venue_closed', params)
+        if (u.pushToken && push) sendPushNotification(u.pushToken, push.title, push.body).catch(() => {})
       }
     }
 

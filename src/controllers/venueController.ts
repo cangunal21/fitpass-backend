@@ -10,6 +10,8 @@ import { isValidEmail, MIN_PASSWORD, parseIntSafe, clampStr } from '../utils/val
 import crypto from 'crypto'
 import { trAddDays, trDate, trInstant, trTime, trWeekday, trYmd } from '../utils/trFormat'
 import { reversiblePoints } from '../utils/tier'
+import { notifyFields, notifyPush } from '../utils/notifyText'
+import { Locale } from '../utils/locale'
 const money = (x: number) => Math.round(x * 100) / 100 // bookingController ile aynı 2-ondalık yuvarlama
 
 // Bir seans/ders silinirken aktif rezervasyonları GÜVENLİ kaldırır:
@@ -84,18 +86,20 @@ async function recomputeVenueRating(tx: any, venueId: number) {
 async function notifyRemovedBookings(affected: { userId: number; status: string }[], classTitle: string) {
   const userIds = [...new Set(affected.filter(b => b.status === 'confirmed' || b.status === 'pending').map(b => b.userId))]
   if (userIds.length === 0) return
-  const msg = `${classTitle} dersi salon tarafından kaldırıldı. Ödemen iade edilecektir.`
+  const params = { classTitle }
   // ÜÇ KANAL. Eskiden YALNIZCA pushToken!=null olanlara push atılıyordu → web kullanıcısı (token yok)
   // ya da push izni vermeyen mobil kullanıcı iptalden HİÇ haberdar olmuyordu (booking hard-delete
   // edildiği için geriye taranacak kayıt da kalmıyordu). Artık admin deleteVenue deseniyle aynı:
-  // herkese in-app Notification + e-posta, pushToken varsa ek push.
-  const users = await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, email: true, fullName: true, pushToken: true, emailReminders: true } })
+  // herkese in-app Notification + e-posta, pushToken varsa ek push. Her kanal ALICININ diliyle.
+  const users = await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, email: true, fullName: true, pushToken: true, emailReminders: true, locale: true } })
   for (const u of users) {
-    await prisma.notification.create({ data: { userId: u.id, type: 'booking_cancelled', message: msg } }).catch(() => {})
-    if (u.pushToken) sendPushNotification(u.pushToken, 'Rezervasyonun iptal edildi', msg).catch(() => {})
+    const loc = (u.locale || 'tr') as Locale
+    await prisma.notification.create({ data: { userId: u.id, type: 'booking_cancelled', ...notifyFields(loc, 'booking_cancelled_class_removed', params) } }).catch(() => {})
+    const push = notifyPush(loc, 'booking_cancelled_class_removed', params)
+    if (u.pushToken && push) sendPushNotification(u.pushToken, push.title, push.body).catch(() => {})
     // İptal/iade işlemsel bir bildirimdir (opt-out'a tabi değil) — kullanıcı parasının iade
     // edileceğini bilmeli. E-posta yalnız adresi olana.
-    if (u.email) sendCancellationEmail(u.email, u.fullName || '', classTitle, '', '').catch(() => {})
+    if (u.email) sendCancellationEmail(u.email, u.fullName || '', classTitle, '', '', loc).catch(() => {})
   }
 }
 
@@ -841,15 +845,18 @@ export const updateSession = async (req: Request, res: Response) => {
       await prisma.booking.updateMany({ where: { sessionId, status: 'confirmed' }, data: { reminderSent: false } }).catch(() => {})
       const affected = await prisma.booking.findMany({
         where: { sessionId, status: 'confirmed' },
-        select: { user: { select: { id: true, email: true, fullName: true, pushToken: true } } },
+        select: { user: { select: { id: true, email: true, fullName: true, pushToken: true, locale: true } } },
       })
-      const msg = `"${session.class.title}" dersinin saati değişti: yeni tarih ${yeniTarih} ${yeniSaat}.`
+      const rsParams = { classTitle: session.class.title, date: yeniTarih, time: yeniSaat }
       for (const b of affected) {
         const u = b.user
         if (!u) continue
-        await prisma.notification.create({ data: { userId: u.id, type: 'session_rescheduled', message: msg } }).catch(() => {})
-        if (u.pushToken) sendPushNotification(u.pushToken, 'Ders saati değişti', msg).catch(() => {})
-        if (u.email) sendCancellationEmail(u.email, u.fullName || '', `${session.class.title} (yeni saat: ${yeniTarih} ${yeniSaat})`, yeniTarih, yeniSaat).catch(() => {})
+        const loc = (u.locale || 'tr') as Locale
+        await prisma.notification.create({ data: { userId: u.id, type: 'session_rescheduled', ...notifyFields(loc, 'session_rescheduled', rsParams) } }).catch(() => {})
+        const push = notifyPush(loc, 'session_rescheduled', rsParams)
+        if (u.pushToken && push) sendPushNotification(u.pushToken, push.title, push.body).catch(() => {})
+        const newTimeSuffix = loc === 'en' ? `(new time: ${yeniTarih} ${yeniSaat})` : `(yeni saat: ${yeniTarih} ${yeniSaat})`
+        if (u.email) sendCancellationEmail(u.email, u.fullName || '', `${session.class.title} ${newTimeSuffix}`, yeniTarih, yeniSaat, loc).catch(() => {})
       }
     }
 

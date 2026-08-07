@@ -1,5 +1,7 @@
 import prisma from '../utils/prisma'
 import { sendPushNotification } from '../utils/push'
+import { notifyFields, notifyPush } from '../utils/notifyText'
+import { Locale } from '../utils/locale'
 
 // Ders bitiminden ~2 saat sonra "dersini puanla" hatırlatması.
 // Puanlama hakkı ders BİTER bitmez açılır (reviewController createReview: endsAt); bu job yalnızca
@@ -22,7 +24,7 @@ export const sendRatingPrompts = async () => {
         session: { endsAt: { lte: twoHoursAgo, gte: floor } }, // drop-in (sessionId null) doğal dışlanır
       },
       include: {
-        user: { select: { pushToken: true } },
+        user: { select: { pushToken: true, locale: true } },
         session: { include: { class: { select: { title: true } } } },
       },
     })
@@ -39,18 +41,20 @@ export const sendRatingPrompts = async () => {
         if (claim.count === 0) continue
 
         const classTitle = booking.session!.class.title
-        const msg = `${classTitle} dersin nasıldı? Salonu ve hocanı puanla ⭐`
+        const rpLoc = (booking.user?.locale || 'tr') as Locale
+        const rpParams = { classTitle }
 
         // In-app bildirim (best-effort — championJob deseni)
         await prisma.notification.create({
-          data: { userId: booking.userId, type: 'rating_prompt', message: msg },
+          data: { userId: booking.userId, type: 'rating_prompt', ...notifyFields(rpLoc, 'rating_prompt', rpParams) },
         }).catch(() => {})
 
-        if (booking.user?.pushToken) {
+        const rpPush = notifyPush(rpLoc, 'rating_prompt', rpParams)
+        if (booking.user?.pushToken && rpPush) {
           await sendPushNotification(
             booking.user.pushToken,
-            'Dersini puanla ⭐',
-            msg,
+            rpPush.title,
+            rpPush.body,
             { type: 'rating_prompt', bookingId: booking.id }, // mobil deep-link için data
           )
         }

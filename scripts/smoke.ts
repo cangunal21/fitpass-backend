@@ -153,6 +153,10 @@ async function cleanup() {
   await prisma.user.deleteMany({ where: { id: { in: [990361, 990362, 990366, 990367, 990369] } } }).catch(() => {})
   await prisma.venue.deleteMany({ where: { id: { in: [990363, 990364, 990365] } } }).catch(() => {})
   await prisma.neighborhood.deleteMany({ where: { id: { in: [990363, 990368] } } }).catch(() => {})
+  // Bildirim çoklu-dil (#67) kalıntıları (99037x)
+  await prisma.follow.deleteMany({ where: { OR: [{ followerId: { in: [990371, 990372] } }, { followingId: { in: [990371, 990372] } }] } }).catch(() => {})
+  await prisma.notification.deleteMany({ where: { userId: { in: [990371, 990372, 990373] } } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: { in: [990371, 990372, 990373] } } }).catch(() => {})
   // Auth regresyon test venue kalıntıları (990013 other-venue, 990014 suspend)
   await prisma.venue.deleteMany({ where: { id: { in: [990013, 990014] } } }).catch(() => {})
   await prisma.coupon.deleteMany({ where: { code: { startsWith: 'NEG' } } }).catch(() => {})
@@ -2736,6 +2740,81 @@ async function run() {
     const r = await expectOk('/api/social/my-calendar', { token: tok })
     if ((r.json?.activities || []).length !== 0) throw new Error(`gelecekteki check-in takvime girdi (${r.json?.activities?.length})`)
     if (r.json?.dailyStreak !== 0) throw new Error(`gelecekteki check-in dailyStreak'i şişirdi (${r.json?.dailyStreak})`)
+  })
+
+  // ===== BİLDİRİM ÇOKLU-DİL (#67) REGRESYONLARI =====
+
+  // Katalog: aynı anahtar iki dilde de metin üretir + parametreler doldurulur (push başlığı dahil)
+  await check('Bildirim i18n: katalog TR/EN metin + parametre doldurma', async () => {
+    const { notifyBody, notifyPush, notifyFields } = require('../src/utils/notifyText')
+    const p = { username: 'ayse' }
+    const tr = notifyBody('tr', 'follow', p), en = notifyBody('en', 'follow', p)
+    if (!tr.includes('@ayse') || !en.includes('@ayse')) throw new Error('parametre doldurulmadı')
+    if (tr === en) throw new Error('TR ve EN metin AYNI (çeviri yok)')
+    if (/[{}]/.test(tr) || /[{}]/.test(en)) throw new Error('doldurulmamış yer tutucu kaldı')
+    const pushEn = notifyPush('en', 'follow', p)
+    if (!pushEn?.title || pushEn.title === notifyPush('tr', 'follow', p)?.title) throw new Error('push başlığı çevrilmiyor')
+    // notifyFields hem anahtar+parametre HEM geriye dönük düz metin üretmeli
+    const f = notifyFields('en', 'follow', p)
+    if (f.messageKey !== 'follow' || (f.messageParams as any).username !== 'ayse' || !f.message) throw new Error('notifyFields eksik alan')
+  })
+
+  // Uygulama-içi bildirim DB'ye ANAHTAR+PARAMETRE yazar (yalnız metin değil) → dil değişince geçmiş de çevrilir
+  await check('Bildirim i18n: DB\'ye messageKey+messageParams yazılıyor (EN kullanıcı EN metin)', async () => {
+    const a = 990371, b = 990372
+    await prisma.follow.deleteMany({ where: { OR: [{ followerId: a }, { followingId: a }, { followerId: b }, { followingId: b }] } }).catch(() => {})
+    await prisma.notification.deleteMany({ where: { userId: { in: [a, b] } } }).catch(() => {})
+    await prisma.user.upsert({ where: { id: a }, update: { tierSportCounts: {} }, create: { id: a, username: `nfa_${a}`, email: `nfa_${a}@x.com`, passwordHash: 'x', fullName: 'A', tierSportCounts: {} } })
+    // hedef kullanıcının dili EN → bildirim İngilizce üretilmeli
+    await prisma.user.upsert({ where: { id: b }, update: { tierSportCounts: {}, locale: 'en' }, create: { id: b, username: `nfb_${b}`, email: `nfb_${b}@x.com`, passwordHash: 'x', fullName: 'B', tierSportCounts: {}, locale: 'en' } })
+    const tokA = jwt.sign({ userId: a, email: `nfa_${a}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http(`/api/social/follow/nfb_${b}`, { method: 'POST', token: tokA })
+    if (r.status !== 200) throw new Error(`takip başarısız: ${r.status} ${r.text.slice(0, 100)}`)
+    const n = await prisma.notification.findFirst({ where: { userId: b, type: 'follow' }, orderBy: { id: 'desc' } })
+    if (!n) throw new Error('bildirim oluşmadı')
+    if (n.messageKey !== 'follow') throw new Error(`messageKey='${n.messageKey}' (follow bekleniyor) — metin-only saklama geri gelmiş`)
+    if ((n.messageParams as any)?.username !== `nfa_${a}`) throw new Error('messageParams.username yok/yanlış')
+    if (!/started following you/i.test(n.message)) throw new Error(`EN kullanıcıya TR fallback metni yazıldı: "${n.message}"`)
+  })
+
+  // X-Locale başlığı kullanıcının kayıtlı dilini günceller (dirty-check: yalnız DEĞİŞİNCE yazar)
+  await check('Bildirim i18n: X-Locale başlığı User.locale\'i senkronlar', async () => {
+    const uid = 990373
+    await prisma.user.upsert({ where: { id: uid }, update: { tierSportCounts: {}, locale: 'tr' }, create: { id: uid, username: `loc_${uid}`, email: `loc_${uid}@x.com`, passwordHash: 'x', fullName: 'Loc', tierSportCounts: {}, locale: 'tr' } })
+    const tok = jwt.sign({ userId: uid, email: `loc_${uid}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const res = await fetch(BASE + '/api/auth/me', { headers: { Authorization: `Bearer ${tok}`, 'X-Locale': 'en' } })
+    if (res.status !== 200) throw new Error(`/me ${res.status}`)
+    // syncLocale ateşle-unut (isteği yavaşlatmaz) → kısa bekleme
+    for (let i = 0; i < 20; i++) {
+      const u = await prisma.user.findUnique({ where: { id: uid }, select: { locale: true } })
+      if (u?.locale === 'en') return
+      await new Promise(r => setTimeout(r, 50))
+    }
+    throw new Error("X-Locale: en gönderildi ama User.locale 'tr' kaldı")
+  })
+
+  // KATALOG-İSTEMCİ PARİTESİ: backend'e eklenen her uygulama-içi anahtar web+mobil sözlüklerinde olmalı.
+  // (Yoksa istemci saklanan düz metne düşer — çökme değil ama o bildirim çevrilmez.)
+  // Kardeş repo'lar yoksa (CI backend-only checkout) test ATLANIR.
+  await check('Bildirim i18n: katalog anahtarları web+mobil sözlükleriyle eşleşiyor', async () => {
+    const fs = require('fs'), path = require('path')
+    const webI18n = path.join(process.env.HOME || '', 'fitpass-web/src/lib/i18n.tsx')
+    const mobI18n = path.join(process.env.HOME || '', 'fitpass-mobile/src/lib/i18n.tsx')
+    if (!fs.existsSync(webI18n) || !fs.existsSync(mobI18n)) return // kardeş repo yok → atla
+    const { NOTIFY } = require('../src/utils/notifyText')
+    // Uygulama-içi olarak GERÇEKTEN yazılan anahtarlar (notifyFields çağrılan yerler)
+    const inApp = ['follow', 'follow_request', 'follow_accept', 'like', 'comment', 'comment_reply', 'group_invite',
+      'booking_cancelled_class_removed', 'booking_cancelled_venue_closed', 'session_rescheduled', 'waitlist_open',
+      'rating_prompt', 'badge_one', 'badge_many', 'season_champion']
+    const web = fs.readFileSync(webI18n, 'utf8'), mob = fs.readFileSync(mobI18n, 'utf8')
+    const missing: string[] = []
+    for (const k of inApp) {
+      if (!NOTIFY[k]?.body) missing.push(`katalog:${k}`)
+      // her sözlükte TR + EN olmak üzere 2 kez geçmeli
+      if ((web.match(new RegExp(`'notif\\.${k}':`, 'g')) || []).length < 2) missing.push(`web:${k}`)
+      if ((mob.match(new RegExp(`'notif\\.${k}':`, 'g')) || []).length < 2) missing.push(`mobil:${k}`)
+    }
+    if (missing.length) throw new Error(`eksik bildirim anahtarları: ${missing.join(', ')}`)
   })
 
   // Tur19 drop-in liderlik sayımı: yalnızca drop-in'i olan kullanıcı da ders liderliğinde görünür (streak zaten sayıyordu)

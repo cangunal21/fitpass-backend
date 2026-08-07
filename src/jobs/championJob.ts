@@ -1,6 +1,8 @@
 import prisma from '../utils/prisma'
 import { seasonInfo } from '../utils/season'
 import { sendPushNotification } from '../utils/push'
+import { notifyFields, notifyPush } from '../utils/notifyText'
+import { Locale } from '../utils/locale'
 
 // Sezon-sonu şampiyon rozetleri: bir sezon tamamlandığında, biten sezon için
 // HER spor × HER ilçe ve HER il kırılımında ilk 3'e (1=altın/2=gümüş/3=bronz)
@@ -107,12 +109,15 @@ export async function awardSeasonChampions(now: Date = new Date()) {
     const writtenByUser = new Map<number, number>()
     for (const w of written) writtenByUser.set(w.userId, (writtenByUser.get(w.userId) || 0) + 1)
 
-    const users = await prisma.user.findMany({ where: { id: { in: [...writtenByUser.keys()] } }, select: { id: true, pushToken: true } })
+    const users = await prisma.user.findMany({ where: { id: { in: [...writtenByUser.keys()] } }, select: { id: true, pushToken: true, locale: true } })
     for (const u of users) {
       const n = writtenByUser.get(u.id) || 0
-      const msg = `${prev.label} sezonunda ${n} şampiyonluk rozeti kazandın! 🏆`
-      await prisma.notification.create({ data: { userId: u.id, type: 'badge', message: msg } }).catch(() => {})
-      if (u.pushToken) sendPushNotification(u.pushToken, 'Sezon şampiyonu! 🏆', msg).catch(() => {})
+      const loc = (u.locale || 'tr') as Locale
+      // Sezon adı da çevrilir: prev.label "Güz 2026" / prev.labelEn "Fall 2026"
+      const params = { season: loc === 'en' ? prev.labelEn : prev.label, count: n }
+      await prisma.notification.create({ data: { userId: u.id, type: 'badge', ...notifyFields(loc, 'season_champion', params) } }).catch(() => {})
+      const push = notifyPush(loc, 'season_champion', params)
+      if (u.pushToken && push) sendPushNotification(u.pushToken, push.title, push.body).catch(() => {})
     }
     console.log(`🏆 ${prev.key}: ${toCreate.length} şampiyon rozeti verildi (${users.length} kişi).`)
   } catch (err) {
