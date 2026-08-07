@@ -142,6 +142,17 @@ async function cleanup() {
   await prisma.class.deleteMany({ where: { id: 990350 } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990350 } }).catch(() => {})
   await prisma.neighborhood.deleteMany({ where: { id: 990350 } }).catch(() => {})
+  // Ertelenen teknik borç batch kalıntıları (99036x: refresh/silinen-token/pointRate/bayesian/takvim/drop-in)
+  await prisma.refreshToken.deleteMany({ where: { userId: 990361 } }).catch(() => {})
+  await prisma.rewardPoint.deleteMany({ where: { userId: { in: [990361, 990362, 990366, 990367] } } }).catch(() => {})
+  await prisma.dropInParticipant.deleteMany({ where: { OR: [{ userId: 990367 }, { slotId: 990367 }] } }).catch(() => {})
+  await prisma.dropInSlot.deleteMany({ where: { id: 990367 } }).catch(() => {})
+  await prisma.booking.deleteMany({ where: { userId: { in: [990361, 990362, 990366, 990367] } } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: 990362 } }).catch(() => {})
+  await prisma.class.deleteMany({ where: { id: 990362 } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: { in: [990361, 990362, 990366, 990367, 990369] } } }).catch(() => {})
+  await prisma.venue.deleteMany({ where: { id: { in: [990363, 990364, 990365] } } }).catch(() => {})
+  await prisma.neighborhood.deleteMany({ where: { id: { in: [990363, 990368] } } }).catch(() => {})
   // Auth regresyon test venue kalıntıları (990013 other-venue, 990014 suspend)
   await prisma.venue.deleteMany({ where: { id: { in: [990013, 990014] } } }).catch(() => {})
   await prisma.coupon.deleteMany({ where: { code: { startsWith: 'NEG' } } }).catch(() => {})
@@ -2649,6 +2660,101 @@ async function run() {
     if (trAddDays('2026-08-31', 1) !== '2026-09-01') throw new Error('trAddDays ay sınırında hatalı')
     if (trMonthStart(gece).toISOString() !== '2026-07-31T21:00:00.000Z') throw new Error(`trMonthStart=${trMonthStart(gece).toISOString()} (1 Ağu 00:00 TR bekleniyor)`)
     if (trMonthStart(gece, -1).toISOString() !== '2026-06-30T21:00:00.000Z') throw new Error('trMonthStart(-1) hatalı')
+  })
+
+  // ===== ERTELENEN TEKNİK BORÇ BATCH REGRESYONLARI =====
+
+  // #48 Refresh token AT-REST HASH: DB'de ham token değil sha256 parmak izi saklanır (düz metin sızıntı riski kapalı)
+  await check('Auth: refresh token DB\'de hash olarak saklanır (düz metin değil)', async () => {
+    const nodeCrypto = require('crypto')
+    const { issueRefreshToken, rotateAccessToken } = require('../src/utils/refreshToken')
+    const uid = 990361
+    await prisma.user.upsert({ where: { id: uid }, update: { tierSportCounts: {} }, create: { id: uid, username: `rt_${uid}`, email: `rt_${uid}@x.com`, passwordHash: 'x', fullName: 'RT', tierSportCounts: {} } })
+    const raw = await issueRefreshToken(uid)
+    const stored = await prisma.refreshToken.findFirst({ where: { userId: uid }, orderBy: { id: 'desc' }, select: { token: true } })
+    if (!stored) throw new Error('refresh token DB\'ye yazılmadı')
+    if (stored.token === raw) throw new Error('refresh token DÜZ METİN saklanıyor (hash bekleniyordu)')
+    if (stored.token !== nodeCrypto.createHash('sha256').update(raw).digest('hex')) throw new Error('saklanan değer sha256(raw) değil')
+    if (!(await rotateAccessToken(raw))) throw new Error('ham refresh token ile access token alınamadı')
+    if (await rotateAccessToken('deadbeef-gecersiz')) throw new Error('geçersiz refresh token access token verdi')
+  })
+
+  // #48 Silinen/olmayan kullanıcı token'ı: DB'de yoksa authMiddleware 401 (eskiden req.userId=silinmiş-id ile geçiyordu)
+  await check('Auth: olmayan kullanıcı token\'ı 401 (authstate missing)', async () => {
+    const ghost = 990369
+    await prisma.user.deleteMany({ where: { id: ghost } }).catch(() => {})
+    const ghostTok = jwt.sign({ userId: ghost, email: 'ghost@x.com' }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http('/api/auth/me', { token: ghostTok })
+    if (r.status !== 401) throw new Error(`olmayan kullanıcı /me ${r.status} (401 bekleniyor)`)
+  })
+
+  // Tur19 pointRate stale: puan check-in ANINDAKİ güncel tier oranıyla hesaplanır + booking.pointsEarned güncellenir
+  await check('Puan: check-in\'de GÜNCEL tier oranıyla yeniden hesaplanır (stale değil)', async () => {
+    const { awardAttendanceOnCheckin } = require('../src/controllers/bookingController')
+    const uid = 990362, sid = 990362, cid = 990362
+    const loT = await prisma.tier.findFirst({ where: { pointRate: { gt: 0 } }, orderBy: { pointRate: 'asc' } })
+    const hiT = await prisma.tier.findFirst({ orderBy: { pointRate: 'desc' } })
+    if (!loT || !hiT || loT.pointRate >= hiT.pointRate) throw new Error('kurulum: farklı oranlı iki tier yok')
+    await prisma.user.upsert({ where: { id: uid }, update: { tierId: loT.id, rewardPoints: 0 }, create: { id: uid, username: `pr_${uid}`, email: `pr_${uid}@x.com`, passwordHash: 'x', fullName: 'PR', tierSportCounts: {}, tierId: loT.id, rewardPoints: 0 } })
+    await prisma.class.upsert({ where: { id: cid }, update: {}, create: { id: cid, venueId: V, title: 'PR Class', category: 'Yoga', basePrice: 1000, durationMinutes: 60, capacity: 10, isActive: true } })
+    await prisma.class_Session.upsert({ where: { id: sid }, update: { classId: cid, startsAt: new Date(Date.now() - 7200000), endsAt: new Date(Date.now() - 3600000) }, create: { id: sid, classId: cid, startsAt: new Date(Date.now() - 7200000), endsAt: new Date(Date.now() - 3600000), availableSpots: 10, status: 'open' } })
+    const finalAmount = 1000
+    const stalePts = Math.round(finalAmount * loT.pointRate / 100)   // rezervasyon-anı (düşük) oranı
+    const freshPts = Math.round(finalAmount * hiT.pointRate / 100)   // check-in-anı (yüksek) oranı
+    await prisma.rewardPoint.deleteMany({ where: { userId: uid } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { userId: uid } }).catch(() => {})
+    const b = await prisma.booking.create({ data: { userId: uid, sessionId: sid, status: 'confirmed', bookingType: 'class', baseAmount: finalAmount, commissionAmount: 0, venueCommission: 0, finalAmount, venuePayout: finalAmount, bookingNumber: `PR-${Date.now()}`, checkedIn: true, pointsEarned: stalePts } })
+    await prisma.user.update({ where: { id: uid }, data: { tierId: hiT.id } }) // check-in'e kadar tier atladı
+    await awardAttendanceOnCheckin(b.id)
+    const ledger = await prisma.rewardPoint.findFirst({ where: { bookingId: b.id, source: 'attendance' }, select: { points: true } })
+    if (ledger?.points !== freshPts) throw new Error(`ledger ${ledger?.points}, güncel-oran ${freshPts} bekleniyor (stale ${stalePts})`)
+    const bAfter = await prisma.booking.findUnique({ where: { id: b.id }, select: { pointsEarned: true } })
+    if (bAfter?.pointsEarned !== freshPts) throw new Error(`booking.pointsEarned ${bAfter?.pointsEarned}, ${freshPts} bekleniyor (iptal-geri-alma tutarlılığı)`)
+  })
+
+  // Tur19 getVenueLeaderboard min-güven (Wilson alt sınırı): çok-yorumlu 4.5, tek-yorumlu 5.0'ı geçer; yorumsuz görünmez
+  await check('Liderlik: salon Wilson alt-sınır sıralama (çok-yorumlu 4.5 > tek-yorumlu 5.0, yorumsuz yok)', async () => {
+    const nb = 990363, vLo = 990363, vHi = 990364, vZero = 990365
+    await prisma.neighborhood.upsert({ where: { id: nb }, update: {}, create: { id: nb, name: 'BayesMah', latitude: 41, longitude: 29, cityId: 1 } })
+    const mk = (id: number, avg: number, tot: number) => prisma.venue.upsert({ where: { id }, update: { isApproved: true, isActive: true, avgRating: avg, totalReviews: tot, neighborhoodId: nb }, create: { id, name: `Bayes${id}`, email: `bayes${id}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, avgRating: avg, totalReviews: tot, neighborhoodId: nb, cityId: 1 } })
+    await mk(vLo, 5.0, 1); await mk(vHi, 4.5, 200); await mk(vZero, 0, 0)
+    const r = await expectOk(`/api/social/leaderboard/venues?neighborhoodId=${nb}`)
+    const lb = (r.json?.leaderboard || []).filter((v: any) => [vLo, vHi, vZero].includes(v.id))
+    const idx = (id: number) => lb.findIndex((v: any) => v.id === id)
+    if (idx(vHi) === -1 || idx(vLo) === -1) throw new Error('yorumlu iki salon da listede değil')
+    if (idx(vHi) > idx(vLo)) throw new Error('çok-yorumlu 4.5, tek-yorumlu 5.0 altında kaldı (Bayesian yok)')
+    if (idx(vZero) !== -1) throw new Error('yorumsuz salon liderlikte görünüyor (min-yorum eşiği yok)')
+  })
+
+  // Tur19 getMyCalendar startsAt<now: gelecekteki bir seansta checkedIn olsa bile takvime/seriye girmez
+  await check('Takvim: gelecekteki check-in\'li seans takvime/seriye girmez (startsAt<now)', async () => {
+    const uid = 990366
+    await prisma.user.upsert({ where: { id: uid }, update: { tierSportCounts: {} }, create: { id: uid, username: `cal_${uid}`, email: `cal_${uid}@x.com`, passwordHash: 'x', fullName: 'Cal', tierSportCounts: {} } })
+    await prisma.booking.deleteMany({ where: { userId: uid } }).catch(() => {})
+    await prisma.booking.create({ data: { userId: uid, sessionId: S, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `CAL-${Date.now()}`, checkedIn: true } }) // S = +2 gün (gelecek)
+    const tok = jwt.sign({ userId: uid, email: `cal_${uid}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await expectOk('/api/social/my-calendar', { token: tok })
+    if ((r.json?.activities || []).length !== 0) throw new Error(`gelecekteki check-in takvime girdi (${r.json?.activities?.length})`)
+    if (r.json?.dailyStreak !== 0) throw new Error(`gelecekteki check-in dailyStreak'i şişirdi (${r.json?.dailyStreak})`)
+  })
+
+  // Tur19 drop-in liderlik sayımı: yalnızca drop-in'i olan kullanıcı da ders liderliğinde görünür (streak zaten sayıyordu)
+  await check('Liderlik: drop-in katılımı kullanıcı liderliğine sayılır', async () => {
+    const uid = 990367, slotId = 990367, nb = 990368
+    const season = seasonInfo()
+    const cat = await prisma.sportCategory.findFirst({})
+    if (!cat) throw new Error('kurulum: sportCategory yok')
+    await prisma.neighborhood.upsert({ where: { id: nb }, update: {}, create: { id: nb, name: 'DIMah', latitude: 41, longitude: 29, cityId: 1 } })
+    await prisma.user.upsert({ where: { id: uid }, update: { tierSportCounts: {}, neighborhoodId: nb }, create: { id: uid, username: `di_${uid}`, email: `di_${uid}@x.com`, passwordHash: 'x', fullName: 'DI', tierSportCounts: {}, neighborhoodId: nb } })
+    // bu sezon içinde, GEÇMİŞ, checkedIn drop-in
+    const past = new Date(Math.max(season.start.getTime() + 3600000, Date.now() - 3600000))
+    await prisma.dropInSlot.upsert({ where: { id: slotId }, update: { startsAt: past, endsAt: new Date(past.getTime() + 3600000), sportCategoryId: cat.id }, create: { id: slotId, venueId: V, sportCategoryId: cat.id, title: 'DI Slot', startsAt: past, endsAt: new Date(past.getTime() + 3600000), format: '1v1', totalPlayers: 10, totalPrice: 100, pricePerPerson: 10 } })
+    await prisma.dropInParticipant.deleteMany({ where: { userId: uid } }).catch(() => {})
+    await prisma.dropInParticipant.create({ data: { slotId, userId: uid, status: 'confirmed', checkedIn: true } })
+    const r = await expectOk(`/api/social/leaderboard/users?neighborhoodId=${nb}`) // benzersiz ilçe → taze cache
+    const me = (r.json?.leaderboard || []).find((x: any) => x.id === uid)
+    if (!me) throw new Error('sadece drop-in\'i olan kullanıcı liderlikte yok (drop-in sayılmıyor)')
+    if (me.lessonCount < 1) throw new Error(`drop-in lessonCount ${me.lessonCount} (>=1 bekleniyor)`)
   })
 }
 

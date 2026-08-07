@@ -721,28 +721,41 @@ export async function awardAttendanceOnCheckin(bookingId: number) {
   try {
     const b = await prisma.booking.findUnique({
       where: { id: bookingId },
-      select: { id: true, userId: true, pointsEarned: true, finalAmount: true, session: { select: { class: { select: { title: true } } } } },
+      select: { id: true, userId: true, finalAmount: true, session: { select: { class: { select: { title: true } } } } },
     })
     if (!b) return
-    if (b.pointsEarned > 0) {
+    const finalAmount = b.finalAmount || 0
+    if (finalAmount > 0) {
       await resetYearlyPointsIfNeeded(b.userId).catch(() => {})
+      // PUAN, rezervasyonda DONDURULMUŞ oranla değil, katılım (check-in) anındaki GÜNCEL tier oranıyla
+      // hesaplanır: kullanıcı rezervasyondan bu yana tier atlamış olabilir (ör. Aday→Sporcu) → adil olan,
+      // gerçekten gittiği anda geçerli oran. Kredilenen tutar booking.pointsEarned'a da YAZILIR (0 olsa
+      // bile) → iptal-geri-alma (cancelBooking, checkedIn && pointsEarned>0) tam olarak verilen kadarını
+      // geri alır; aksi halde rezervasyon-anı tahmini ile gerçek kredi ayrışıp hayalet puan/defter sapması olurdu.
       const credited = await prisma.$transaction(async (tx) => {
         const exists = await tx.rewardPoint.findFirst({ where: { bookingId: b.id, source: 'attendance' }, select: { id: true } })
-        if (exists) return false
-        await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${b.userId} FOR UPDATE`
-        await tx.user.update({ where: { id: b.userId }, data: { rewardPoints: { increment: b.pointsEarned } } })
-        await tx.rewardPoint.create({ data: { userId: b.userId, points: b.pointsEarned, source: 'attendance', bookingId: b.id } })
-        return true
+        if (exists) return 0 // zaten kredilendi (idempotent) — pointsEarned önceki turda doğru yazıldı, dokunma
+        const u = await tx.user.findUnique({ where: { id: b.userId }, select: { tier: { select: { pointRate: true } } } })
+        const rate = u?.tier?.pointRate || 0
+        const pts = Math.round(finalAmount * (rate / 100))
+        // Kilit sırası (User→Booking): önce User FOR UPDATE + kredi, en son Booking güncellemesi.
+        if (pts > 0) {
+          await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${b.userId} FOR UPDATE`
+          await tx.user.update({ where: { id: b.userId }, data: { rewardPoints: { increment: pts } } })
+          await tx.rewardPoint.create({ data: { userId: b.userId, points: pts, source: 'attendance', bookingId: b.id } })
+        }
+        await tx.booking.update({ where: { id: b.id }, data: { pointsEarned: pts } })
+        return pts
       })
-      if (credited) {
+      if (credited > 0) {
         const u = await prisma.user.findUnique({ where: { id: b.userId }, select: { email: true, fullName: true, rewardPoints: true, pushToken: true, emailReminders: true } })
         const title = b.session?.class?.title || 'Ders'
-        if (u?.email && u.emailReminders !== false) sendCashbackEmail(u.email, u.fullName, b.pointsEarned, title, u.rewardPoints).catch(() => {})
-        if (u?.pushToken) sendPushNotification(u.pushToken, 'Puan kazandın! 🎉', `${title} dersine katıldın, ${b.pointsEarned} puan kazandın.`).catch(() => {})
+        if (u?.email && u.emailReminders !== false) sendCashbackEmail(u.email, u.fullName, credited, title, u.rewardPoints).catch(() => {})
+        if (u?.pushToken) sendPushNotification(u.pushToken, 'Puan kazandın! 🎉', `${title} dersine katıldın, ${credited} puan kazandın.`).catch(() => {})
       }
     }
     // Referral: davet edilenin ilk UCRETLI dersi GERCEKLESINCE (check-in) tamamlanir (booking aninda DEGIL).
-    if ((b.finalAmount || 0) > 0) completeReferral(b.userId).catch(() => {})
+    if (finalAmount > 0) completeReferral(b.userId).catch(() => {})
   } catch (e) {
     console.error('awardAttendanceOnCheckin error:', e)
   }

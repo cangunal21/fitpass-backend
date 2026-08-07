@@ -10,6 +10,7 @@ import { syncUserTier, resetYearlyPointsIfNeeded } from '../utils/tier'
 import { syncUserBadges } from '../utils/badges'
 import { seasonLabelsFromKey } from '../utils/season'
 import { purgeUserReviews, purgeUserComments } from '../utils/moderation'
+import { invalidate } from '../utils/cache'
 import { sendPushNotification } from '../utils/push'
 import { MIN_PASSWORD, clampStr, isValidEmail, parseIntSafe } from '../utils/validate'
 
@@ -534,6 +535,10 @@ export const deleteAccount = async (req: Request, res: Response) => {
       await tx.user.delete({ where: { id: userId } })
     })
 
+    // authMiddleware/optionalAuth 60sn cache'ini hemen düşür → silinen hesabın hâlâ imzalı-geçerli
+    // JWT'si (kullanıcı access token'ı ~1sa) bir sonraki istekte 'missing' görülüp reddedilsin.
+    invalidate(`authstate:${userId}`)
+
     return res.json({ message: 'Hesabınız ve tüm verileriniz kalıcı olarak silindi.' })
   } catch (err) {
     console.error(err)
@@ -636,15 +641,18 @@ export const resendVerification = async (req: Request & { userId?: number }, res
 export const updateNotificationSettings = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId
-    const { emailReminders, smsReminders } = req.body
+    // ÖLÜ TERCİH TEMİZLİĞİ: smsReminders hiçbir zaman kullanılmıyordu — SMS altyapısı yok (Netgsm yapılmadı;
+    // tüm hatırlatmalar e-posta + push). Ayarı kabul etmek/döndürmek kullanıcıya çalışmayan bir anahtar
+    // gösteriyordu. Artık yalnız emailReminders yönetilir. (DB kolonu şemada dormant kalır — düşürmek
+    // prod'da --accept-data-loss ister, değeri yok. SMS gerçekten gelirse tercih yeniden bağlanır.)
+    const { emailReminders } = req.body
 
     const user = await prisma.user.update({
       where: { id: userId },
       data: {
         ...(typeof emailReminders === 'boolean' ? { emailReminders } : {}),
-        ...(typeof smsReminders === 'boolean' ? { smsReminders } : {}),
       },
-      select: { id: true, emailReminders: true, smsReminders: true }
+      select: { id: true, emailReminders: true }
     })
 
     return res.json({ message: 'Bildirim tercihleri güncellendi.', user })

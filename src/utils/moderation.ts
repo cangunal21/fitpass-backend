@@ -22,7 +22,7 @@ export async function applyUserBan(userId: number, ban: boolean) {
     }
     return u
   })
-  invalidate(`banned:${userId}`) // cache in-memory → transaction dışında, commit sonrası
+  invalidate(`authstate:${userId}`) // cache in-memory → transaction dışında, commit sonrası (ban anında etki eder)
   return user
 }
 

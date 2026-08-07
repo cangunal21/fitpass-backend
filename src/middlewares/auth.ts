@@ -8,6 +8,17 @@ export interface AuthRequest extends Request {
   userEmail?: string
 }
 
+// Kullanıcı token'ının o anki durumu — 60sn cache (ucuz; ban/silme anında invalidate edilebilir).
+// 'ok' geçerli, 'banned' askıda, 'missing' hesap silinmiş/yok. authMiddleware + optionalAuth ortak.
+type UserAuthState = 'ok' | 'banned' | 'missing'
+async function userAuthState(userId: number): Promise<UserAuthState> {
+  return cached(`authstate:${userId}`, 60000, async () => {
+    const u = await prisma.user.findUnique({ where: { id: userId }, select: { banned: true } })
+    if (!u) return 'missing'
+    return u.banned ? 'banned' : 'ok'
+  })
+}
+
 export const optionalAuthMiddleware = async (req: Request, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization
   if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -21,11 +32,10 @@ export const optionalAuthMiddleware = async (req: Request, res: Response, next: 
         // elindeki geçerli token'la, optionalAuth ile korunan okuma uçlarında "onaylı takipçi/giriş
         // yapmış" ayrıcalığını (gizli profil aktivitesi, takip-özel içerik) kullanmaya devam ediyordu.
         // Banlıysa viewer kimliğini DÜŞÜR → istek anonim/giriş-yapılmamış gibi işlenir.
-        const banned = await cached(`banned:${decoded.userId}`, 60000, async () => {
-          const u = await prisma.user.findUnique({ where: { id: decoded.userId }, select: { banned: true } })
-          return u?.banned ?? false
-        })
-        if (!banned) (req as any).userId = decoded.userId
+        // SİLİNEN KULLANICI: hesap silindiyse (JWT ~1sa hâlâ geçerli olabilir) state 'missing' döner →
+        // viewer kimliği düşürülür (silinmiş id ile "giriş yapmış" muamelesi görmesin).
+        const state = await userAuthState(decoded.userId)
+        if (state === 'ok') (req as any).userId = decoded.userId
       }
     } catch {}
   }
@@ -50,12 +60,13 @@ export const authMiddleware = async (req: AuthRequest, res: Response, next: Next
     if (!decoded || !decoded.userId) {
       return res.status(401).json({ error: 'Geçersiz token.' })
     }
-    // Banlanan kullanıcı geçerli token'la içeride kalmasın (60sn cache → ucuz; ban anında invalidate edilir)
-    const banned = await cached(`banned:${decoded.userId}`, 60000, async () => {
-      const u = await prisma.user.findUnique({ where: { id: decoded.userId }, select: { banned: true } })
-      return u?.banned ?? false
-    })
-    if (banned) return res.status(403).json({ error: 'Hesabınız askıya alınmıştır.' })
+    // Banlanan kullanıcı geçerli token'la içeride kalmasın (60sn cache → ucuz; ban anında invalidate edilir).
+    // Silinen kullanıcı da içeride kalmasın: hesabı silinince JWT ~1sa daha imzalı-geçerli olur; DB'de yoksa
+    // req.userId silinmiş bir id'ye set edilir ve `where:{userId}` sorguları o id ile çalışır (çoğu boş/404
+    // döner ama yeni bir aynı-id kaydı olsaydı karışırdı) → 'missing' ise 401.
+    const state = await userAuthState(decoded.userId)
+    if (state === 'banned') return res.status(403).json({ error: 'Hesabınız askıya alınmıştır.' })
+    if (state === 'missing') return res.status(401).json({ error: 'Geçersiz token.' })
     req.userId = decoded.userId
     req.userEmail = decoded.email
     next()

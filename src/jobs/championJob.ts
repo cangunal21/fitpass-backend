@@ -30,32 +30,44 @@ export async function awardSeasonChampions(now: Date = new Date()) {
     const already = await prisma.userBadge.count({ where: { badgeId: champBadge.id, seasonKey: prev.key } })
     if (already > 0) return
 
-    const bookings = await prisma.booking.findMany({
-      // GAMING ÖNLEME: kalıcı şampiyon rozeti yalnızca GERÇEKTEN gidilen (checkedIn) derslerden —
-      // no-show/ücretsiz booking ile küçük bir ilçede sahte şampiyonluk kazanılmasın (liderlikle aynı).
-      where: { status: 'confirmed', checkedIn: true, session: { startsAt: { gte: windowStart, lt: windowEnd } } },
-      select: {
-        userId: true,
-        user: { select: { banned: true, activityPrivacy: true, neighborhoodId: true, neighborhood: { select: { cityId: true } } } },
-        session: { select: { class: { select: { sportCategoryId: true } } } },
-      },
-    })
+    const userSelect = { banned: true, activityPrivacy: true, neighborhoodId: true, neighborhood: { select: { cityId: true } } }
+    const [bookings, dropins] = await Promise.all([
+      prisma.booking.findMany({
+        // GAMING ÖNLEME: kalıcı şampiyon rozeti yalnızca GERÇEKTEN gidilen (checkedIn) derslerden —
+        // no-show/ücretsiz booking ile küçük bir ilçede sahte şampiyonluk kazanılmasın (liderlikle aynı).
+        where: { status: 'confirmed', checkedIn: true, session: { startsAt: { gte: windowStart, lt: windowEnd } } },
+        select: {
+          userId: true,
+          user: { select: userSelect },
+          session: { select: { class: { select: { sportCategoryId: true } } } },
+        },
+      }),
+      // Drop-in katılımları da şampiyonluğa sayılır (liderlik/streak ile tutarlı; slot.sportCategoryId kanonik FK).
+      prisma.dropInParticipant.findMany({
+        where: { status: 'confirmed', checkedIn: true, slot: { startsAt: { gte: windowStart, lt: windowEnd } } },
+        select: {
+          userId: true,
+          user: { select: userSelect },
+          slot: { select: { sportCategoryId: true } },
+        },
+      }),
+    ])
 
-    // key: `${sportCategoryId}|${scopeType}|${scopeId}` → (userId → dersSayısı)
+    // key: `${sportCategoryId}|${scopeType}|${scopeId}` → (userId → aktiviteSayısı)
     const groups = new Map<string, Map<number, number>>()
     const bump = (sport: number, scopeType: string, scopeId: number, userId: number) => {
       const k = `${sport}|${scopeType}|${scopeId}`
       let g = groups.get(k); if (!g) { g = new Map(); groups.set(k, g) }
       g.set(userId, (g.get(userId) || 0) + 1)
     }
-    for (const b of bookings) {
-      const u = b.user
-      if (!u || u.banned) continue // liderlikle aynı: sıralama HERKESE açık, yalnız banlı hariç (gizli de şampiyon olabilir; rozet herkese görünür)
-      const sport = b.session?.class?.sportCategoryId
-      if (!sport) continue
-      if (u.neighborhoodId) bump(sport, 'district', u.neighborhoodId, b.userId)
-      if (u.neighborhood?.cityId) bump(sport, 'city', u.neighborhood.cityId, b.userId)
+    const tally = (u: { banned: boolean; neighborhoodId: number | null; neighborhood: { cityId: number | null } | null } | null, sport: number | null | undefined, userId: number) => {
+      if (!u || u.banned) return // liderlikle aynı: sıralama HERKESE açık, yalnız banlı hariç (gizli de şampiyon olabilir; rozet herkese görünür)
+      if (!sport) return
+      if (u.neighborhoodId) bump(sport, 'district', u.neighborhoodId, userId)
+      if (u.neighborhood?.cityId) bump(sport, 'city', u.neighborhood.cityId, userId)
     }
+    for (const b of bookings) tally(b.user, b.session?.class?.sportCategoryId, b.userId)
+    for (const d of dropins) tally(d.user, d.slot?.sportCategoryId, d.userId)
 
     const toCreate: { userId: number; badgeId: number; sportCategoryId: number; scopeType: string; scopeId: number; rank: number; seasonKey: string }[] = []
     const winnersByUser = new Map<number, number>()

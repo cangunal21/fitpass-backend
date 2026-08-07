@@ -177,9 +177,9 @@ export const getUserLeaderboard = async (req: Request, res: Response) => {
       const now = new Date()
       // Sıralama HERKESE açık (Instagram mantığı): profili/aktivitesi gizli olsa da username+avatarla görünür,
       // tıklanıp takip isteği atılabilir. Yalnız BANLI hariç. Gizlilik yalnız profil-detayında/aktivitede uygulanır.
-      // Yalnızca bu sezon EN AZ 1 nitelikli (checkedIn, geçmiş, branş) dersi olan kullanıcıları yükle.
+      // Yalnızca bu sezon EN AZ 1 nitelikli (checkedIn, geçmiş, branş) aktivitesi olan kullanıcıları yükle.
       // Aksi halde TÜM kullanıcı tabanı (çoğu 0 dersli) belleğe çekilip JS'te filtrelenirdi → ölçekte ağır.
-      const activityFilter = {
+      const bookingFilter = {
         status: 'confirmed' as const,
         checkedIn: true,
         session: {
@@ -187,11 +187,25 @@ export const getUserLeaderboard = async (req: Request, res: Response) => {
           ...(branch ? { class: { sportCategory: { name: branch as string } } } : {}), // KANONIK FK (championJob ile ayni); serbest-metin class.category case-sensitive drift uretiyordu
         },
       }
+      // GAMING ÖNLEME: liderlik yalnızca GERÇEKTEN gidilen (checkedIn) + geçmiş aktiviteleri sayar.
+      // Drop-in katılımları da SAYILIR: streak liderliği (getStreakLeaderboard) zaten drop-in'i sayıyordu;
+      // ders liderliği saymayınca ikisi çelişiyordu → aynı nitelikli filtreyle drop-in de eklendi.
+      const dropinFilter = {
+        status: 'confirmed' as const,
+        checkedIn: true,
+        slot: {
+          startsAt: { gte: seasonStart, lt: now },
+          ...(branch ? { sportCategory: { name: branch as string } } : {}),
+        },
+      }
       const users = await prisma.user.findMany({
         where: {
           banned: false,
           ...(neighborhoodId ? { neighborhoodId } : {}),
-          bookings: { some: activityFilter },
+          OR: [
+            { bookings: { some: bookingFilter } },
+            { dropInParticipants: { some: dropinFilter } },
+          ],
         },
         select: {
           id: true,
@@ -200,23 +214,12 @@ export const getUserLeaderboard = async (req: Request, res: Response) => {
           neighborhoodId: true,
           neighborhood: { select: { name: true } },
           tier: { select: { name: true, colorHex: true, iconUrl: true } },
-          bookings: {
-            // GAMING ÖNLEME: liderlik yalnızca GERÇEKTEN gidilen (checkedIn) + geçmiş dersleri sayar —
-            // gelecek seansları toplu booklayıp/no-show ile sıralama şişirilmesin (streak liderliğiyle aynı).
-            where: {
-              status: 'confirmed',
-              checkedIn: true,
-              session: {
-                startsAt: { gte: seasonStart, lt: now },
-                ...(branch ? { class: { sportCategory: { name: branch as string } } } : {}), // KANONIK FK (championJob ile ayni); serbest-metin class.category case-sensitive drift uretiyordu
-              },
-            },
-            select: { id: true }
-          }
+          bookings: { where: bookingFilter, select: { id: true } },
+          dropInParticipants: { where: dropinFilter, select: { id: true } },
         }
       })
       return users
-        .map(u => ({ ...u, lessonCount: u.bookings.length, bookings: undefined }))
+        .map(u => ({ ...u, lessonCount: u.bookings.length + u.dropInParticipants.length, bookings: undefined, dropInParticipants: undefined }))
         .filter(u => u.lessonCount > 0)
         .sort((a, b) => (b.lessonCount - a.lessonCount) || (a.id - b.id)) // esitlikte deterministik: kucuk id once
         .slice(0, 50)
@@ -313,14 +316,19 @@ export const getMyCalendar = async (req: Request, res: Response) => {
     const userId = (req as any).userId
     // Yerel (İstanbul) güne göre grupla — startsAt UTC saklanır.
     const ymd = (d: Date) => d.toLocaleDateString('en-CA', { timeZone: 'Europe/Istanbul' })
+    const now = new Date()
 
+    // Yalnız GEÇMİŞ (startsAt <= now) + check-in yapılmış aktiviteler seriyi/takvimi besler. Check-in
+    // penceresi seans başlangıcından 1 saat ÖNCE açıldığı için, henüz başlamamış bir seansta check-in
+    // yapılmış olabilir → startsAt filtresi olmadan gelecekteki bir gün seriye/güncel-streak'e sayılıp
+    // dailyStreak/weeklyStreak'i yapay şişirirdi. (startsAt<now, leaderboard/champion ile tutarlı.)
     const [bookings, dropins] = await Promise.all([
       prisma.booking.findMany({
-        where: { userId, checkedIn: true, bookingType: 'class' },
+        where: { userId, checkedIn: true, bookingType: 'class', session: { startsAt: { lte: now } } },
         select: { session: { select: { startsAt: true, class: { select: { category: true, title: true } } } } },
       }),
       prisma.dropInParticipant.findMany({
-        where: { userId, checkedIn: true },
+        where: { userId, checkedIn: true, slot: { startsAt: { lte: now } } },
         select: { slot: { select: { startsAt: true, title: true, sportCategory: { select: { name: true } } } } },
       }),
     ])
@@ -352,30 +360,53 @@ export const getVenueLeaderboard = async (req: Request, res: Response) => {
   try {
     const { branch, neighborhoodId } = await normalizeLbParams(req)
 
-    const venues = await cached(`lb-venue:${branch || ''}:${neighborhoodId || ''}`, 45000, () => prisma.venue.findMany({
-      where: {
-        isApproved: true,
-        ...(neighborhoodId ? { neighborhoodId } : {}),
-        ...(branch ? {
+    const venues = await cached(`lb-venue:${branch || ''}:${neighborhoodId || ''}`, 45000, async () => {
+      const rows = await prisma.venue.findMany({
+        where: {
+          isApproved: true,
+          ...(neighborhoodId ? { neighborhoodId } : {}),
+          ...(branch ? {
+            sportCategories: {
+              some: { sportCategory: { name: branch as string } }
+            }
+          } : {})
+        },
+        select: {
+          id: true,
+          name: true,
+          avgRating: true,
+          totalReviews: true,
+          coverImageUrl: true,
+          neighborhood: { select: { name: true } },
           sportCategories: {
-            some: { sportCategory: { name: branch as string } }
+            include: { sportCategory: { select: { name: true } } }
           }
-        } : {})
-      },
-      select: {
-        id: true,
-        name: true,
-        avgRating: true,
-        totalReviews: true,
-        coverImageUrl: true,
-        neighborhood: { select: { name: true } },
-        sportCategories: {
-          include: { sportCategory: { select: { name: true } } }
-        }
-      },
-      orderBy: { avgRating: 'desc' },
-      take: 50
-    }))
+        },
+      })
+      // MİN-GÜVEN SIRALAMA (Wilson %95 alt sınırı): ham avgRating DESC ile 1 yorumlu 5.0'lık bir salon,
+      // 200 yorumlu 4.8'lik köklü salonu geçiyordu (istatistiksel gürültü). Puanı [0,1]'e normalize edip
+      // (p = (r-1)/4) yorum sayısına göre Wilson alt güven sınırını hesaplarız: AZ yorum = GENİŞ belirsizlik
+      // = DÜŞÜK alt sınır → tek parlak yorumla zirveye çıkılamaz, köklü/çok-yorumlu salon öne geçer (Evan
+      // Miller, "How Not To Sort By Average Rating"). NOT: Bayesian nokta-tahmini bunu çözmez — ortalamanın
+      // ÜSTÜNDEKİ az-yorumlu salon, ortalamaya çekilse bile ortalama-seviyeli çok-yorumluyu geçebilir; alt
+      // sınır belirsizliği cezalandırdığı için doğru araçtır. Yorumsuz (n=0) salon liderlikte YER ALMAZ.
+      const z = 1.96, z2 = z * z
+      const wilson = (r: number, n: number) => {
+        if (n <= 0) return 0
+        const p = Math.min(1, Math.max(0, (r - 1) / 4)) // 1..5 yıldız → 0..1 oran
+        const denom = 1 + z2 / n
+        const center = p + z2 / (2 * n)
+        const margin = z * Math.sqrt((p * (1 - p) + z2 / (4 * n)) / n)
+        return (center - margin) / denom
+      }
+      const rated = rows.filter(v => (v.totalReviews || 0) > 0)
+      if (rated.length === 0) return []
+      return rated
+        .map(v => ({ v, s: wilson(v.avgRating || 0, v.totalReviews || 0) }))
+        .sort((a, b) => (b.s - a.s) || ((b.v.totalReviews || 0) - (a.v.totalReviews || 0)) || (a.v.id - b.v.id)) // eşitlikte çok-yorumlu, sonra küçük id
+        .slice(0, 50)
+        .map(x => x.v)
+    })
 
     return res.json({ leaderboard: venues })
   } catch (err) {
