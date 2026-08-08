@@ -424,17 +424,27 @@ export const deleteCategory = async (req: Request, res: Response) => {
   try {
     const id = parseInt(req.params.id as string)
     if (!id || isNaN(id)) return res.status(400).json({ error: 'Geçersiz kategori.' })
-    const [classes, venues, dropins, logs, tierHist] = await Promise.all([
+    // ŞEMADAKİ TÜM sportCategoryId REFERANSLARI sayılmalı — eksik bırakılan her tablo, "kontrol ettim,
+    // silmek güvenli" diyen bu guard'ı YALANCI yapar ve silme FK ihlaliyle 500'e düşer.
+    // ÖNCEDEN: ActivityLog + UserTierHistory sayılıyordu (ikisi de HİÇBİR YERDE oluşturulmuyor → her
+    // zaman 0, guard'a katkısı yok) ama GERÇEKTEN yazılan UserBadge.sportCategoryId sayılmıyordu
+    // (badges.ts 'spor ustası' + championJob 'sezon şampiyonu' rozetleri kategoriye bağlı yazıyor).
+    // Yani rozet dağıtılmış bir kategoriyi silmek guard'dan GEÇİP FK hatasına düşüyordu.
+    // Ölü tablolar da listede TUTULDU: bugün 0 dönüyorlar ama ileride yazılmaya başlarsa guard
+    // kendiliğinden doğru kalsın (maliyet: iki ucuz count).
+    const [classes, venues, dropins, badges, logs, tierHist, monthly] = await Promise.all([
       prisma.class.count({ where: { sportCategoryId: id } }),
       prisma.venueSportCategory.count({ where: { sportCategoryId: id } }),
       prisma.dropInSlot.count({ where: { sportCategoryId: id } }),
+      prisma.userBadge.count({ where: { sportCategoryId: id } }),
       prisma.activityLog.count({ where: { sportCategoryId: id } }),
       prisma.userTierHistory.count({ where: { sportCategoryId: id } }),
+      prisma.monthlyLeaderboard.count({ where: { sportCategoryId: id } }),
     ])
-    const total = classes + venues + dropins + logs + tierHist
+    const total = classes + venues + dropins + badges + logs + tierHist + monthly
     if (total > 0) {
       return res.status(400).json({
-        error: `Bu kategori kullanımda (${classes} ders, ${venues} salon, ${dropins} drop-in) — silinemez. Önce bağlantıları kaldırın.`,
+        error: `Bu kategori kullanımda (${classes} ders, ${venues} salon, ${dropins} drop-in, ${badges} rozet) — silinemez. Önce bağlantıları kaldırın.`,
       })
     }
     await prisma.sportCategory.delete({ where: { id } })

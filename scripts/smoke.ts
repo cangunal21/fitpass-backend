@@ -168,6 +168,10 @@ async function cleanup() {
   await prisma.dropInSlot.deleteMany({ where: { id: 990392 } }).catch(() => {})
   await prisma.venue.deleteMany({ where: { id: { in: [990391, 990392] } } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990381 } }).catch(() => {})
+  // Kategori silme guard testi kalıntısı (990401 + SmokeKatSil)
+  await prisma.userBadge.deleteMany({ where: { userId: 990401 } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: 990401 } }).catch(() => {})
+  await prisma.sportCategory.deleteMany({ where: { name: 'SmokeKatSil' } }).catch(() => {})
   // Auth regresyon test venue kalıntıları (990013 other-venue, 990014 suspend)
   await prisma.venue.deleteMany({ where: { id: { in: [990013, 990014] } } }).catch(() => {})
   await prisma.coupon.deleteMany({ where: { code: { startsWith: 'NEG' } } }).catch(() => {})
@@ -2837,6 +2841,31 @@ async function run() {
         if (re.test(txt)) throw new Error(`yanıltıcı iptal metni geri gelmiş (${path.basename(f)}): ${re}`)
       }
     }
+  })
+
+  // Kategori silme koruması ROZET referansını da saymalı. Guard önceden hiç yazılmayan tabloları
+  // (ActivityLog/UserTierHistory → her zaman 0) sayıp GERÇEKTEN yazılan UserBadge.sportCategoryId'yi
+  // kaçırıyordu → rozet dağıtılmış kategori guard'dan geçip FK ihlaliyle 500'e düşüyordu.
+  await check('Admin: rozet bağlı kategori silinemez (guard tüm FK\'leri sayar)', async () => {
+    const uid = 990401
+    // SportCategory.name @unique DEĞİL → upsert kullanılamaz; bul-veya-oluştur.
+    const mkCat = async () => (await prisma.sportCategory.findFirst({ where: { name: 'SmokeKatSil' } }))
+      ?? (await prisma.sportCategory.create({ data: { name: 'SmokeKatSil', colorHex: '#123456' } }))
+    const cat = await mkCat()
+    await prisma.user.upsert({ where: { id: uid }, update: { tierSportCounts: {} }, create: { id: uid, username: `kd_${uid}`, email: `kd_${uid}@x.com`, passwordHash: 'x', fullName: 'KD', tierSportCounts: {} } })
+    // Referans YOKKEN silinebilmeli (kurulum doğrulaması — test yanlış sebeple yeşil olmasın)
+    const free = await http(`/api/admin/categories/${cat.id}`, { method: 'DELETE', admin: true })
+    if (free.status !== 200) throw new Error(`referanssız kategori silinemedi: ${free.status} ${free.text.slice(0, 90)}`)
+    // Şimdi ROZET bağlı bir kategori: silme 400 ile ENGELLENMELİ (FK 500'ü DEĞİL)
+    const cat2 = await mkCat()
+    const badge = await prisma.badge.findFirst({ select: { id: true } })
+    if (!badge) throw new Error('kurulum: badge yok (ensureBadges çalışmamış)')
+    await prisma.userBadge.create({ data: { userId: uid, badgeId: badge.id, sportCategoryId: cat2.id } })
+    const r = await http(`/api/admin/categories/${cat2.id}`, { method: 'DELETE', admin: true })
+    if (r.status === 200) throw new Error('rozet bağlı kategori SİLİNDİ — guard UserBadge\'i saymıyor')
+    if (r.status >= 500) throw new Error(`guard atlandı, FK hatası 500 döndü: ${r.text.slice(0, 90)}`)
+    if (r.status !== 400) throw new Error(`beklenen 400, gelen ${r.status}`)
+    if (!/rozet/i.test(r.json?.error || '')) throw new Error(`hata mesajı rozet sayısını söylemiyor: ${r.json?.error}`)
   })
 
   // ===== BİLDİRİM ÇOKLU-DİL (#67) REGRESYONLARI =====
