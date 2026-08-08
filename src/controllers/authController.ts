@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs'
 import crypto from 'crypto'
 import prisma from '../utils/prisma'
 import { generateToken } from '../utils/jwt'
-import { issueRefreshToken, rotateAccessToken, revokeRefreshToken } from '../utils/refreshToken'
+import { issueRefreshToken, rotateAccessToken, revokeRefreshToken, userIdForRefreshToken } from '../utils/refreshToken'
 import { sendWelcomeEmail, sendPasswordResetEmail, sendEmailVerificationEmail, sendBadgeEmail } from '../utils/email'
 import { applyReferralCode } from './referralController'
 import { syncUserTier, resetYearlyPointsIfNeeded } from '../utils/tier'
@@ -192,8 +192,8 @@ export const logout = async (req: Request, res: Response) => {
     if (refreshToken) {
       // Cihazın push token'ını sahibinden temizle — çıkış sonrası bu cihaza bildirim gitmesin
       // (ve sonraki kullanıcı girip kendi token'ını kaydedene kadar boşta kalsın).
-      const rt = await prisma.refreshToken.findUnique({ where: { token: String(refreshToken) }, select: { userId: true } }).catch(() => null)
-      if (rt?.userId) await prisma.user.update({ where: { id: rt.userId }, data: { pushToken: null } }).catch(() => {})
+      const ownerId = await userIdForRefreshToken(String(refreshToken))
+      if (ownerId) await prisma.user.update({ where: { id: ownerId }, data: { pushToken: null } }).catch(() => {})
       await revokeRefreshToken(String(refreshToken))
     }
     return res.json({ message: 'Çıkış yapıldı.' })

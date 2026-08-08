@@ -44,3 +44,16 @@ export async function revokeRefreshToken(refreshToken: string): Promise<void> {
   if (!refreshToken) return
   await prisma.refreshToken.updateMany({ where: { token: hashToken(refreshToken) }, data: { revoked: true } }).catch(() => {})
 }
+
+// Ham refresh token → sahibinin userId'si (yoksa null). Çıkışta cihazın push token'ını temizlemek için.
+// AYRI FONKSİYON OLMASININ SEBEBİ: token'ın DB'de HASH'li saklandığı bilgisi bu modülde kapsüllü kalmalı.
+// Daha önce authController.logout ham token'la doğrudan `refreshToken.findUnique` yapıyordu; at-rest
+// hash'e geçince o sorgu SESSİZCE hep null dönmeye başladı (push token hiç temizlenmiyordu). Çağıranın
+// hash'leme detayını bilmesi gerekmesin diye erişim buradan veriliyor.
+export async function userIdForRefreshToken(refreshToken: string): Promise<number | null> {
+  if (!refreshToken) return null
+  const rt = await prisma.refreshToken
+    .findUnique({ where: { token: hashToken(refreshToken) }, select: { userId: true } })
+    .catch(() => null)
+  return rt?.userId ?? null
+}

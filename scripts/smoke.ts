@@ -157,6 +157,8 @@ async function cleanup() {
   await prisma.follow.deleteMany({ where: { OR: [{ followerId: { in: [990371, 990372] } }, { followingId: { in: [990371, 990372] } }] } }).catch(() => {})
   await prisma.notification.deleteMany({ where: { userId: { in: [990371, 990372, 990373] } } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: { in: [990371, 990372, 990373] } } }).catch(() => {})
+  await prisma.refreshToken.deleteMany({ where: { userId: 990381 } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: 990381 } }).catch(() => {})
   // Auth regresyon test venue kalıntıları (990013 other-venue, 990014 suspend)
   await prisma.venue.deleteMany({ where: { id: { in: [990013, 990014] } } }).catch(() => {})
   await prisma.coupon.deleteMany({ where: { code: { startsWith: 'NEG' } } }).catch(() => {})
@@ -2740,6 +2742,23 @@ async function run() {
     const r = await expectOk('/api/social/my-calendar', { token: tok })
     if ((r.json?.activities || []).length !== 0) throw new Error(`gelecekteki check-in takvime girdi (${r.json?.activities?.length})`)
     if (r.json?.dailyStreak !== 0) throw new Error(`gelecekteki check-in dailyStreak'i şişirdi (${r.json?.dailyStreak})`)
+  })
+
+  // Çıkışta cihazın push token'ı temizlenmeli. REGRESYON: refresh token at-rest HASH'e geçirilince
+  // logout'taki DOĞRUDAN `findUnique({token: raw})` sorgusu sessizce hep null dönmeye başlamış,
+  // push token hiç temizlenmiyordu (çıkış yapan cihaza bildirim gitmeye devam ederdi).
+  await check('Auth: çıkışta cihazın push token\'ı temizlenir (hash\'li arama)', async () => {
+    const { issueRefreshToken } = require('../src/utils/refreshToken')
+    const uid = 990381
+    await prisma.refreshToken.deleteMany({ where: { userId: uid } }).catch(() => {})
+    await prisma.user.upsert({ where: { id: uid }, update: { tierSportCounts: {}, pushToken: 'ExponentPushToken[smoke-logout]' }, create: { id: uid, username: `lo_${uid}`, email: `lo_${uid}@x.com`, passwordHash: 'x', fullName: 'LO', tierSportCounts: {}, pushToken: 'ExponentPushToken[smoke-logout]' } })
+    const raw = await issueRefreshToken(uid)
+    const r = await http('/api/auth/logout', { method: 'POST', body: { refreshToken: raw } })
+    if (r.status !== 200) throw new Error(`logout ${r.status}`)
+    const u = await prisma.user.findUnique({ where: { id: uid }, select: { pushToken: true } })
+    if (u?.pushToken) throw new Error(`çıkışta pushToken temizlenmedi ("${u.pushToken}") — ham/hash uyumsuzluğu`)
+    const rt = await prisma.refreshToken.findFirst({ where: { userId: uid }, select: { revoked: true } })
+    if (rt && !rt.revoked) throw new Error('refresh token iptal edilmedi')
   })
 
   // ===== BİLDİRİM ÇOKLU-DİL (#67) REGRESYONLARI =====
