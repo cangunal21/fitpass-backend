@@ -383,7 +383,11 @@ export const getVenueById = async (req: Request, res: Response) => {
 export const getDropInSlots = async (req: Request, res: Response) => {
   try {
     const slots = await prisma.dropInSlot.findMany({
-      where: { status: 'open', visibility: 'open', startsAt: { gte: new Date() } },
+      // SALON MODERASYON FİLTRESİ: kardeş public uçların (getSessions/getVenues/getVenueById) hepsinde
+      // olan `isApproved && isActive` şartı BURADA EKSİKTİ → askıya alınan/onayı kaldırılan salonun
+      // drop-in ilanı (salon adı + adresi + saat + fiyat) public listede kalmaya devam ediyordu; üstelik
+      // karta tıklayınca detay ucu 404 verdiği için kullanıcı bozuk bir kayda tıklamış oluyordu.
+      where: { status: 'open', visibility: 'open', startsAt: { gte: new Date() }, venue: { isApproved: true, isActive: true } },
       include: {
         venue: { select: { id: true, name: true, address: true } },
         sportCategory: { select: { name: true, colorHex: true, iconUrl: true } },

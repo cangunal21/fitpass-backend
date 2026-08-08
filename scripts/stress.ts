@@ -6,6 +6,8 @@
  * Çalıştırma:  npm run stress   (kendi sunucusunu test portunda açar, seed eder, temizler)
  */
 import 'dotenv/config' // sunucunun (src/index.ts) yaptığı gibi: sırlar .env'den gelir, gömülü varsayılan YOK
+import { guardTestDb } from './_guardTestDb'
+guardTestDb('stress') // CANLI DB koruması — dotenv export edilmiş DATABASE_URL'i EZMEZ (bkz. _guardTestDb.ts)
 import { spawn, ChildProcess } from 'child_process'
 import jwt from 'jsonwebtoken'
 import prisma from '../src/utils/prisma'

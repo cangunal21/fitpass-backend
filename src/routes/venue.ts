@@ -38,8 +38,15 @@ router.delete('/instructors/:id', venueAuthMiddleware, venueApprovedMiddleware, 
 router.post('/instructors/:id/invite', venueAuthMiddleware, venueApprovedMiddleware, inviteInstructor)
 router.get('/dropin', venueAuthMiddleware, getVenueDropInSlots)
 router.post('/dropin', venueAuthMiddleware, venueApprovedMiddleware, venueVerifiedMiddleware, createDropInSlot)
+// SİLME uçlarında onay kapısı BİLEREK YOK: onayı kaldırılan salon kendi dersini/seansını iptal
+// edebilmeli — aksi halde müşteriler rezervasyonlarıyla ortada kalır (silme müşteriye iptal+iade
+// bildirimi gönderir, bu istenen davranış).
 router.delete('/classes/:id', venueAuthMiddleware, deleteClass)
-router.put('/classes/:classId/sessions/:sessionId', venueAuthMiddleware, updateSession)
+// GÜNCELLEME ise farklı: kardeş uçların (createClass/updateClass/createSession/createRecurring)
+// hepsinde venueApprovedMiddleware var, burada UNUTULMUŞTU. Onayı kaldırılmış bir salon seans
+// saatini değiştirip rezervasyonlu müşterilere 3 kanaldan (in-app + push + e-posta) bildirim
+// göndermeye devam edebiliyordu. Değiştirme = yeni taahhüt → onay gerekir.
+router.put('/classes/:classId/sessions/:sessionId', venueAuthMiddleware, venueApprovedMiddleware, updateSession)
 router.delete('/classes/:classId/sessions/:sessionId', venueAuthMiddleware, deleteSession)
 router.delete('/dropin/:id', venueAuthMiddleware, deleteDropInSlot)
 router.put('/images', venueAuthMiddleware, updateVenueImages)

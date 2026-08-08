@@ -10,6 +10,8 @@
  * Çalıştırma:  npm run chaos   (sunucuyu CHAOS_TEST modunda test portunda açar)
  */
 import 'dotenv/config' // sunucunun (src/index.ts) yaptığı gibi: sırlar .env'den gelir, gömülü varsayılan YOK
+import { guardTestDb } from './_guardTestDb'
+guardTestDb('chaos') // CANLI DB koruması — dotenv export edilmiş DATABASE_URL'i EZMEZ (bkz. _guardTestDb.ts)
 import { spawn, ChildProcess } from 'child_process'
 
 const PORT = 3197

@@ -6,6 +6,8 @@
  * (Kendi sunucusunu test portunda başlatır, kontrolleri yapar, veriyi temizler.)
  */
 import 'dotenv/config' // sunucunun (src/index.ts) yaptığı gibi: sırlar .env'den gelir, gömülü varsayılan YOK
+import { guardTestDb } from './_guardTestDb'
+guardTestDb('smoke') // CANLI DB koruması — dotenv export edilmiş DATABASE_URL'i EZMEZ (bkz. _guardTestDb.ts)
 import { spawn, ChildProcess } from 'child_process'
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
@@ -158,6 +160,13 @@ async function cleanup() {
   await prisma.notification.deleteMany({ where: { userId: { in: [990371, 990372, 990373] } } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: { in: [990371, 990372, 990373] } } }).catch(() => {})
   await prisma.refreshToken.deleteMany({ where: { userId: 990381 } }).catch(() => {})
+  // Drift denetimi düzeltmeleri (99039x): onay kapısı + drop-in moderasyon filtresi
+  await prisma.booking.deleteMany({ where: { session: { classId: 990391 } } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: 990391 } }).catch(() => {})
+  await prisma.class.deleteMany({ where: { id: 990391 } }).catch(() => {})
+  await prisma.dropInParticipant.deleteMany({ where: { slotId: 990392 } }).catch(() => {})
+  await prisma.dropInSlot.deleteMany({ where: { id: 990392 } }).catch(() => {})
+  await prisma.venue.deleteMany({ where: { id: { in: [990391, 990392] } } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990381 } }).catch(() => {})
   // Auth regresyon test venue kalıntıları (990013 other-venue, 990014 suspend)
   await prisma.venue.deleteMany({ where: { id: { in: [990013, 990014] } } }).catch(() => {})
@@ -2759,6 +2768,49 @@ async function run() {
     if (u?.pushToken) throw new Error(`çıkışta pushToken temizlenmedi ("${u.pushToken}") — ham/hash uyumsuzluğu`)
     const rt = await prisma.refreshToken.findFirst({ where: { userId: uid }, select: { revoked: true } })
     if (rt && !rt.revoked) throw new Error('refresh token iptal edilmedi')
+  })
+
+  // Onayı KALDIRILMIŞ salon seans GÜNCELLEYEMEZ (kardeş create uçlarıyla simetri) — aksi halde
+  // rezervasyonlu müşterilere 3 kanaldan bildirim göndermeye devam edebiliyordu. SİLME serbest kalır
+  // (temizlik/iptal hakkı), bu test onu da doğrular.
+  await check('Yetki: onayı kaldırılmış salon seans GÜNCELLEYEMEZ (silebilir)', async () => {
+    const UV = 990391, UC = 990391, US = 990391
+    await prisma.booking.deleteMany({ where: { session: { classId: UC } } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: US } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: UC } }).catch(() => {})
+    await prisma.venue.upsert({ where: { id: UV }, update: { isApproved: true, isActive: true, isSuspended: false }, create: { id: UV, name: 'UnapprV', email: `uv${UV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: UC }, update: {}, create: { id: UC, venueId: UV, title: 'Unappr Class', category: 'Yoga', basePrice: 100, durationMinutes: 60, capacity: 10, isActive: true } })
+    await prisma.class_Session.upsert({ where: { id: US }, update: { classId: UC, startsAt: new Date(Date.now() + 3 * 86400000), endsAt: new Date(Date.now() + 3 * 86400000 + 3600000) }, create: { id: US, classId: UC, startsAt: new Date(Date.now() + 3 * 86400000), endsAt: new Date(Date.now() + 3 * 86400000 + 3600000), availableSpots: 10, status: 'open' } })
+    const tok = jwt.sign({ venueId: UV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const { trYmd } = require('../src/utils/trFormat')
+    const body = { date: trYmd(new Date(Date.now() + 4 * 86400000)), time: '10:00', capacity: 10 }
+    // ONAYLIYKEN güncelleyebilmeli (kurulum doğrulaması — test yanlış sebeple yeşil olmasın)
+    const okRes = await http(`/api/venue/classes/${UC}/sessions/${US}`, { method: 'PUT', token: tok, body })
+    if (okRes.status === 403) throw new Error('onaylı salon güncelleyemedi (kurulum hatalı)')
+    // ONAY KALDIRILINCA 403
+    await prisma.venue.update({ where: { id: UV }, data: { isApproved: false } })
+    const r = await http(`/api/venue/classes/${UC}/sessions/${US}`, { method: 'PUT', token: tok, body })
+    if (r.status !== 403) throw new Error(`onaysız salon seans güncelleyebildi: ${r.status}`)
+    // SİLME hâlâ serbest olmalı (müşteriyi ortada bırakmama)
+    const d = await http(`/api/venue/classes/${UC}/sessions/${US}`, { method: 'DELETE', token: tok })
+    if (d.status === 403) throw new Error('onaysız salon kendi seansını silemedi (temizlik hakkı kapanmış)')
+  })
+
+  // Askıya alınmış salonun drop-in ilanı public listede GÖRÜNMEMELİ (kardeş public uçlarla simetri)
+  await check('Gizlilik: askıya alınmış salonun drop-in ilanı public listede yok', async () => {
+    const DV = 990392, DS = 990392
+    const cat = await prisma.sportCategory.findFirst({})
+    if (!cat) throw new Error('kurulum: sportCategory yok')
+    await prisma.dropInParticipant.deleteMany({ where: { slotId: DS } }).catch(() => {})
+    await prisma.dropInSlot.deleteMany({ where: { id: DS } }).catch(() => {})
+    await prisma.venue.upsert({ where: { id: DV }, update: { isApproved: true, isActive: true, isSuspended: false }, create: { id: DV, name: 'DropSuspV', email: `dsv${DV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    const soon = new Date(Date.now() + 2 * 86400000)
+    await prisma.dropInSlot.create({ data: { id: DS, venueId: DV, sportCategoryId: cat.id, title: 'Susp Slot', startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), format: '5v5', totalPlayers: 10, totalPrice: 100, pricePerPerson: 10, status: 'open', visibility: 'open' } })
+    const before = await expectOk('/api/public/dropin')
+    if (!(before.json?.slots || []).some((s: any) => s.id === DS)) throw new Error('onaylı salonun slotu listede yok (kurulum hatalı)')
+    await prisma.venue.update({ where: { id: DV }, data: { isActive: false } })
+    const after = await expectOk('/api/public/dropin')
+    if ((after.json?.slots || []).some((s: any) => s.id === DS)) throw new Error('askıya alınmış salonun drop-in ilanı public listede KALDI')
   })
 
   // ===== BİLDİRİM ÇOKLU-DİL (#67) REGRESYONLARI =====
