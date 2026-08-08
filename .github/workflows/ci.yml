@@ -9,6 +9,12 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # GECELİK: stress (yük/eşzamanlılık) uzun sürdüğü için her push'ta koşmuyor. Ama "nightly'ye
+  # bırakıldı" denip ZAMANLANMIŞ İŞ HİÇ TANIMLANMAMIŞTI → stress aylarca hiç koşmadı ve bu sırada
+  # puan modeli değişince (tur 19: puan rezervasyonda değil check-in'de) iki testi bayatlayıp
+  # kırıldı, kimse görmedi. Artık gerçekten her gece koşuyor. 02:00 UTC = 05:00 İstanbul.
+  schedule:
+    - cron: '0 2 * * *'
 
 # Aynı dalda üst üste push gelirse önceki koşuyu iptal et (dakika israfı olmasın)
 concurrency:
@@ -40,13 +46,14 @@ jobs:
   test:
     name: ${{ matrix.suite }} (gerçek PostgreSQL)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40  # stress (gecelik) diğerlerinden uzun sürüyor
     strategy:
       fail-fast: false
       matrix:
         # Her harness KENDİ sunucusunu ayrı portta açıyor (smoke:3199, fuzz:3194, chaos:3197) ve
-        # ID aralıkları da ayrı → paralel koşabilirler. stress nightly'ye bırakıldı (uzun sürüyor).
-        suite: [smoke, fuzz, chaos]
+        # ID aralıkları da ayrı → paralel koşabilirler.
+        # stress yalnız GECELİK + elle tetiklemede koşar (uzun sürüyor, her push'ta gereksiz).
+        suite: ${{ fromJSON( (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '["smoke","fuzz","chaos","stress"]' || '["smoke","fuzz","chaos"]' ) }}
 
     services:
       postgres:

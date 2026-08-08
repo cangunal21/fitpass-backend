@@ -174,14 +174,19 @@ async function run() {
     const afterBook = await prisma.user.findUnique({ where: { id: u.id }, select: { rewardPoints: true } })
     const earned = (afterBook?.rewardPoints || 0) - (before?.rewardPoints || 0)
     const expectedPts = Math.round(100 * (pointRate / 100))
-    ok('T5 rezervasyon: puan kazandırıldı', earned === expectedPts, `kazanılan=${earned}, beklenen=${expectedPts}`)
-    // booking id bul, iptal et
+    // PUAN MODELİ DEĞİŞTİ (tur 19): puan REZERVASYONDA değil CHECK-IN'de veriliyor → burada 0 beklenir.
+    // (Bu test eski modeli kodluyordu; stress CI'da koşmadığı için değişiklik fark edilmemişti.)
+    ok('T5 rezervasyon: puan REZERVASYONDA verilmez (check-in modeli)', earned === 0, `kazanılan=${earned}, beklenen=0`)
+    void expectedPts // (eski modelde rezervasyonda beklenen puandı; artık check-in'de veriliyor)
     const booking = await prisma.booking.findFirst({ where: { userId: u.id, sessionId: SESS_CANCEL } })
     const cancelRes = await http(`/api/bookings/${booking?.id}/cancel`, { method: 'PUT', token: u.token })
     const occ2 = await occupancy(SESS_CANCEL)
     const afterCancel = await prisma.user.findUnique({ where: { id: u.id }, select: { rewardPoints: true } })
     ok('T5 iptal: kapasite geri verildi (occupancy 1→0)', occ1 === 1 && occ2 === 0, `occ1=${occ1}, occ2=${occ2}`)
-    ok('T5 iptal: puan geri alındı (bakiye başa döndü)', (afterCancel?.rewardPoints || 0) === (before?.rewardPoints || 0), `başa=${before?.rewardPoints}, son=${afterCancel?.rewardPoints}`)
+    // İptal check-in'den ÖNCE olur (12-saat iptal kapısı ile check-in penceresi çakışmaz; cancelBooking
+    // CAS'ı zaten checkedIn:false şartı taşıyor) → kredilenmiş puan hiç YOKTUR, geri alma da beklenmez.
+    // Doğru davranış: bakiye HİÇ DEĞİŞMEZ. (Hiç verilmemiş puanın düşürülmesi asıl hata olurdu.)
+    ok('T5 iptal: bakiye değişmedi (rezervasyonda puan verilmediği için geri alma da yok)', (afterCancel?.rewardPoints || 0) === (before?.rewardPoints || 0), `başa=${before?.rewardPoints}, son=${afterCancel?.rewardPoints}`)
     ok('T5 iptal: 5xx yok', cancelRes.status < 500, `status=${cancelRes.status}`)
   }
 
@@ -199,7 +204,10 @@ async function run() {
     // CAS sayesinde: yalnızca 1 istek 200, puan tam bir kez geri alınır (bakiye başa döner), çift log yok
     ok('T10 çift-iptal: yalnızca 1 istek 200 (CAS)', ok200 === 1, `200 sayısı=${ok200}`)
     ok('T10 çift-iptal: puan TEK geri alındı (bakiye başa döndü)', after === before, `başa=${before}, son=${after}`)
-    ok('T10 çift-iptal: tek negatif puan kaydı (çift geri-alma yok)', negLogs === 1, `negatif log=${negLogs}`)
+    // Puan check-in'de veriliyor ve iptal check-in'den önce olur → kredilenmiş puan yok, dolayısıyla
+    // HİÇ negatif kayıt beklenmez. Test asıl olarak CAS'ı doğruluyor: 8 paralel iptalden yalnız 1'i
+    // geçiyor ve hiçbir durumda ÇİFT geri-alma (negLogs>1) oluşmuyor.
+    ok('T10 çift-iptal: çift geri-alma yok (kredilenmemiş puan düşürülmedi)', negLogs === 0, `negatif log=${negLogs}`)
     ok('T10 çift-iptal: 5xx yok', server5xx === 0, `5xx=${server5xx}`)
   }
 
