@@ -238,10 +238,10 @@ export const sendBookingConfirmationEmail = async (
   const T = tt(loc, {
     tr: { heading: 'Rezervasyon Onaylandı!', body1: `Merhaba ${esc(fullName)}, rezervasyonun başarıyla oluşturuldu!`,
           lblDate: 'Tarih', lblTime: 'Saat', lblPrice: 'Ücret',
-          note: '🔒 12 saat öncesine kadar ücretsiz iptal hakkın var.', cta: 'Rezervasyonlarımı Gör →' },
+          note: '🔒 İptal: 24 saatten önce tam iade · 12-24 saat arası yarım iade · son 12 saatte iptal yok.', cta: 'Rezervasyonlarımı Gör →' },
     en: { heading: 'Booking Confirmed!', body1: `Hi ${esc(fullName)}, your booking is all set!`,
           lblDate: 'Date', lblTime: 'Time', lblPrice: 'Price',
-          note: '🔒 You can cancel for free up to 12 hours before.', cta: 'View My Bookings →' },
+          note: '🔒 Cancellation: full refund 24h+ before · half refund 12-24h · no cancellation in the last 12h.', cta: 'View My Bookings →' },
   })
   await resend.emails.send({
     from: FROM_EMAIL,

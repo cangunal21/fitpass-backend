@@ -2813,6 +2813,32 @@ async function run() {
     if ((after.json?.slots || []).some((s: any) => s.id === DS)) throw new Error('askıya alınmış salonun drop-in ilanı public listede KALDI')
   })
 
+  // KOPYA-KURAL SÜRÜKLENMESİ GUARD'I. Gerçek kural (bookingController: <12s iptal YOK, >=24s tam,
+  // 12-24s YARIM) ile satın alma noktasındaki metin ayrışmıştı: "12 saat öncesine kadar ücretsiz
+  // iptal" yarım-iade penceresini gizliyordu (para konusunda yanıltıcı). Bu test hem backend kuralının
+  // hem de istemci metinlerinin birlikte değişmesini zorlar. Kardeş repo yoksa (CI) metin kısmı atlanır.
+  await check('Kopya: iptal/iade metni backend kuralıyla tutarlı (yarım-iade penceresi gizlenmiyor)', async () => {
+    const fs = require('fs'), path = require('path')
+    // 1) Backend kuralı hâlâ 12/24 mü? (kural değişirse metinler de gözden geçirilmeli)
+    const bc = fs.readFileSync(path.join(__dirname, '../src/controllers/bookingController.ts'), 'utf8')
+    if (!/freshHours\s*<\s*12/.test(bc)) throw new Error('12 saat iptal kapısı bulunamadı — kural değişmişse metinler de güncellenmeli')
+    if (!/freshHours\s*>=\s*24\s*\?\s*'full'\s*:\s*'half'/.test(bc)) throw new Error('24s tam / 12-24s yarım kuralı bulunamadı — metinler gözden geçirilmeli')
+    // 2) İstemci metinleri "12 saate kadar ücretsiz" gibi yanıltıcı ifade İÇERMEMELİ
+    const misleading = [/12 saat öncesine kadar ücretsiz/i, /free cancellation up to 12 hours/i, /cancel for free up to 12 hours/i]
+    const files = [
+      path.join(__dirname, '../src/utils/email.ts'),
+      path.join(process.env.HOME || '', 'fitpass-web/src/lib/i18n.tsx'),
+      path.join(process.env.HOME || '', 'fitpass-mobile/src/lib/i18n.tsx'),
+    ]
+    for (const f of files) {
+      if (!fs.existsSync(f)) continue // kardeş repo yok → atla
+      const txt = fs.readFileSync(f, 'utf8')
+      for (const re of misleading) {
+        if (re.test(txt)) throw new Error(`yanıltıcı iptal metni geri gelmiş (${path.basename(f)}): ${re}`)
+      }
+    }
+  })
+
   // ===== BİLDİRİM ÇOKLU-DİL (#67) REGRESYONLARI =====
 
   // Katalog: aynı anahtar iki dilde de metin üretir + parametreler doldurulur (push başlığı dahil)
