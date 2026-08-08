@@ -1,6 +1,6 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
-import { trWeekday, trMonthStart } from '../utils/trFormat'
+import { trWeekday, trMonthStart, trYmd } from '../utils/trFormat'
 
 // Salon doluluk istatistikleri
 export const getVenueStats = async (req: Request, res: Response) => {
@@ -107,8 +107,10 @@ export const getVenueRevenue = async (req: Request, res: Response) => {
     const venueId = (req as any).venueId
     const now = new Date()
 
-    // Son 6 ayın başlangıcı
-    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1)
+    // Son 6 ayın başlangıcı — İSTANBUL ay sınırı. (Aşağıdaki "Bu Ay" hesabı zaten trMonthStart
+    // kullanıyordu; burası ve aylık grafik sunucu-yerel new Date(y,m,1) ile kalmıştı → ayın ilk
+    // 3 saatinde AYNI EKRANDA çelişen iki ciro rakamı çıkıyordu.)
+    const sixMonthsAgo = trMonthStart(now, -5)
 
     // Tüm confirmed bookings (son 6 ay)
     const bookings = await prisma.booking.findMany({
@@ -157,14 +159,16 @@ export const getVenueRevenue = async (req: Request, res: Response) => {
     const MONTHS_TR = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara']
     const monthlyRevenue: { month: string; revenue: number; bookings: number }[] = []
     for (let i = 5; i >= 0; i--) {
-      const start = new Date(now.getFullYear(), now.getMonth() - i, 1)
-      const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 1)
+      const start = trMonthStart(now, -i)
+      const end = trMonthStart(now, -i + 1)
       const monthBookings = bookings.filter(b => {
         const d = new Date(b.createdAt)
         return d >= start && d < end
       })
       monthlyRevenue.push({
-        month: MONTHS_TR[start.getMonth()],
+        // Ay ETİKETİ de TR'den okunmalı: `start` artık İstanbul ay başını temsil eden bir UTC anı
+        // (ör. Ağustos için 31 Tem 21:00Z) → start.getMonth() UTC'de bir ÖNCEKİ ayı verirdi.
+        month: MONTHS_TR[parseInt(trYmd(start).slice(5, 7), 10) - 1],
         revenue: Math.round(monthBookings.reduce((acc, b) => acc + b.finalAmount, 0)),
         bookings: monthBookings.length,
       })

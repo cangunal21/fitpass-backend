@@ -172,6 +172,12 @@ async function cleanup() {
   await prisma.userBadge.deleteMany({ where: { userId: 990401 } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990401 } }).catch(() => {})
   await prisma.sportCategory.deleteMany({ where: { name: 'SmokeKatSil' } }).catch(() => {})
+  // Gelir raporu TZ testi kalıntısı (99041x)
+  await prisma.booking.deleteMany({ where: { session: { classId: 990411 } } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: 990411 } }).catch(() => {})
+  await prisma.class.deleteMany({ where: { id: 990411 } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: 990411 } }).catch(() => {})
+  await prisma.venue.deleteMany({ where: { id: 990411 } }).catch(() => {})
   // Auth regresyon test venue kalıntıları (990013 other-venue, 990014 suspend)
   await prisma.venue.deleteMany({ where: { id: { in: [990013, 990014] } } }).catch(() => {})
   await prisma.coupon.deleteMany({ where: { code: { startsWith: 'NEG' } } }).catch(() => {})
@@ -2866,6 +2872,39 @@ async function run() {
     if (r.status >= 500) throw new Error(`guard atlandı, FK hatası 500 döndü: ${r.text.slice(0, 90)}`)
     if (r.status !== 400) throw new Error(`beklenen 400, gelen ${r.status}`)
     if (!/rozet/i.test(r.json?.error || '')) throw new Error(`hata mesajı rozet sayısını söylemiyor: ${r.json?.error}`)
+  })
+
+  // Gelir raporunda "Bu Ay" ile aylık grafik AYNI ay sınırını kullanmalı (İstanbul 00:00).
+  // Önceden başlık trMonthStart (TR), grafik new Date(y,m,1) (UTC) kullanıyordu → ayın ilk 3 saatinde
+  // aynı ekranda ÇELİŞEN iki ciro rakamı. Test: TR ayının ilk saatlerine denk gelen bir rezervasyon
+  // hem "bu ay" toplamında hem grafiğin SON ayında görünmeli (ikisi tutarlı olmalı).
+  await check('Gelir raporu: "Bu Ay" ile aylık grafik aynı ay sınırını kullanır (TR)', async () => {
+    const { trMonthStart, trYmd } = require('../src/utils/trFormat')
+    const RV = 990411, RC = 990411, RS = 990411, RU = 990411
+    const monthStart = trMonthStart(new Date())
+    // TR ay başından 1 saat SONRA: UTC'de hâlâ ÖNCEKİ ay olabilir (kritik pencere)
+    const inWindow = new Date(monthStart.getTime() + 3600000)
+    if (inWindow > new Date()) return // ay henüz 1 saatlik değil → pencere test edilemez, atla
+    await prisma.booking.deleteMany({ where: { session: { classId: RC } } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: RS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: RC } }).catch(() => {})
+    await prisma.venue.upsert({ where: { id: RV }, update: { isApproved: true, isActive: true }, create: { id: RV, name: 'RevV', email: `rev${RV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.user.upsert({ where: { id: RU }, update: { tierSportCounts: {} }, create: { id: RU, username: `rev_${RU}`, email: `rev_${RU}@x.com`, passwordHash: 'x', fullName: 'Rev', tierSportCounts: {} } })
+    await prisma.class.upsert({ where: { id: RC }, update: {}, create: { id: RC, venueId: RV, title: 'Rev Class', category: 'Yoga', basePrice: 100, durationMinutes: 60, capacity: 10, isActive: true } })
+    await prisma.class_Session.upsert({ where: { id: RS }, update: { classId: RC }, create: { id: RS, classId: RC, startsAt: new Date(Date.now() + 86400000), endsAt: new Date(Date.now() + 90000000), availableSpots: 10, status: 'open' } })
+    await prisma.booking.create({ data: { userId: RU, sessionId: RS, status: 'confirmed', bookingType: 'class', baseAmount: 777, commissionAmount: 0, venueCommission: 0, finalAmount: 777, venuePayout: 777, bookingNumber: `REV-${Date.now()}`, createdAt: inWindow } })
+    const tok = jwt.sign({ venueId: RV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await expectOk('/api/venue/revenue', { token: tok })
+    const thisMonth = r.json?.thisMonthRevenue ?? r.json?.thisMonth ?? null
+    const chart = r.json?.monthlyRevenue || []
+    const last = chart[chart.length - 1]
+    if (!last) throw new Error('aylık grafik boş')
+    // Grafiğin son ayı TR'deki içinde bulunduğumuz ay olmalı ve 777'yi içermeli
+    if (!last.revenue || last.revenue < 777) throw new Error(`grafiğin son ayı ${last.revenue} — 777 TL'lik kayıt UTC yüzünden önceki aya düşmüş olabilir`)
+    if (thisMonth != null && thisMonth < 777) throw new Error(`"Bu Ay" ${thisMonth} — grafikle çelişiyor`)
+    const trMonth = parseInt(trYmd(monthStart).slice(5, 7), 10)
+    const MONTHS_TR = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara']
+    if (last.month !== MONTHS_TR[trMonth - 1]) throw new Error(`grafik son ay etiketi "${last.month}", TR ayı "${MONTHS_TR[trMonth - 1]}" olmalı`)
   })
 
   // ===== BİLDİRİM ÇOKLU-DİL (#67) REGRESYONLARI =====
