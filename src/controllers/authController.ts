@@ -12,6 +12,7 @@ import { seasonLabelsFromKey } from '../utils/season'
 import { purgeUserReviews, purgeUserComments } from '../utils/moderation'
 import { invalidate } from '../utils/cache'
 import { localeFromReq, Locale } from '../utils/locale'
+import { cityIdOfNeighborhood } from '../utils/geo'
 import { notifyFields, notifyPush, NotifyParams } from '../utils/notifyText'
 import { sendPushNotification } from '../utils/push'
 import { MIN_PASSWORD, clampStr, isValidEmail, parseIntSafe } from '../utils/validate'
@@ -74,7 +75,8 @@ export const register = async (req: Request, res: Response) => {
         preferredNeighborhoods: cleanNeighborhoods,
         // İlk tercih mahallesi varsa kullanıcının mahallesi olarak da ata
         neighborhoodId: cleanNeighborhoods[0] || undefined,
-        cityId: cleanNeighborhoods[0] ? 1 : undefined,
+        // cityId SABİT 1 yazılıyordu → seçilen ilk mahalleden türet (bkz. utils/geo.ts).
+        cityId: (await cityIdOfNeighborhood(cleanNeighborhoods[0])) ?? undefined,
       },
       select: {
         id: true,
@@ -412,7 +414,8 @@ export const updateProfile = async (req: Request, res: Response) => {
       const nb = parseIntSafe(neighborhoodId)
       if (nb === undefined) return res.status(400).json({ error: 'Geçersiz mahalle.' })
       data.neighborhoodId = nb
-      data.cityId = 1
+      // cityId SABİT 1 yazılıyordu → mahalleden türet (bkz. utils/geo.ts).
+      data.cityId = await cityIdOfNeighborhood(nb)
     }
 
     const user = await prisma.user.update({

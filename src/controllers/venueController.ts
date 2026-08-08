@@ -10,6 +10,7 @@ import { isValidEmail, MIN_PASSWORD, parseIntSafe, clampStr } from '../utils/val
 import crypto from 'crypto'
 import { trAddDays, trDate, trInstant, trTime, trWeekday, trYmd } from '../utils/trFormat'
 import { reversiblePoints } from '../utils/tier'
+import { cityIdOfNeighborhood } from '../utils/geo'
 import { notifyFields, notifyPush } from '../utils/notifyText'
 import { Locale } from '../utils/locale'
 const money = (x: number) => Math.round(x * 100) / 100 // bookingController ile aynı 2-ondalık yuvarlama
@@ -106,7 +107,7 @@ async function notifyRemovedBookings(affected: { userId: number; status: string 
 // SALON KAYIT
 export const venueRegister = async (req: Request, res: Response) => {
   try {
-    const { name, email, password, phone, address, description, cityId, neighborhoodId, sportCategories, instructor } = req.body
+    const { name, email, password, phone, address, description, neighborhoodId, sportCategories, instructor } = req.body // cityId BİLEREK alınmıyor — mahalleden türetiliyor
 
     if (!name || !email || !password || !phone || !address) {
       return res.status(400).json({ error: 'Ad, email, şifre, telefon ve adres zorunludur.' })
@@ -139,7 +140,9 @@ export const venueRegister = async (req: Request, res: Response) => {
         phone: clampStr(phone, 30) || '',
         address: clampStr(address, 250) || '',
         description: clampStr(description, 2000) || null,
-        cityId: cityId || null,
+        // cityId İSTEMCİDEN ALINMAZ: türetilmiş bir değeri istemcinin dikte etmesi (web 'cityId: 1'
+        // gönderiyordu) mahalle-şehir tutarsızlığı üretir. Mahalleden türetilir; ilçe yoksa null.
+        cityId: await cityIdOfNeighborhood(parseIntSafe(neighborhoodId)),
         neighborhoodId: neighborhoodId || null,
         isApproved: false,
       },
@@ -311,7 +314,8 @@ export const updateVenueProfile = async (req: Request, res: Response) => {
     if (neighborhoodId !== undefined) {
       const nId = parseIntSafe(neighborhoodId)
       data.neighborhoodId = nId ?? null
-      if (nId) data.cityId = 1
+      // cityId SABİT 1 (İstanbul) yazılıyordu → mahalleden türet (bkz. utils/geo.ts).
+      if (nId) data.cityId = await cityIdOfNeighborhood(nId)
     }
 
     const venue = await prisma.venue.update({

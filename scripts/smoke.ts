@@ -172,6 +172,9 @@ async function cleanup() {
   await prisma.userBadge.deleteMany({ where: { userId: 990401 } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990401 } }).catch(() => {})
   await prisma.sportCategory.deleteMany({ where: { name: 'SmokeKatSil' } }).catch(() => {})
+  // Coğrafya (cityId) testi kalıntısı (990421)
+  await prisma.user.deleteMany({ where: { id: 990421 } }).catch(() => {})
+  await prisma.neighborhood.deleteMany({ where: { id: 990421 } }).catch(() => {})
   // Gelir raporu TZ testi kalıntısı (99041x)
   await prisma.booking.deleteMany({ where: { session: { classId: 990411 } } }).catch(() => {})
   await prisma.class_Session.deleteMany({ where: { id: 990411 } }).catch(() => {})
@@ -2905,6 +2908,27 @@ async function run() {
     const trMonth = parseInt(trYmd(monthStart).slice(5, 7), 10)
     const MONTHS_TR = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara']
     if (last.month !== MONTHS_TR[trMonth - 1]) throw new Error(`grafik son ay etiketi "${last.month}", TR ayı "${MONTHS_TR[trMonth - 1]}" olmalı`)
+  })
+
+  // cityId İSTEMCİDEN değil MAHALLEDEN türetilmeli. Önceden 4 noktada SABİT 1 (İstanbul) yazılıyordu;
+  // DB'de zaten 5 şehir var (İstanbul/Ankara/Bursa/İzmir/Muğla) → İstanbul dışı bir ilçe seçilince
+  // "Ankara mahallesi + İstanbul şehri" tutarsız satırı doğuyor ve ?cityId= filtresi sessizce yanlış
+  // şehirde listeliyordu. Ayrıca web kayıt formu cityId'yi KENDİ gönderiyordu (istemci türetilmiş
+  // veriyi dikte etmemeli) → sunucu artık istemcinin gönderdiğini yok sayıyor.
+  await check('Coğrafya: cityId istemciden değil MAHALLEDEN türetilir (İstanbul\'a sabitlenmez)', async () => {
+    const NB = 990421, UID = 990421
+    // İstanbul OLMAYAN bir şehre bağlı mahalle (Ankara = 2 varsayımı yerine gerçek kaydı bul)
+    const other = await prisma.city.findFirst({ where: { id: { not: 1 } }, select: { id: true, name: true } })
+    if (!other) throw new Error('kurulum: İstanbul dışı şehir yok (seed eksik)')
+    await prisma.neighborhood.upsert({ where: { id: NB }, update: { cityId: other.id }, create: { id: NB, name: 'GeoTestMah', latitude: 39, longitude: 32, cityId: other.id } })
+    await prisma.user.deleteMany({ where: { id: UID } }).catch(() => {})
+    await prisma.user.create({ data: { id: UID, username: `geo_${UID}`, email: `geo_${UID}@x.com`, passwordHash: 'x', fullName: 'Geo', tierSportCounts: {} } })
+    const tok = jwt.sign({ userId: UID, email: `geo_${UID}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http('/api/auth/profile', { method: 'PUT', token: tok, body: { neighborhoodId: NB } })
+    if (r.status !== 200) throw new Error(`profil güncelleme ${r.status}: ${r.text.slice(0, 90)}`)
+    const u = await prisma.user.findUnique({ where: { id: UID }, select: { cityId: true, neighborhoodId: true } })
+    if (u?.neighborhoodId !== NB) throw new Error('mahalle atanmadı')
+    if (u?.cityId !== other.id) throw new Error(`cityId=${u?.cityId}, beklenen ${other.id} (${other.name}) — İstanbul'a sabitlenmiş olabilir`)
   })
 
   // ===== BİLDİRİM ÇOKLU-DİL (#67) REGRESYONLARI =====
