@@ -318,10 +318,13 @@ export const getVenues = async (req: Request, res: Response) => {
         _count: { select: { classes: true } },
       },
       orderBy: { createdAt: 'desc' },
-      take: 500, // tüm salon kataloğu tek yanıtta dökülmesin (pagination lansmanda)
+      // LIMIT+1 → kesildiyse `hasMore` bildir (ek COUNT yok). Eskiden sinyal yoktu: katalog 500'ü
+      // aşınca istemci sessizce eksik liste gösteriyordu.
+      take: 501,
     })
 
-    return res.json({ venues: venues.map(stripVenueSensitive) })
+    const vHasMore = venues.length > 500
+    return res.json({ venues: venues.slice(0, 500).map(stripVenueSensitive), hasMore: vHasMore, limit: 500 })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
@@ -394,9 +397,10 @@ export const getDropInSlots = async (req: Request, res: Response) => {
         participants: { select: { id: true } },
       },
       orderBy: { startsAt: 'asc' },
-      take: 200, // açık drop-in slotları sınırsız yüklenmesin
+      take: 201, // LIMIT+1 → sessiz kesme yerine hasMore sinyali
     })
-    return res.json({ slots })
+    const sHasMore = slots.length > 200
+    return res.json({ slots: slots.slice(0, 200), hasMore: sHasMore, limit: 200 })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })

@@ -150,9 +150,13 @@ export const getFollowers = async (req: Request, res: Response) => {
       // banlı hesap listede görünmesin (searchUsers/getUserActivities ile aynı kural)
       where: { followingId: user.id, status: 'accepted', follower: { banned: false } },
       include: { follower: { select: { id: true, username: true, fullName: true, avatarUrl: true, tier: { select: { name: true, colorHex: true, iconUrl: true } } } } },
-      take: 500, // sınırsız takipçi grafiği tek yanıtta dökülmesin (pagination lansmanda; 500 makul üst sınır)
+      // SESSİZ KESME ÖNLEME: LIMIT+1 çekip fazlalık varsa `hasMore` bildiririz (ek COUNT sorgusu
+      // açmadan). Eskiden yanıtta hiçbir sinyal yoktu → liste 500'de kesilse istemci bunu ASLA
+      // öğrenemiyordu (kullanıcı "takipçilerim eksik" der, hiçbir yerde iz olmazdı).
+      take: 501,
     })
-    return res.json({ followers: follows.map(f => f.follower) })
+    const fHasMore = follows.length > 500
+    return res.json({ followers: follows.slice(0, 500).map(f => f.follower), hasMore: fHasMore, limit: 500 })
   } catch (err) { return res.status(500).json({ error: 'Sunucu hatası.' }) }
 }
 
@@ -167,9 +171,10 @@ export const getFollowing = async (req: Request, res: Response) => {
       // banlı hesap listede görünmesin (searchUsers/getUserActivities ile aynı kural)
       where: { followerId: user.id, status: 'accepted', following: { banned: false } },
       include: { following: { select: { id: true, username: true, fullName: true, avatarUrl: true, tier: { select: { name: true, colorHex: true, iconUrl: true } } } } },
-      take: 500, // sınırsız takip listesi tek yanıtta dökülmesin
+      take: 501, // LIMIT+1 → sessiz kesme yerine hasMore sinyali (yukarıdaki takipçi ucuyla aynı desen)
     })
-    return res.json({ following: follows.map(f => f.following) })
+    const gHasMore = follows.length > 500
+    return res.json({ following: follows.slice(0, 500).map(f => f.following), hasMore: gHasMore, limit: 500 })
   } catch (err) { return res.status(500).json({ error: 'Sunucu hatası.' }) }
 }
 

@@ -16,7 +16,8 @@
     "backup:prod": "bash scripts/backup-prod.sh",
     "backup:prod:logical": "bash scripts/backup-prod-logical.sh",
     "typecheck": "tsc --noEmit",
-    "typecheck:ci": "tsc -p tsconfig.ci.json"
+    "typecheck:ci": "tsc -p tsconfig.ci.json",
+    "backfill:titleen": "ts-node scripts/backfill-title-en.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
