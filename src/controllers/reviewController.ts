@@ -297,6 +297,36 @@ export const getInstructorReviews = async (req: Request, res: Response) => {
 
 // Eğitmenin kendi yorumları (req.instructorId'den). GÜVENLİK: anonim yorumda yorum sahibinin
 // kimliği sanitizeReview ile gizlenir (eğitmen kimin kaç verdiğini göremez — salonla aynı kural).
+// Salonun KENDİ yorumları (salon paneli için). Eğitmendeki getMyInstructorReviews'ın salon aynası.
+//
+// NEDEN GEREKLİ: salon panelleri yorumları PUBLIC uçtan (getVenueReviews) okuyordu; o uç
+// `hidePrivateReply` uyguladığı için salon KENDİ yazdığı ÖZEL yanıtı bile göremiyordu. Yani özel
+// yanıt özelliği backend'de hazır olmasına rağmen kullanılamaz durumdaydı: salon yanıtı yazınca
+// panelinde kaybolurdu. Sahip ucunda gizleme YOK — yanıt zaten salonun kendisine ait.
+export const getMyVenueReviews = async (req: Request, res: Response) => {
+  try {
+    const venueId = (req as any).venueId
+    const where = { venueId, targetType: 'venue' as const }
+    const [reviews, stats] = await Promise.all([
+      prisma.review.findMany({
+        where,
+        include: { reviewer: { select: { fullName: true, username: true, avatarUrl: true } } },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+      }),
+      prisma.review.aggregate({ where, _avg: { rating: true }, _count: true }),
+    ])
+    const avg = stats._avg.rating ? Math.round(stats._avg.rating * 10) / 10 : 0
+    // sanitizeReview: anonim yorumda yazar kimliğini gizler (salon da göremez — o kural korunur).
+    // hidePrivateReply UYGULANMAZ: salon kendi yanıtını görmeli.
+    const safeReviews = reviews.map(r => sanitizeReview(r))
+    return res.json({ reviews: safeReviews, avgRating: avg, totalReviews: stats._count })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
 export const getMyInstructorReviews = async (req: Request, res: Response) => {
   try {
     const instructorId = (req as any).instructorId

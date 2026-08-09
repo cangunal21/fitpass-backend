@@ -1,5 +1,6 @@
 import { registerNumericParams } from '../middlewares/numericParams'
 import { Router } from 'express'
+import { getMyVenueReviews } from '../controllers/reviewController'
 import {
   venueRegister, venueLogin, getVenueMe, venueForgotPassword, venueResetPassword,
   updateVenueProfile, changeVenuePassword,
@@ -55,6 +56,8 @@ router.put('/change-password', venueAuthMiddleware, changeVenuePassword)
 router.get('/stats', venueAuthMiddleware, getVenueStats)
 router.get('/revenue', venueAuthMiddleware, getVenueRevenue)
 router.get('/coupons', venueAuthMiddleware, getVenueCoupons)
+// Salonun KENDİ yorumları — public uçtan farkı: salon kendi ÖZEL yanıtını da görür.
+router.get('/reviews', venueAuthMiddleware, getMyVenueReviews)
 router.post('/coupons', venueAuthMiddleware, venueApprovedMiddleware, createCoupon)
 router.delete('/coupons/:id', venueAuthMiddleware, deleteCoupon)
 

@@ -175,6 +175,10 @@ async function cleanup() {
   // Coğrafya (cityId) testi kalıntısı (990421)
   await prisma.user.deleteMany({ where: { id: 990421 } }).catch(() => {})
   await prisma.neighborhood.deleteMany({ where: { id: 990421 } }).catch(() => {})
+  // Özel yanıt testi kalıntısı (990431)
+  await prisma.review.deleteMany({ where: { venueId: 990431 } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: 990431 } }).catch(() => {})
+  await prisma.venue.deleteMany({ where: { id: 990431 } }).catch(() => {})
   // Gelir raporu TZ testi kalıntısı (99041x)
   await prisma.booking.deleteMany({ where: { session: { classId: 990411 } } }).catch(() => {})
   await prisma.class_Session.deleteMany({ where: { id: 990411 } }).catch(() => {})
@@ -2929,6 +2933,36 @@ async function run() {
     const u = await prisma.user.findUnique({ where: { id: UID }, select: { cityId: true, neighborhoodId: true } })
     if (u?.neighborhoodId !== NB) throw new Error('mahalle atanmadı')
     if (u?.cityId !== other.id) throw new Error(`cityId=${u?.cityId}, beklenen ${other.id} (${other.name}) — İstanbul'a sabitlenmiş olabilir`)
+  })
+
+  // Salon ÖZEL yanıtı: sahip ucu (/api/venue/reviews) GÖRÜR, public uç (/api/reviews/venue/:id) GİZLER.
+  // Önceden salon paneli public uçtan okuduğu için salon KENDİ özel yanıtını göremiyordu (yazınca
+  // kayboluyordu) → özellik backend'de hazır olmasına rağmen kullanılamıyordu.
+  await check('Yorum: özel yanıt sahip ucunda GÖRÜNÜR, public uçta GİZLİ', async () => {
+    const RV = 990431, RU = 990431, RC = 990431, RS = 990431
+    await prisma.review.deleteMany({ where: { venueId: RV } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { userId: RU } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: RS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: RC } }).catch(() => {})
+    await prisma.venue.upsert({ where: { id: RV }, update: { isApproved: true, isActive: true }, create: { id: RV, name: 'RevVis', email: `rv${RV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.user.upsert({ where: { id: RU }, update: { tierSportCounts: {} }, create: { id: RU, username: `rv_${RU}`, email: `rv_${RU}@x.com`, passwordHash: 'x', fullName: 'RV', tierSportCounts: {} } })
+    const review = await prisma.review.create({ data: { venueId: RV, reviewerUserId: RU, targetType: 'venue', rating: 4, comment: 'test yorum' } })
+    const vTok = jwt.sign({ venueId: RV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    // ÖZEL yanıt yaz
+    const rep = await http(`/api/reviews/${review.id}/reply`, { method: 'PUT', token: vTok, body: { reply: 'gizli yanit', visibility: 'private' } })
+    if (rep.status !== 200) throw new Error(`yanıt yazılamadı: ${rep.status} ${rep.text.slice(0, 90)}`)
+    const saved = await prisma.review.findUnique({ where: { id: review.id }, select: { replyVisibility: true, venueReply: true } })
+    if (saved?.replyVisibility !== 'private') throw new Error(`replyVisibility='${saved?.replyVisibility}' — 'private' bekleniyor (istemci visibility göndermiyor olabilir)`)
+    // SAHİP ucu görmeli
+    const own = await expectOk('/api/venue/reviews', { token: vTok })
+    const mine = (own.json?.reviews || []).find((x: any) => x.id === review.id)
+    if (!mine) throw new Error('sahip ucunda yorum yok')
+    if (mine.venueReply !== 'gizli yanit') throw new Error('SALON KENDİ ÖZEL YANITINI GÖREMİYOR (sahip ucu public gibi gizliyor)')
+    // PUBLIC uç gizlemeli (giriş yapmamış ziyaretçi)
+    const pub = await expectOk(`/api/reviews/venue/${RV}`)
+    const theirs = (pub.json?.reviews || []).find((x: any) => x.id === review.id)
+    if (!theirs) throw new Error('public uçta yorum yok')
+    if (theirs.venueReply) throw new Error(`ÖZEL yanıt public uçta SIZDI: "${theirs.venueReply}"`)
   })
 
   // ===== BİLDİRİM ÇOKLU-DİL (#67) REGRESYONLARI =====
