@@ -8,6 +8,7 @@ import { sanitizeReview, hidePrivateReply } from '../utils/reviews'
 import { seasonLabelsFromKey } from '../utils/season'
 import { stripVenueSensitive, stripInstructorSensitive } from '../utils/sanitize'
 import { trInstant, trAddDays } from '../utils/trFormat'
+import { getOccupancyMap, getOccupancy, spotsLeftOf } from '../utils/occupancy'
 
 // GET /api/public/sessions
 export const getSessions = async (req: Request, res: Response) => {
@@ -101,6 +102,10 @@ export const getSessions = async (req: Request, res: Response) => {
       prisma.class_Session.count({ where }),
     ])
 
+    // KALAN YER sunucuda hesaplanır: Class_Session.capacity rezervasyonla azalmaz.
+    // Tek sorguyla tüm sayfanın doluluğu (N+1 yok).
+    const occMap = await getOccupancyMap(sessions.map((s) => s.id))
+
     let formattedSessions = sessions.map((s) => ({
       id: s.id,
       title: s.class.title,
@@ -115,8 +120,14 @@ export const getSessions = async (req: Request, res: Response) => {
       startsAt: s.startsAt.toISOString(),
       durationMinutes: s.class.durationMinutes,
       basePrice: s.class.basePrice,
-      availableSpots: s.availableSpots,
-      capacity: s.class.capacity,
+      spotsLeft: spotsLeftOf(s.capacity, occMap.get(s.id) || 0),
+      // DEPRECATED — eskiden TOPLAM KAPASİTE dönüyordu, üç istemci de "kalan yer"
+      // sanıp dolu dersi "10 yer kaldı" diye gösteriyordu. Artık adı neyse o:
+      // kalan yer. İstemciler spotsLeft'e geçtikten sonra kaldırılacak.
+      availableSpots: spotsLeftOf(s.capacity, occMap.get(s.id) || 0),
+      // Seansın kendi kapasitesi (eskiden ders varsayılanı dönüyordu; seans
+      // kapasitesi düzenlenebildiği için ikisi ayrışabiliyordu).
+      capacity: s.capacity,
       neighborhood: s.class.venue.neighborhood?.name ?? null,
       neighborhoodId: s.class.venue.neighborhoodId ?? null,
       neighborhoodLat: (s.class.venue.neighborhood as any)?.latitude ?? null,
@@ -208,6 +219,8 @@ export const getForYouSessions = async (req: Request, res: Response) => {
       take: 40,
     })
 
+    const occMap = await getOccupancyMap(sessions.map((s) => s.id))
+
     // İlgi skoruna göre sırala: hem spor hem mahalle eşleşeni öne al
     const scored = sessions.map(s => {
       const cat = s.class.sportCategory?.name ?? s.class.category ?? ''
@@ -229,8 +242,9 @@ export const getForYouSessions = async (req: Request, res: Response) => {
           startsAt: s.startsAt.toISOString(),
           durationMinutes: s.class.durationMinutes,
           basePrice: s.class.basePrice,
-          availableSpots: s.availableSpots,
-          capacity: s.class.capacity,
+          spotsLeft: spotsLeftOf(s.capacity, occMap.get(s.id) || 0),
+          availableSpots: spotsLeftOf(s.capacity, occMap.get(s.id) || 0), // DEPRECATED — bkz. getSessions
+          capacity: s.capacity,
           neighborhood: s.class.venue.neighborhood?.name ?? null,
           neighborhoodId: s.class.venue.neighborhoodId ?? null,
           rating: s.class.venue.avgRating,
@@ -273,6 +287,8 @@ export const getSessionById = async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Seans bulunamadı.' })
     }
 
+    const spotsLeft = spotsLeftOf(s.capacity, await getOccupancy(s.id))
+
     return res.json({
       session: {
         id: s.id,
@@ -293,8 +309,9 @@ export const getSessionById = async (req: Request, res: Response) => {
         endsAt: s.endsAt.toISOString(),
         durationMinutes: s.class.durationMinutes,
         basePrice: s.class.basePrice,
-        availableSpots: s.availableSpots,
-        capacity: s.class.capacity,
+        spotsLeft,
+        availableSpots: spotsLeft, // DEPRECATED — bkz. getSessions
+        capacity: s.capacity,
         status: s.status,
         neighborhood: s.class.venue.neighborhood?.name ?? null,
         rating: s.class.venue.avgRating,
@@ -370,10 +387,24 @@ export const getVenueById = async (req: Request, res: Response) => {
     // Her nested eğitmeni ayrıca temizle.
     const safe: any = stripVenueSensitive(venue)
     if (Array.isArray(safe.instructors)) safe.instructors = safe.instructors.map(stripInstructorSensitive)
+
+    // Seanslar bu uçta HAM dönüyor; kalan yeri burada da sunucu hesaplamalı
+    // (istemci capacity'yi kalan yer sanmasın).
+    const vOcc = await getOccupancyMap(
+      (venue.classes || []).flatMap((c: any) => (c.sessions || []).map((s: any) => s.id))
+    )
     if (Array.isArray(safe.classes)) {
-      safe.classes = safe.classes.map((c: any) =>
-        c && c.instructor ? { ...c, instructor: stripInstructorSensitive(c.instructor) } : c
-      )
+      safe.classes = safe.classes.map((c: any) => {
+        const withInstructor = c && c.instructor ? { ...c, instructor: stripInstructorSensitive(c.instructor) } : c
+        if (!withInstructor || !Array.isArray(withInstructor.sessions)) return withInstructor
+        return {
+          ...withInstructor,
+          sessions: withInstructor.sessions.map((s: any) => {
+            const left = spotsLeftOf(s.capacity, vOcc.get(s.id) || 0)
+            return { ...s, spotsLeft: left, availableSpots: left } // availableSpots DEPRECATED
+          }),
+        }
+      })
     }
     return res.json({ venue: safe })
   } catch (err) {
@@ -727,7 +758,7 @@ export const getInstructorById = async (req: Request, res: Response) => {
               where: { startsAt: { gte: new Date() }, status: 'open' },
               orderBy: { startsAt: 'asc' },
               take: 1,
-              select: { id: true, startsAt: true, availableSpots: true }
+              select: { id: true, startsAt: true, capacity: true }
             }
           }
         },
@@ -746,11 +777,23 @@ export const getInstructorById = async (req: Request, res: Response) => {
     const viewerId = (req as any).userId as number | undefined
     const safeReviews = instructor.reviews.map(r => hidePrivateReply(r, sanitizeReview(r), viewerId))
 
+    // "Sıradaki seans"ın KALAN YERİ — burada da kapasite kalan yer sanılıyordu.
+    const nextSessions = instructor.classes.flatMap(c => c.sessions)
+    const occMap = await getOccupancyMap(nextSessions.map(s => s.id))
+    const classesWithSpots = instructor.classes.map(c => ({
+      ...c,
+      sessions: c.sessions.map(s => {
+        const left = spotsLeftOf(s.capacity, occMap.get(s.id) || 0)
+        return { ...s, spotsLeft: left, availableSpots: left } // availableSpots DEPRECATED
+      }),
+    }))
+
     return res.json({
       instructor: {
         // stripInstructorSensitive: passwordHash/email/phone/userId/inviteStatus public'e SIZMASIN
         // (bu uç optionalAuth = kimlik-doğrulamasız; id enumerasyonuyla tüm eğitmen hash'leri toplanabilirdi).
         ...stripInstructorSensitive(instructor),
+        classes: classesWithSpots,
         reviews: safeReviews,
         // avgRating/totalReviews: SAKLI değerler (createReview'da tüm yorumlardan tutulur).
         // Buradaki reviews `take:20` ile sınırlı olduğundan slice'tan hesaplamak SAPARDI.

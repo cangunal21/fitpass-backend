@@ -52,8 +52,8 @@ async function http(path: string, opts: { token?: string; method?: string; body?
 async function makeSession(id: number, spots: number) {
   await prisma.booking.deleteMany({ where: { sessionId: id } }).catch(() => {})
   await prisma.class_Session.upsert({
-    where: { id }, update: { availableSpots: spots, status: 'open' },
-    create: { id, classId: C, startsAt: new Date(Date.now() + 3 * 86400000), endsAt: new Date(Date.now() + 3 * 86400000 + 3600000), availableSpots: spots, status: 'open' },
+    where: { id }, update: { capacity: spots, status: 'open' },
+    create: { id, classId: C, startsAt: new Date(Date.now() + 3 * 86400000), endsAt: new Date(Date.now() + 3 * 86400000 + 3600000), capacity: spots, status: 'open' },
   })
 }
 

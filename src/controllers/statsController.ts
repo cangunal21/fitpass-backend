@@ -36,7 +36,7 @@ export const getVenueStats = async (req: Request, res: Response) => {
     const totalBookings = sessions.reduce((acc, s) => acc + s.bookings.length, 0)
     const totalRevenue = sessions.reduce((acc, s) => acc + s.bookings.reduce((a, b) => a + b.finalAmount, 0), 0)
     const avgFillRate = sessions.length > 0
-      ? sessions.reduce((acc, s) => acc + (s.availableSpots > 0 ? occ(s) / s.availableSpots : 0), 0) / sessions.length
+      ? sessions.reduce((acc, s) => acc + (s.capacity > 0 ? occ(s) / s.capacity : 0), 0) / sessions.length
       : 0
 
     // Günlere göre doluluk (0=Paz, 1=Pzt...)
@@ -50,7 +50,7 @@ export const getVenueStats = async (req: Request, res: Response) => {
       // olarak görüyor, program kararını yanlış güne göre veriyordu.
       const day = trWeekday(s.startsAt)
       byDay[day].count++
-      byDay[day].total += s.availableSpots
+      byDay[day].total += s.capacity
       byDay[day].booked += occ(s)
     })
 
@@ -62,15 +62,15 @@ export const getVenueStats = async (req: Request, res: Response) => {
 
     // En popüler seanslar
     const topSessions = [...sessions]
-      .filter(s => s.availableSpots > 0)
-      .sort((a, b) => (occ(b) / b.availableSpots) - (occ(a) / a.availableSpots))
+      .filter(s => s.capacity > 0)
+      .sort((a, b) => (occ(b) / b.capacity) - (occ(a) / a.capacity))
       .slice(0, 5)
       .map(s => ({
         title: s.class.title,
         date: s.startsAt,
-        fillRate: Math.round((occ(s) / s.availableSpots) * 100),
+        fillRate: Math.round((occ(s) / s.capacity) * 100),
         booked: occ(s),
-        capacity: s.availableSpots,
+        capacity: s.capacity,
       }))
 
     // Yaklaşan seanslar (önümüzdeki 7 gün)
@@ -80,8 +80,8 @@ export const getVenueStats = async (req: Request, res: Response) => {
         title: s.class.title,
         date: s.startsAt,
         booked: occ(s),
-        capacity: s.availableSpots,
-        fillRate: s.availableSpots > 0 ? Math.round((occ(s) / s.availableSpots) * 100) : 0,
+        capacity: s.capacity,
+        fillRate: s.capacity > 0 ? Math.round((occ(s) / s.capacity) * 100) : 0,
       }))
 
     return res.json({

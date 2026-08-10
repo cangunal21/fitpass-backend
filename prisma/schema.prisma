@@ -384,7 +384,11 @@ model Class_Session {
   classId         Int
   startsAt        DateTime
   endsAt          DateTime
-  availableSpots  Int
+  // Seansın TOPLAM kapasitesi — rezervasyonla AZALMAZ. Kalan yer her zaman
+  // utils/occupancy.ts ile hesaplanır. DB kolon adı geçmişten "availableSpots"
+  // kaldığı için @map ile eşleniyor: isim yalan söylüyordu ("kalan yer" sanılıp
+  // üç istemcide de öyle gösteriliyordu), kolonu taşımadan alan adı düzeltildi.
+  capacity        Int      @map("availableSpots")
   status          String   @default("open")
   cancelledReason String?
   createdAt       DateTime @default(now())

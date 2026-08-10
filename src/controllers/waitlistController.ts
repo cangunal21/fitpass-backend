@@ -39,7 +39,7 @@ export const joinWaitlist = async (req: Request, res: Response) => {
       _sum: { groupSize: true },
     })
     const occupied = occupancy._sum.groupSize || 0
-    if (session.availableSpots != null && occupied < session.availableSpots) {
+    if (session.capacity != null && occupied < session.capacity) {
       return res.status(400).json({ error: 'Bu seansta yer var, doğrudan rezervasyon yapabilirsiniz.' })
     }
 

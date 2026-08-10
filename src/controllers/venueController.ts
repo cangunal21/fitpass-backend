@@ -275,7 +275,7 @@ export const getVenueMe = async (req: Request, res: Response) => {
             id: true, title: true, category: true, basePrice: true, isActive: true,
             sessions: {
               select: {
-                id: true, startsAt: true, endsAt: true, availableSpots: true,
+                id: true, startsAt: true, endsAt: true, capacity: true,
                 _count: { select: { bookings: true } },
                 bookings: {
                   where: { status: { in: ['confirmed', 'pending'] } },
@@ -506,7 +506,7 @@ export const createSession = async (req: Request, res: Response) => {
           classId,
           startsAt,
           endsAt,
-          availableSpots: cap,
+          capacity: cap,
         }
       })
     } catch (e: any) {
@@ -583,7 +583,7 @@ export const createRecurringSessions = async (req: Request, res: Response) => {
 
         try {
           const session = await prisma.class_Session.create({
-            data: { classId, startsAt: date, endsAt, availableSpots: parseInt(capacity) }
+            data: { classId, startsAt: date, endsAt, capacity: parseInt(capacity) }
           })
           created.push(session)
         } catch (e: any) {
@@ -820,6 +820,13 @@ export const updateSession = async (req: Request, res: Response) => {
     const sessionId = parseInt(req.params.sessionId as string)
     const { date, time, capacity } = req.body
 
+    // Kapasite POZİTİF tamsayı olmalı. Bu kapı createSession'da (satır ~486) VARDI ama
+    // güncelleme yolunda YOKTU: boş/"abc" → parseInt NaN → Prisma 500, -5 → ölü seans.
+    const cap = parseInt(capacity)
+    if (!date || !time || !(cap > 0)) {
+      return res.status(400).json({ error: 'Tarih, saat ve pozitif kapasite zorunludur.' })
+    }
+
     const session = await prisma.class_Session.findUnique({
       where: { id: sessionId },
       include: { class: true }
@@ -835,10 +842,43 @@ export const updateSession = async (req: Request, res: Response) => {
     const endsAt = new Date(startsAt.getTime() + (session.class.durationMinutes || session.class.duration || 60) * 60000)
 
     const eskiStartsAt = session.startsAt
-    const updated = await prisma.class_Session.update({
-      where: { id: sessionId },
-      data: { startsAt, endsAt, availableSpots: parseInt(capacity) }
-    })
+
+    // KAPASİTE MEVCUT DOLULUĞUN ALTINA ÇEKİLEMEZ.
+    // Eskiden hiçbir kontrol yoktu: 20 kişilik, 15'i satılmış seansın kapasitesi 5
+    // yazılabiliyor, 15 onaylı rezervasyon aynen kalıyordu → seans 3 kat aşırı satılmış
+    // hâlde, hiçbir uyarı çıkmadan devam ediyordu.
+    // Okuma+yazma tek transaction'da ve seans satırı FOR UPDATE ile kilitli: aksi hâlde
+    // kontrol ile update arasında yeni rezervasyon girip sınırı yine aşabilirdi
+    // (createBooking da aynı satırı kilitler; kilit sırası Class_Session → Booking).
+    const CAP_ERR = 'CAPACITY_BELOW_OCCUPANCY'
+    let updated
+    try {
+      updated = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT id FROM "Class_Session" WHERE id = ${sessionId} FOR UPDATE`
+        const occ = await tx.booking.aggregate({
+          where: { sessionId, status: { in: ['confirmed', 'pending'] } },
+          _sum: { groupSize: true },
+        })
+        const occupied = occ._sum.groupSize || 0
+        if (cap < occupied) throw Object.assign(new Error(CAP_ERR), { occupied })
+        return tx.class_Session.update({
+          where: { id: sessionId },
+          data: { startsAt, endsAt, capacity: cap },
+        })
+      })
+    } catch (e: any) {
+      if (e?.message === CAP_ERR) {
+        return res.status(400).json({
+          error: `Bu seansta ${e.occupied} kişilik rezervasyon var; kapasite ${e.occupied} kişinin altına düşürülemez.`,
+        })
+      }
+      // (classId, startsAt) DB'de tekil — aynı saate taşıma "Sunucu hatası" değil,
+      // anlaşılır bir çakışma mesajı almalı (createSession ile aynı davranış).
+      if (e?.code === 'P2002') {
+        return res.status(409).json({ error: 'Bu ders için bu saatte zaten bir seans var.' })
+      }
+      throw e
+    }
 
     // YENİDEN-PLANLAMA BİLDİRİMİ: seans yeni saate taşındı; rezervasyonlu kullanıcılar HABERSİZ
     // kalıp eski saatte boş stüdyoya gelmesin. Eskiden hiçbir kanal yoktu. Saat gerçekten değiştiyse

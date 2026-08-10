@@ -97,8 +97,8 @@ export const createBooking = async (req: Request, res: Response) => {
         })
         const occupied = occupancy._sum.groupSize || 0
 
-        if (session.availableSpots != null && occupied + groupSize > session.availableSpots) {
-          const remaining = session.availableSpots - occupied
+        if (session.capacity != null && occupied + groupSize > session.capacity) {
+          const remaining = session.capacity - occupied
           throw new BookingError(remaining <= 0 ? 'Bu ders seansı dolu.' : `Sadece ${remaining} kontenjan kaldı.`, 400)
         }
 
@@ -227,8 +227,8 @@ export const createBooking = async (req: Request, res: Response) => {
           booking.session!.class.title,
           date,
           time,
-          booking.session!.availableSpots ?? 0,
-          (booking.session!.availableSpots ?? 0) - occupiedSpots
+          booking.session!.capacity ?? 0,
+          (booking.session!.capacity ?? 0) - occupiedSpots
         )
       }
     } catch (emailErr) {
@@ -693,7 +693,7 @@ export const getTransferOptions = async (req: Request, res: Response) => {
         _sum: { groupSize: true },
       })
       const occupied = occ._sum.groupSize || 0
-      const capacity = s.availableSpots || 0
+      const capacity = s.capacity || 0
       const available = capacity - occupied
       const alreadyIn = await prisma.booking.findFirst({
         where: { sessionId: s.id, userId, status: { in: ['confirmed', 'pending'] } },
@@ -845,7 +845,7 @@ export const transferBooking = async (req: Request, res: Response) => {
           _sum: { groupSize: true },
         })
         const occupied = occ._sum.groupSize || 0
-        const capacity = target.availableSpots || 0
+        const capacity = target.capacity || 0
         const available = capacity - occupied
         if (capacity <= 0 || available < Math.ceil(capacity * 0.5)) {
           throw new BookingError('Hedef dersin en az yarısı dolu, transfer yapılamıyor.', 400)

@@ -62,7 +62,7 @@ async function seed() {
   const catName = cat?.name || 'Yoga'
   await prisma.venue.upsert({ where: { id: V }, update: {}, create: { id: V, name: 'Smoke Venue', email: `smoke${V}@x.com`, passwordHash: 'x', address: 'Adres', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
   await prisma.class.upsert({ where: { id: C }, update: {}, create: { id: C, venueId: V, title: 'Smoke Class', category: catName, sportCategoryId: cat?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
-  await prisma.class_Session.upsert({ where: { id: S }, update: {}, create: { id: S, classId: C, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), availableSpots: 20, status: 'open' } })
+  await prisma.class_Session.upsert({ where: { id: S }, update: {}, create: { id: S, classId: C, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), capacity: 20, status: 'open' } })
   await prisma.user.upsert({ where: { id: U }, update: { preferredSports: [catName], preferredNeighborhoods: [V] }, create: { id: U, username: `smoke_${U}`, email: `smoke_${U}@x.com`, passwordHash: 'x', fullName: 'Smoke User', tierSportCounts: {}, preferredSports: [catName], preferredNeighborhoods: [V] } })
   token = jwt.sign({ userId: U, email: `smoke_${U}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
   return catName
@@ -389,7 +389,7 @@ async function run() {
   await check('Check-in: salon kodu ile check-in + gelecek seans reddi (#5)', async () => {
     const venueToken = jwt.sign({ venueId: V, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
     // Ders SAATİNDE (pencere içi: başlangıç−20dk .. bitiş+40dk) seans → check-in BAŞARILI
-    await prisma.class_Session.upsert({ where: { id: 990002 }, update: { classId: C, startsAt: new Date(Date.now() - 20 * 60000), endsAt: new Date(Date.now() + 40 * 60000), status: 'open', availableSpots: 20 }, create: { id: 990002, classId: C, startsAt: new Date(Date.now() - 20 * 60000), endsAt: new Date(Date.now() + 40 * 60000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: 990002 }, update: { classId: C, startsAt: new Date(Date.now() - 20 * 60000), endsAt: new Date(Date.now() + 40 * 60000), status: 'open', capacity: 20 }, create: { id: 990002, classId: C, startsAt: new Date(Date.now() - 20 * 60000), endsAt: new Date(Date.now() + 40 * 60000), capacity: 20, status: 'open' } })
     const code = `CIN${Date.now() % 100000}`
     await prisma.booking.create({ data: { userId: U, sessionId: 990002, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `CIN-${Date.now()}`, checkInCode: code, checkedIn: false } })
     const r = await http('/api/bookings/checkin', { method: 'POST', token: venueToken, body: { code } })
@@ -731,7 +731,7 @@ async function run() {
     await prisma.instructor.upsert({ where: { id: GI }, update: { venueId: GV, isActive: true, inviteStatus: 'active', ...INSTR_SECRET }, create: { id: GI, venueId: GV, fullName: 'Gizli Hoca', specialty: 'Yoga', isActive: true, inviteStatus: 'active', ...INSTR_SECRET } })
     await prisma.instructor.upsert({ where: { id: GI2 }, update: { venueId: GV2, isActive: true }, create: { id: GI2, venueId: GV2, fullName: 'Yabanci Hoca', isActive: true } })
     await prisma.class.upsert({ where: { id: GC }, update: { venueId: GV, instructorId: GI, isActive: true }, create: { id: GC, venueId: GV, title: 'GClass', category: anyCat.name, sportCategoryId: anyCat.id, basePrice: 100, durationMinutes: 60, capacity: 20, instructorId: GI, isActive: true } })
-    await prisma.class_Session.upsert({ where: { id: GS }, update: { status: 'open', availableSpots: 20, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000) }, create: { id: GS, classId: GC, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: GS }, update: { status: 'open', capacity: 20, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000) }, create: { id: GS, classId: GC, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), capacity: 20, status: 'open' } })
     await prisma.user.upsert({ where: { id: GU }, update: { activityPrivacy: 'public', banned: false }, create: { id: GU, username: `greg_${GU}`, email, passwordHash: 'x', fullName: 'Greg User', tierSportCounts: {}, totalLessonsCompleted: 7, recordStreak: 4 } })
     const gvTok = jwt.sign({ venueId: GV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
     const guTok = jwt.sign({ userId: GU, email }, JWT_SECRET, { expiresIn: '1h' })
@@ -857,8 +857,8 @@ async function run() {
     await prisma.class.upsert({ where: { id: RC }, update: {}, create: { id: RC, venueId: RV, title: 'RevDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     await prisma.user.upsert({ where: { id: RU }, update: {}, create: { id: RU, username: `rev_${RU}`, email: `rev_${RU}@x.com`, passwordHash: 'x', fullName: 'Rev', tierSportCounts: {} } })
     const past = (k: number) => new Date(Date.now() - k * 86400000)
-    await prisma.class_Session.upsert({ where: { id: RS1 }, update: {}, create: { id: RS1, classId: RC, startsAt: past(2), endsAt: past(2), availableSpots: 20, status: 'open' } })
-    await prisma.class_Session.upsert({ where: { id: RS2 }, update: {}, create: { id: RS2, classId: RC, startsAt: past(1), endsAt: past(1), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: RS1 }, update: {}, create: { id: RS1, classId: RC, startsAt: past(2), endsAt: past(2), capacity: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: RS2 }, update: {}, create: { id: RS2, classId: RC, startsAt: past(1), endsAt: past(1), capacity: 20, status: 'open' } })
     const bk1 = await prisma.booking.create({ data: { userId: RU, sessionId: RS1, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `RV1-${Date.now()}` } })
     const bk2 = await prisma.booking.create({ data: { userId: RU, sessionId: RS2, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `RV2-${Date.now()}` } })
     const rvw1 = await prisma.review.create({ data: { bookingId: bk1.id, reviewerUserId: RU, targetType: 'venue', venueId: RV, rating: 2 } })
@@ -892,7 +892,7 @@ async function run() {
     await prisma.venue.upsert({ where: { id: IV }, update: { isApproved: true, isActive: true, avgRating: 0, totalReviews: 0 }, create: { id: IV, name: 'RateVenue', email: `rt${IV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.instructor.upsert({ where: { id: II }, update: { avgRating: 0, totalReviews: 0, isActive: true }, create: { id: II, venueId: IV, fullName: 'Rate Hoca', isActive: true } })
     await prisma.class.upsert({ where: { id: IC }, update: { instructorId: II }, create: { id: IC, venueId: IV, instructorId: II, title: 'RateDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
-    await prisma.class_Session.upsert({ where: { id: ISS }, update: { startsAt: past3h, endsAt: past3h }, create: { id: ISS, classId: IC, startsAt: past3h, endsAt: past3h, availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: ISS }, update: { startsAt: past3h, endsAt: past3h }, create: { id: ISS, classId: IC, startsAt: past3h, endsAt: past3h, capacity: 20, status: 'open' } })
     await prisma.user.upsert({ where: { id: IU }, update: {}, create: { id: IU, username: `rate_${IU}`, email: `rate_${IU}@x.com`, passwordHash: 'x', fullName: 'Rate User', tierSportCounts: {} } })
     // check-in'li booking (derse GİTMİŞ)
     const bkC = await prisma.booking.create({ data: { userId: IU, sessionId: ISS, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `RT-${Date.now()}`, checkedIn: true, checkedInAt: new Date() } })
@@ -936,7 +936,7 @@ async function run() {
     const past4h = new Date(Date.now() - 4 * 3600000)
     await prisma.venue.upsert({ where: { id: IV }, update: { isApproved: true, isActive: true }, create: { id: IV, name: 'NoCheckVenue', email: `nc${IV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.class.upsert({ where: { id: IC }, update: {}, create: { id: IC, venueId: IV, title: 'NoCheckDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
-    await prisma.class_Session.upsert({ where: { id: ISS }, update: { startsAt: past3h, endsAt: past3h }, create: { id: ISS, classId: IC, startsAt: past3h, endsAt: past3h, availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: ISS }, update: { startsAt: past3h, endsAt: past3h }, create: { id: ISS, classId: IC, startsAt: past3h, endsAt: past3h, capacity: 20, status: 'open' } })
     await prisma.user.upsert({ where: { id: IU }, update: {}, create: { id: IU, username: `nc_${IU}`, email: `nc_${IU}@x.com`, passwordHash: 'x', fullName: 'NoCheck', tierSportCounts: {} } })
     const bkN = await prisma.booking.create({ data: { userId: IU, sessionId: ISS, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `NC-${Date.now()}`, checkedIn: false } })
     const tokN = jwt.sign({ userId: IU }, JWT_SECRET, { expiresIn: '1h' })
@@ -961,8 +961,8 @@ async function run() {
     await prisma.venue.upsert({ where: { id: IV }, update: { isApproved: true, isActive: true }, create: { id: IV, name: 'PendVenue', email: `pv${IV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.instructor.upsert({ where: { id: II }, update: { isActive: true }, create: { id: II, venueId: IV, fullName: 'Pend Hoca', isActive: true } })
     await prisma.class.upsert({ where: { id: IC }, update: { instructorId: II }, create: { id: IC, venueId: IV, instructorId: II, title: 'PendDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
-    await prisma.class_Session.upsert({ where: { id: ISS }, update: { startsAt: past3h, endsAt: past3h }, create: { id: ISS, classId: IC, startsAt: past3h, endsAt: past3h, availableSpots: 20, status: 'open' } })
-    await prisma.class_Session.upsert({ where: { id: ISS2 }, update: { startsAt: past4h, endsAt: past4h }, create: { id: ISS2, classId: IC, startsAt: past4h, endsAt: past4h, availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: ISS }, update: { startsAt: past3h, endsAt: past3h }, create: { id: ISS, classId: IC, startsAt: past3h, endsAt: past3h, capacity: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: ISS2 }, update: { startsAt: past4h, endsAt: past4h }, create: { id: ISS2, classId: IC, startsAt: past4h, endsAt: past4h, capacity: 20, status: 'open' } })
     await prisma.user.upsert({ where: { id: IU }, update: {}, create: { id: IU, username: `pend_${IU}`, email: `pend_${IU}@x.com`, passwordHash: 'x', fullName: 'Pend User', tierSportCounts: {} } })
     const bkGo = await prisma.booking.create({ data: { userId: IU, sessionId: ISS, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `PG-${Date.now()}`, checkedIn: true, checkedInAt: new Date(), ratingPromptSent: false } })
     // katılınmayan booking (aynı kullanıcı, farklı seans) — pending listesine GİRMEMELİ
@@ -1125,7 +1125,7 @@ async function run() {
     if (!(gc.json?.classes || []).some((c: any) => c.id === classId)) throw new Error('kendi dersi /classes listesinde yok')
 
     // 5) CHECK-IN — kendi dersinin öğrencisini QR koduyla onayla (ders SAATİNDE — #5 penceresi) + finans yok + idempotent
-    const nowSess = await prisma.class_Session.create({ data: { classId, startsAt: new Date(Date.now() - 20 * 60000), endsAt: new Date(Date.now() + 40 * 60000), availableSpots: 12, status: 'open' } })
+    const nowSess = await prisma.class_Session.create({ data: { classId, startsAt: new Date(Date.now() - 20 * 60000), endsAt: new Date(Date.now() + 40 * 60000), capacity: 12, status: 'open' } })
     const code = `PRT${Date.now() % 100000}`
     await prisma.booking.create({ data: { userId: IU, sessionId: nowSess.id, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `PRTB-${Date.now()}`, checkInCode: code, checkedIn: false } })
     const ci = await http('/api/instructor/checkin', { method: 'POST', token: iTok, body: { code } })
@@ -1142,7 +1142,7 @@ async function run() {
     // 6) SAHİPLİK — başka hocanın (instructorId=null) dersindeki öğrenciyi check-in → 403
     const otherClass = await prisma.class.create({ data: { venueId: IV, title: 'Başka Ders', category: catName, basePrice: 100, durationMinutes: 60, capacity: 10, isActive: true, instructorId: null } })
     const past = new Date(Date.now() - 86400000)
-    const otherSess = await prisma.class_Session.create({ data: { classId: otherClass.id, startsAt: past, endsAt: past, availableSpots: 10, status: 'open' } })
+    const otherSess = await prisma.class_Session.create({ data: { classId: otherClass.id, startsAt: past, endsAt: past, capacity: 10, status: 'open' } })
     const code2 = `OTH${Date.now() % 100000}`
     await prisma.booking.create({ data: { userId: IU, sessionId: otherSess.id, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `OTHB-${Date.now()}`, checkInCode: code2, checkedIn: false } })
     const ciOther = await http('/api/instructor/checkin', { method: 'POST', token: iTok, body: { code: code2 } })
@@ -1207,7 +1207,7 @@ async function run() {
     for (let i = 0; i < 5; i++) {
       const id = 990081 + i; sessIds.push(id)
       const st = new Date(Date.now() + (i + 1) * 86400000)
-      await prisma.class_Session.upsert({ where: { id }, update: { status: 'open', startsAt: st }, create: { id, classId: PC, startsAt: st, endsAt: new Date(st.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+      await prisma.class_Session.upsert({ where: { id }, update: { status: 'open', startsAt: st }, create: { id, classId: PC, startsAt: st, endsAt: new Date(st.getTime() + 3600000), capacity: 20, status: 'open' } })
     }
     const p1 = await expectOk(`/api/public/sessions?venueId=${PV}&limit=2&page=1`)
     if (p1.json.total !== 5) throw new Error(`total ${p1.json.total} (5 bekleniyor)`)
@@ -1267,7 +1267,7 @@ async function run() {
     await prisma.neighborhood.upsert({ where: { id: N }, update: {}, create: { id: N, name: 'StreakMah', latitude: 41, longitude: 29, cityId: 1 } })
     await prisma.user.upsert({ where: { id: X }, update: { neighborhoodId: N, activityPrivacy: 'public', banned: false }, create: { id: X, username: `strk_${X}`, email: `strk_${X}@x.com`, passwordHash: 'x', fullName: 'Streak User', tierSportCounts: {}, neighborhoodId: N, activityPrivacy: 'public' } })
     const noon = (k: number) => { const d = new Date(); d.setUTCHours(9, 0, 0, 0); return new Date(d.getTime() - k * 86400000) } // 09:00 UTC = 12:00 İstanbul
-    const mkSess = async (id: number, k: number) => prisma.class_Session.upsert({ where: { id }, update: { startsAt: noon(k), endsAt: new Date(noon(k).getTime() + 3600000), status: 'open', availableSpots: 20 }, create: { id, classId: C, startsAt: noon(k), endsAt: new Date(noon(k).getTime() + 3600000), status: 'open', availableSpots: 20 } })
+    const mkSess = async (id: number, k: number) => prisma.class_Session.upsert({ where: { id }, update: { startsAt: noon(k), endsAt: new Date(noon(k).getTime() + 3600000), status: 'open', capacity: 20 }, create: { id, classId: C, startsAt: noon(k), endsAt: new Date(noon(k).getTime() + 3600000), status: 'open', capacity: 20 } })
     await mkSess(990051, 3); await mkSess(990052, 2); await mkSess(990053, 1)
     const mkBk = async (id: number, sid: number, checked: boolean) => prisma.booking.upsert({ where: { id }, update: { checkedIn: checked }, create: { id, userId: X, sessionId: sid, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `STK-${id}`, checkedIn: checked, checkedInAt: checked ? new Date() : null } })
     await mkBk(990051, 990051, false) // D-3: confirmed AMA check-in yok (no-show)
@@ -1291,8 +1291,8 @@ async function run() {
     await prisma.user.upsert({ where: { id: X }, update: { neighborhoodId: N, activityPrivacy: 'public', banned: false }, create: { id: X, username: `szn_${X}`, email: `szn_${X}@x.com`, passwordHash: 'x', fullName: 'Sezon User', tierSportCounts: {}, neighborhoodId: N, activityPrivacy: 'public' } })
     const inSeason = new Date(season.start.getTime() + 5 * 86400000)   // sezon içi
     const preSeason = new Date(season.start.getTime() - 10 * 86400000) // geçen sezon
-    await prisma.class_Session.upsert({ where: { id: 990211 }, update: { startsAt: inSeason }, create: { id: 990211, classId: C, startsAt: inSeason, endsAt: new Date(inSeason.getTime() + 3600000), status: 'open', availableSpots: 20 } })
-    await prisma.class_Session.upsert({ where: { id: 990212 }, update: { startsAt: preSeason }, create: { id: 990212, classId: C, startsAt: preSeason, endsAt: new Date(preSeason.getTime() + 3600000), status: 'open', availableSpots: 20 } })
+    await prisma.class_Session.upsert({ where: { id: 990211 }, update: { startsAt: inSeason }, create: { id: 990211, classId: C, startsAt: inSeason, endsAt: new Date(inSeason.getTime() + 3600000), status: 'open', capacity: 20 } })
+    await prisma.class_Session.upsert({ where: { id: 990212 }, update: { startsAt: preSeason }, create: { id: 990212, classId: C, startsAt: preSeason, endsAt: new Date(preSeason.getTime() + 3600000), status: 'open', capacity: 20 } })
     await prisma.booking.deleteMany({ where: { userId: X } })
     const mk = (id: number, sid: number) => prisma.booking.create({ data: { id, userId: X, sessionId: sid, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `SZN-${id}-${Date.now()}`, checkedIn: true, checkedInAt: new Date() } })
     await mk(990211, 990211) // sezon içi → sayılmalı
@@ -1315,7 +1315,7 @@ async function run() {
     await prisma.neighborhood.upsert({ where: { id: N }, update: {}, create: { id: N, name: 'LbGizliMah', latitude: 41, longitude: 29, cityId: 1 } })
     await prisma.class.upsert({ where: { id: N }, update: { sportCategoryId: scat?.id ?? null }, create: { id: N, venueId: V, title: 'LbGizliDers', category: catName, sportCategoryId: scat?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     const past = new Date(Date.now() - 86400000) // güncel sezon içi + geçmiş → liderlik sayar
-    await prisma.class_Session.upsert({ where: { id: SS }, update: { startsAt: past, classId: N }, create: { id: SS, classId: N, startsAt: past, endsAt: new Date(past.getTime() + 3600000), status: 'open', availableSpots: 20 } })
+    await prisma.class_Session.upsert({ where: { id: SS }, update: { startsAt: past, classId: N }, create: { id: SS, classId: N, startsAt: past, endsAt: new Date(past.getTime() + 3600000), status: 'open', capacity: 20 } })
     await prisma.user.upsert({ where: { id: PU }, update: { neighborhoodId: N, activityPrivacy: 'private', banned: false }, create: { id: PU, username: `lbgiz_${PU}`, email: `lbgiz_${PU}@x.com`, passwordHash: 'x', fullName: 'LbGizli', tierId: 1, tierSportCounts: {}, neighborhoodId: N, activityPrivacy: 'private' } })
     await prisma.booking.deleteMany({ where: { userId: PU } })
     await prisma.booking.create({ data: { userId: PU, sessionId: SS, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `LBG-${Date.now()}`, checkedIn: true, checkedInAt: new Date() } })
@@ -1337,7 +1337,7 @@ async function run() {
   // ---- Bekleme listesi (waitlist) UÇTAN UCA ----
   await check('Waitlist: dolu seans → sıra → iptalde bildirim → rezervasyonda listeden çık', async () => {
     const WS = 990041, UA = 990041, UB = 990042, UC = 990043
-    await prisma.class_Session.upsert({ where: { id: WS }, update: { availableSpots: 1, status: 'open' }, create: { id: WS, classId: C, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), availableSpots: 1, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: WS }, update: { capacity: 1, status: 'open' }, create: { id: WS, classId: C, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), capacity: 1, status: 'open' } })
     for (const uid of [UA, UB, UC]) {
       await prisma.user.upsert({ where: { id: uid }, update: {}, create: { id: uid, username: `wl_${uid}`, email: `wl_${uid}@x.com`, passwordHash: 'x', fullName: `WL ${uid}`, tierSportCounts: {} } })
     }
@@ -1378,7 +1378,7 @@ async function run() {
   await check('Salon dondurma: donmuş salonun seansı liste/detay/rezervasyonda kapalı', async () => {
     await prisma.venue.upsert({ where: { id: V2 }, update: { isApproved: true, isActive: true, isSuspended: false }, create: { id: V2, name: 'LC Venue', email: `lc${V2}@x.com`, passwordHash: 'x', address: 'Adres', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.class.upsert({ where: { id: C2 }, update: {}, create: { id: C2, venueId: V2, title: 'LC Class', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
-    await prisma.class_Session.upsert({ where: { id: S2 }, update: { status: 'open', availableSpots: 20 }, create: { id: S2, classId: C2, startsAt: new Date(Date.now() + 3 * 86400000), endsAt: new Date(Date.now() + 3 * 86400000 + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: S2 }, update: { status: 'open', capacity: 20 }, create: { id: S2, classId: C2, startsAt: new Date(Date.now() + 3 * 86400000), endsAt: new Date(Date.now() + 3 * 86400000 + 3600000), capacity: 20, status: 'open' } })
     await prisma.user.upsert({ where: { id: U2 }, update: {}, create: { id: U2, username: `lc_${U2}`, email: `lc_${U2}@x.com`, passwordHash: 'x', fullName: 'LC User', tierSportCounts: {} } })
     const u2tok = jwt.sign({ userId: U2, email: `lc_${U2}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
     // Pasife alınan dersin seansı listede çıkmamalı (class.isActive filtresi)
@@ -1447,8 +1447,8 @@ async function run() {
     const scat2 = await prisma.sportCategory.findFirst({})
     await prisma.class.upsert({ where: { id: 990161 }, update: {}, create: { id: 990161, venueId: 990161, title: 'NEARBYTEST Yakin', category: catName, sportCategoryId: scat2?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     await prisma.class.upsert({ where: { id: 990162 }, update: {}, create: { id: 990162, venueId: 990162, title: 'NEARBYTEST Uzak', category: catName, sportCategoryId: scat2?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
-    await prisma.class_Session.upsert({ where: { id: 990161 }, update: { startsAt: new Date(Date.now() + 5 * 86400000), status: 'open' }, create: { id: 990161, classId: 990161, startsAt: new Date(Date.now() + 5 * 86400000), endsAt: new Date(Date.now() + 5 * 86400000 + 3600000), availableSpots: 20, status: 'open' } })
-    await prisma.class_Session.upsert({ where: { id: 990162 }, update: { startsAt: new Date(Date.now() + 1 * 86400000), status: 'open' }, create: { id: 990162, classId: 990162, startsAt: new Date(Date.now() + 1 * 86400000), endsAt: new Date(Date.now() + 1 * 86400000 + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: 990161 }, update: { startsAt: new Date(Date.now() + 5 * 86400000), status: 'open' }, create: { id: 990161, classId: 990161, startsAt: new Date(Date.now() + 5 * 86400000), endsAt: new Date(Date.now() + 5 * 86400000 + 3600000), capacity: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: 990162 }, update: { startsAt: new Date(Date.now() + 1 * 86400000), status: 'open' }, create: { id: 990162, classId: 990162, startsAt: new Date(Date.now() + 1 * 86400000), endsAt: new Date(Date.now() + 1 * 86400000 + 3600000), capacity: 20, status: 'open' } })
     const r = await http(`/api/public/sessions?search=NEARBYTEST&sort=nearby&userNeighborhoodId=990161&limit=1`)
     if (r.status !== 200) throw new Error(`beklenen 200, gelen ${r.status}`)
     const first = r.json?.sessions?.[0]
@@ -1459,7 +1459,7 @@ async function run() {
   await check('For You: aynı ders çoklu seansla domine etmez (distinct classId)', async () => {
     // U catName'i tercih ediyor; C dersi (title "Smoke Class") catName kategorisinde + seed seansı var.
     // İkinci bir gelecek seans ekle → distinct olmasa 2 kez dönerdi.
-    await prisma.class_Session.upsert({ where: { id: 990171 }, update: { startsAt: new Date(Date.now() + 3 * 86400000), status: 'open' }, create: { id: 990171, classId: C, startsAt: new Date(Date.now() + 3 * 86400000), endsAt: new Date(Date.now() + 3 * 86400000 + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: 990171 }, update: { startsAt: new Date(Date.now() + 3 * 86400000), status: 'open' }, create: { id: 990171, classId: C, startsAt: new Date(Date.now() + 3 * 86400000), endsAt: new Date(Date.now() + 3 * 86400000 + 3600000), capacity: 20, status: 'open' } })
     const r = await http('/api/public/for-you', { token })
     if (r.status !== 200) throw new Error(`beklenen 200, gelen ${r.status}`)
     const ss = r.json?.sessions || []
@@ -1474,8 +1474,8 @@ async function run() {
     await prisma.venue.upsert({ where: { id: TV }, update: { isApproved: true, isActive: true }, create: { id: TV, name: 'Transfer Salon', email: `trf${TV}@x.com`, passwordHash: 'x', address: 'Adres', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.class.upsert({ where: { id: TV }, update: {}, create: { id: TV, venueId: TV, title: 'Pahalı', category: catName, sportCategoryId: scat?.id ?? null, basePrice: 200, durationMinutes: 60, capacity: 20, isActive: true } })
     await prisma.class.upsert({ where: { id: TV + 1 }, update: {}, create: { id: TV + 1, venueId: TV, title: 'Ucuz', category: catName, sportCategoryId: scat?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
-    const se = await prisma.class_Session.upsert({ where: { id: TV }, update: { startsAt: new Date(Date.now() + 2 * 86400000) }, create: { id: TV, classId: TV, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), availableSpots: 20, status: 'open' } })
-    const sc = await prisma.class_Session.upsert({ where: { id: TV + 1 }, update: { startsAt: new Date(Date.now() + 2 * 86400000) }, create: { id: TV + 1, classId: TV + 1, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), availableSpots: 20, status: 'open' } })
+    const se = await prisma.class_Session.upsert({ where: { id: TV }, update: { startsAt: new Date(Date.now() + 2 * 86400000) }, create: { id: TV, classId: TV, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), capacity: 20, status: 'open' } })
+    const sc = await prisma.class_Session.upsert({ where: { id: TV + 1 }, update: { startsAt: new Date(Date.now() + 2 * 86400000) }, create: { id: TV + 1, classId: TV + 1, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), capacity: 20, status: 'open' } })
     await prisma.user.upsert({ where: { id: TU }, update: { rewardPoints: 2, tierId: 1 }, create: { id: TU, username: `trf_${TU}`, email: `trf_${TU}@x.com`, passwordHash: 'x', fullName: 'Transfer User', tierId: 1, rewardPoints: 2, tierSportCounts: {} } })
     await prisma.booking.deleteMany({ where: { userId: TU } })
     const bk = await prisma.booking.create({ data: { userId: TU, sessionId: se.id, status: 'confirmed', bookingType: 'class', groupSize: 1, baseAmount: 200, commissionAmount: 0, venueCommission: 0, finalAmount: 200, venuePayout: 200, pointsEarned: 2, checkedIn: false, bookingNumber: `TRF-${Date.now()}` } })
@@ -1492,8 +1492,8 @@ async function run() {
   await check('Kupon: kişi başı limit ikinci kullanımı engeller (400)', async () => {
     const cScat = await prisma.sportCategory.findFirst({})
     await prisma.class.upsert({ where: { id: 990151 }, update: {}, create: { id: 990151, venueId: V, title: 'KuponDers', category: catName, sportCategoryId: cScat?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
-    await prisma.class_Session.upsert({ where: { id: 990151 }, update: { startsAt: new Date(Date.now() + 2 * 86400000), status: 'open' }, create: { id: 990151, classId: 990151, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), availableSpots: 20, status: 'open' } })
-    await prisma.class_Session.upsert({ where: { id: 990152 }, update: { startsAt: new Date(Date.now() + 2 * 86400000), status: 'open' }, create: { id: 990152, classId: 990151, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: 990151 }, update: { startsAt: new Date(Date.now() + 2 * 86400000), status: 'open' }, create: { id: 990151, classId: 990151, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), capacity: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: 990152 }, update: { startsAt: new Date(Date.now() + 2 * 86400000), status: 'open' }, create: { id: 990152, classId: 990151, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), capacity: 20, status: 'open' } })
     await prisma.booking.deleteMany({ where: { session: { classId: 990151 } } })
     await prisma.coupon.deleteMany({ where: { code: 'PERUSER1' } })
     await prisma.coupon.create({ data: { venueId: V, code: 'PERUSER1', discountType: 'fixed', discountValue: 100, perUserLimit: 1, isActive: true } })
@@ -1508,8 +1508,8 @@ async function run() {
     const sScat = await prisma.sportCategory.findFirst({})
     await prisma.venue.upsert({ where: { id: SV }, update: { isApproved: true, isActive: true }, create: { id: SV, name: 'Stat Salon', email: `stat${SV}@x.com`, passwordHash: 'x', address: 'Adres', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.class.upsert({ where: { id: SV }, update: {}, create: { id: SV, venueId: SV, title: 'StatDers', category: catName, sportCategoryId: sScat?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 10, isActive: true } })
-    // 2 gün sonra → 'upcoming' (7 gün) penceresine düşer; availableSpots: 10
-    await prisma.class_Session.upsert({ where: { id: SV }, update: { startsAt: new Date(Date.now() + 2 * 86400000) }, create: { id: SV, classId: SV, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), availableSpots: 10, status: 'open' } })
+    // 2 gün sonra → 'upcoming' (7 gün) penceresine düşer; capacity: 10
+    await prisma.class_Session.upsert({ where: { id: SV }, update: { startsAt: new Date(Date.now() + 2 * 86400000) }, create: { id: SV, classId: SV, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), capacity: 10, status: 'open' } })
     await prisma.user.upsert({ where: { id: SU }, update: {}, create: { id: SU, username: `stat_${SU}`, email: `stat_${SU}@x.com`, passwordHash: 'x', fullName: 'Stat User', tierId: 1, tierSportCounts: {} } })
     await prisma.booking.deleteMany({ where: { sessionId: SV } })
     // TEK rezervasyon kaydı ama groupSize: 3 → 3 koltuk dolu olmalı
@@ -1542,7 +1542,7 @@ async function run() {
     const BU = 990283
     await prisma.user.upsert({ where: { id: BU }, update: {}, create: { id: BU, username: `bkp_${BU}`, email: `bkp_${BU}@x.com`, passwordHash: 'x', fullName: 'Bk', tierId: 1, tierSportCounts: {} } })
     const past = new Date(Date.now() - 3 * 86400000)
-    await prisma.class_Session.upsert({ where: { id: 990283 }, update: { startsAt: past, status: 'open' }, create: { id: 990283, classId: C, startsAt: past, endsAt: new Date(past.getTime() + 3600000), status: 'open', availableSpots: 20 } })
+    await prisma.class_Session.upsert({ where: { id: 990283 }, update: { startsAt: past, status: 'open' }, create: { id: 990283, classId: C, startsAt: past, endsAt: new Date(past.getTime() + 3600000), status: 'open', capacity: 20 } })
     const tok = jwt.sign({ userId: BU, email: `bkp_${BU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
     const r = await http('/api/bookings', { method: 'POST', token: tok, body: { sessionId: 990283 } })
     if (r.status !== 400) throw new Error(`geçmiş seans rezervasyonu ${r.status} (400 bekleniyor): ${r.text.slice(0, 100)}`)
@@ -1564,8 +1564,8 @@ async function run() {
     await prisma.class.upsert({ where: { id: CA }, update: { basePrice: 200, isActive: true, venueId: EV }, create: { id: CA, venueId: EV, title: 'Pahalı', category: catName, basePrice: 200, durationMinutes: 60, capacity: 20, isActive: true } })
     await prisma.class.upsert({ where: { id: CB }, update: { basePrice: 100, isActive: true, venueId: EV }, create: { id: CB, venueId: EV, title: 'Ucuz', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     const fut = new Date(Date.now() + 2 * 86400000)
-    await prisma.class_Session.upsert({ where: { id: SA }, update: { classId: CA, startsAt: fut, status: 'open', availableSpots: 20 }, create: { id: SA, classId: CA, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), availableSpots: 20, status: 'open' } })
-    await prisma.class_Session.upsert({ where: { id: SB }, update: { classId: CB, startsAt: fut, status: 'open', availableSpots: 20 }, create: { id: SB, classId: CB, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: SA }, update: { classId: CA, startsAt: fut, status: 'open', capacity: 20 }, create: { id: SA, classId: CA, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), capacity: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: SB }, update: { classId: CB, startsAt: fut, status: 'open', capacity: 20 }, create: { id: SB, classId: CB, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), capacity: 20, status: 'open' } })
     await prisma.user.upsert({ where: { id: EU }, update: {}, create: { id: EU, username: `econ_${EU}`, email: `econ_${EU}@x.com`, passwordHash: 'x', fullName: 'Econ', tierId: 1, tierSportCounts: {} } })
     await prisma.booking.deleteMany({ where: { userId: EU } })
     await prisma.coupon.deleteMany({ where: { code: 'HALF50TEST' } })
@@ -1595,7 +1595,7 @@ async function run() {
     await prisma.venue.upsert({ where: { id: EV }, update: { isApproved: true, isActive: true }, create: { id: EV, name: 'EconV2', email: `ev${EV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.class.upsert({ where: { id: CC }, update: { venueId: EV, isActive: true }, create: { id: CC, venueId: EV, title: 'D', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     const fut = new Date(Date.now() + 2 * 86400000)
-    await prisma.class_Session.upsert({ where: { id: SC }, update: { classId: CC, startsAt: fut }, create: { id: SC, classId: CC, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: SC }, update: { classId: CC, startsAt: fut }, create: { id: SC, classId: CC, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), capacity: 20, status: 'open' } })
     await prisma.user.upsert({ where: { id: EU }, update: { rewardPoints: 30 }, create: { id: EU, username: `econc_${EU}`, email: `econc_${EU}@x.com`, passwordHash: 'x', fullName: 'EconC', tierSportCounts: {}, rewardPoints: 30 } })
     await prisma.booking.deleteMany({ where: { userId: EU } }); await prisma.rewardPoint.deleteMany({ where: { userId: EU } })
     // Bakiye 30 ama booking pointsEarned 50 (yıllık reset sonrası senaryosu) → clamp min(50,30)=30 → 0, NEGATİF değil
@@ -1619,7 +1619,7 @@ async function run() {
     await prisma.venue.upsert({ where: { id: EV }, update: { isApproved: true, isActive: true }, create: { id: EV, name: 'EconV3', email: `ev${EV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.class.upsert({ where: { id: CD }, update: { venueId: EV, isActive: false }, create: { id: CD, venueId: EV, title: 'Kapalı', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: false } })
     const fut = new Date(Date.now() + 2 * 86400000)
-    await prisma.class_Session.upsert({ where: { id: SD }, update: { classId: CD, startsAt: fut, status: 'open' }, create: { id: SD, classId: CD, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: SD }, update: { classId: CD, startsAt: fut, status: 'open' }, create: { id: SD, classId: CD, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), capacity: 20, status: 'open' } })
     await prisma.user.upsert({ where: { id: EU }, update: {}, create: { id: EU, username: `econe_${EU}`, email: `econe_${EU}@x.com`, passwordHash: 'x', fullName: 'EconE', tierSportCounts: {} } })
     const euTok = jwt.sign({ userId: EU, email: `econe_${EU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
     const bk = await http('/api/bookings', { method: 'POST', token: euTok, body: { sessionId: SD } })
@@ -1655,7 +1655,7 @@ async function run() {
     const RU = 990231
     await prisma.user.upsert({ where: { id: RU }, update: { recordStreak: 0 }, create: { id: RU, username: `rec_${RU}`, email: `rec_${RU}@x.com`, passwordHash: 'x', fullName: 'Rekor User', tierId: 1, tierSportCounts: {} } })
     const noon = (k: number) => { const d = new Date(); d.setUTCHours(9, 0, 0, 0); return new Date(d.getTime() - k * 86400000) }
-    const mkS = (id: number, k: number) => prisma.class_Session.upsert({ where: { id }, update: { startsAt: noon(k) }, create: { id, classId: C, startsAt: noon(k), endsAt: new Date(noon(k).getTime() + 3600000), status: 'open', availableSpots: 20 } })
+    const mkS = (id: number, k: number) => prisma.class_Session.upsert({ where: { id }, update: { startsAt: noon(k) }, create: { id, classId: C, startsAt: noon(k), endsAt: new Date(noon(k).getTime() + 3600000), status: 'open', capacity: 20 } })
     await mkS(990231, 1); await mkS(990232, 2); await mkS(990233, 3)
     await prisma.booking.deleteMany({ where: { userId: RU } })
     const mkB = (id: number, sid: number) => prisma.booking.create({ data: { id, userId: RU, sessionId: sid, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `REC-${id}-${Date.now()}`, checkedIn: true, checkedInAt: new Date() } })
@@ -1682,8 +1682,8 @@ async function run() {
     await prisma.neighborhood.upsert({ where: { id: N }, update: {}, create: { id: N, name: 'ŞampMah', latitude: 41, longitude: 29, cityId: 1 } })
     await prisma.class.upsert({ where: { id: N }, update: { sportCategoryId: scat?.id ?? null }, create: { id: N, venueId: V, title: 'ŞampDers', category: catName, sportCategoryId: scat?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     const inPrev = (off: number) => new Date(prev.start.getTime() + off * 86400000)
-    await prisma.class_Session.upsert({ where: { id: 990221 }, update: { startsAt: inPrev(5) }, create: { id: 990221, classId: N, startsAt: inPrev(5), endsAt: new Date(inPrev(5).getTime() + 3600000), status: 'open', availableSpots: 20 } })
-    await prisma.class_Session.upsert({ where: { id: 990222 }, update: { startsAt: inPrev(6) }, create: { id: 990222, classId: N, startsAt: inPrev(6), endsAt: new Date(inPrev(6).getTime() + 3600000), status: 'open', availableSpots: 20 } })
+    await prisma.class_Session.upsert({ where: { id: 990221 }, update: { startsAt: inPrev(5) }, create: { id: 990221, classId: N, startsAt: inPrev(5), endsAt: new Date(inPrev(5).getTime() + 3600000), status: 'open', capacity: 20 } })
+    await prisma.class_Session.upsert({ where: { id: 990222 }, update: { startsAt: inPrev(6) }, create: { id: 990222, classId: N, startsAt: inPrev(6), endsAt: new Date(inPrev(6).getTime() + 3600000), status: 'open', capacity: 20 } })
     const mkU = (id: number) => prisma.user.upsert({ where: { id }, update: { neighborhoodId: N, activityPrivacy: 'public', banned: false }, create: { id, username: `smp_${id}`, email: `smp_${id}@x.com`, passwordHash: 'x', fullName: 'Şamp', tierId: 1, tierSportCounts: {}, neighborhoodId: N, activityPrivacy: 'public' } })
     await mkU(990221); await mkU(990222)
     await prisma.booking.deleteMany({ where: { userId: { in: [990221, 990222] } } })
@@ -1721,7 +1721,7 @@ async function run() {
     await prisma.neighborhood.upsert({ where: { id: NT }, update: {}, create: { id: NT, name: 'BrbMah', latitude: 41, longitude: 29, cityId: 1 } })
     await prisma.class.upsert({ where: { id: CT }, update: { sportCategoryId: scat?.id ?? null }, create: { id: CT, venueId: V, title: 'BrbDers', category: catName, sportCategoryId: scat?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     const inPrev = (off: number) => new Date(prev.start.getTime() + off * 86400000)
-    await prisma.class_Session.upsert({ where: { id: 990311 }, update: { startsAt: inPrev(5) }, create: { id: 990311, classId: CT, startsAt: inPrev(5), endsAt: new Date(inPrev(5).getTime() + 3600000), status: 'open', availableSpots: 20 } })
+    await prisma.class_Session.upsert({ where: { id: 990311 }, update: { startsAt: inPrev(5) }, create: { id: 990311, classId: CT, startsAt: inPrev(5), endsAt: new Date(inPrev(5).getTime() + 3600000), status: 'open', capacity: 20 } })
     const mkU = (id: number) => prisma.user.upsert({ where: { id }, update: { neighborhoodId: NT, activityPrivacy: 'public', banned: false }, create: { id, username: `brb_${id}`, email: `brb_${id}@x.com`, passwordHash: 'x', fullName: 'Brb', tierId: 1, tierSportCounts: {}, neighborhoodId: NT, activityPrivacy: 'public' } })
     await mkU(U1); await mkU(U2)
     await prisma.booking.deleteMany({ where: { userId: { in: [U1, U2] } } })
@@ -1784,7 +1784,7 @@ async function run() {
     // createdAt'ı erkene sabitle → kayıt sırası ≤500 garanti (DB boyutundan bağımsız)
     await prisma.user.upsert({ where: { id: KU }, update: { createdAt: new Date('2020-01-01T00:00:00Z') }, create: { id: KU, username: `ku_${KU}`, email: `ku_${KU}@x.com`, passwordHash: 'x', fullName: 'Kurucu User', tierId: 1, tierSportCounts: {}, createdAt: new Date('2020-01-01T00:00:00Z') } })
     const past = new Date(Date.now() - 2 * 86400000)
-    await prisma.class_Session.upsert({ where: { id: 990241 }, update: { startsAt: past }, create: { id: 990241, classId: C, startsAt: past, endsAt: new Date(past.getTime() + 3600000), status: 'open', availableSpots: 20 } })
+    await prisma.class_Session.upsert({ where: { id: 990241 }, update: { startsAt: past }, create: { id: 990241, classId: C, startsAt: past, endsAt: new Date(past.getTime() + 3600000), status: 'open', capacity: 20 } })
     await prisma.booking.create({ data: { id: 990241, userId: KU, sessionId: 990241, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `KU-${Date.now()}`, checkedIn: true, checkedInAt: new Date() } })
     for (const rid of RIDS) {
       await prisma.user.upsert({ where: { id: rid }, update: {}, create: { id: rid, username: `kr_${rid}`, email: `kr_${rid}@x.com`, passwordHash: 'x', fullName: 'Ref', tierId: 1, tierSportCounts: {} } })
@@ -1878,7 +1878,7 @@ async function run() {
     for (let i = 0; i < 10; i++) {
       const sid = 990261 + i
       const d = new Date('2026-04-10T09:00:00Z'); d.setUTCDate(d.getUTCDate() + i)
-      await prisma.class_Session.upsert({ where: { id: sid }, update: { startsAt: d }, create: { id: sid, classId: C, startsAt: d, endsAt: new Date(d.getTime() + 3600000), status: 'open', availableSpots: 20 } })
+      await prisma.class_Session.upsert({ where: { id: sid }, update: { startsAt: d }, create: { id: sid, classId: C, startsAt: d, endsAt: new Date(d.getTime() + 3600000), status: 'open', capacity: 20 } })
       await prisma.booking.create({ data: { id: sid, userId: DU, sessionId: sid, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `DUZ-${sid}-${Date.now()}`, checkedIn: true, checkedInAt: new Date() } })
     }
     const tok = jwt.sign({ userId: DU, email: `duz_${DU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
@@ -1923,7 +1923,7 @@ async function run() {
     const RS = 990191
     await prisma.class.upsert({ where: { id: RS }, update: {}, create: { id: RS, venueId: V, title: 'ReminderDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     const startsAt = new Date(Date.now() + 120 * 60 * 1000) // +2 saat → hatırlatma penceresi (105-135 dk)
-    await prisma.class_Session.upsert({ where: { id: RS }, update: { startsAt, status: 'open' }, create: { id: RS, classId: RS, startsAt, endsAt: new Date(startsAt.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: RS }, update: { startsAt, status: 'open' }, create: { id: RS, classId: RS, startsAt, endsAt: new Date(startsAt.getTime() + 3600000), capacity: 20, status: 'open' } })
     await prisma.user.upsert({ where: { id: RS }, update: { email: `rem_${RS}@x.com` }, create: { id: RS, username: `rem_${RS}`, email: `rem_${RS}@x.com`, passwordHash: 'x', fullName: 'Reminder User', tierId: 1, tierSportCounts: {} } })
     await prisma.booking.deleteMany({ where: { sessionId: RS } })
     await prisma.booking.create({ data: { userId: RS, sessionId: RS, status: 'confirmed', bookingType: 'class', groupSize: 1, baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, pointsEarned: 0, reminderSent: false, checkedIn: false, bookingNumber: `REM-${Date.now()}` } })
@@ -2069,9 +2069,9 @@ async function run() {
     await prisma.class.upsert({ where: { id: TC }, update: {}, create: { id: TC, venueId: TV, title: 'TrWlD', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     const soon = new Date(Date.now() + 3 * 86400000)
     // Kaynak seans kapasite 1 (A ile dolu → B beklemede); hedef seans boş
-    await prisma.class_Session.upsert({ where: { id: S1 }, update: { startsAt: soon, availableSpots: 1 }, create: { id: S1, classId: TC, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), availableSpots: 1, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: S1 }, update: { startsAt: soon, capacity: 1 }, create: { id: S1, classId: TC, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), capacity: 1, status: 'open' } })
     const soon2 = new Date(soon.getTime() + 2 * 3600000) // farklı saat: (classId,startsAt) tekillik indeksi (T12)
-    await prisma.class_Session.upsert({ where: { id: S2 }, update: { startsAt: soon2, availableSpots: 20 }, create: { id: S2, classId: TC, startsAt: soon2, endsAt: new Date(soon2.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: S2 }, update: { startsAt: soon2, capacity: 20 }, create: { id: S2, classId: TC, startsAt: soon2, endsAt: new Date(soon2.getTime() + 3600000), capacity: 20, status: 'open' } })
     await prisma.user.upsert({ where: { id: UA }, update: {}, create: { id: UA, username: `ta_${UA}`, email: `ta_${UA}@x.com`, passwordHash: 'x', fullName: 'Ta', tierSportCounts: {} } })
     await prisma.user.upsert({ where: { id: UB }, update: {}, create: { id: UB, username: `tb_${UB}`, email: `tb_${UB}@x.com`, passwordHash: 'x', fullName: 'Tb', tierSportCounts: {} } })
     await prisma.booking.deleteMany({ where: { userId: { in: [UA, UB] } } })
@@ -2135,7 +2135,7 @@ async function run() {
     await prisma.venue.upsert({ where: { id: PV }, update: { isApproved: true, isActive: true }, create: { id: PV, name: 'PtV', email: `ptv${PV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.class.upsert({ where: { id: PC }, update: {}, create: { id: PC, venueId: PV, title: 'PtDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     const soon = new Date(Date.now() + 2 * 86400000)
-    await prisma.class_Session.upsert({ where: { id: PS }, update: { startsAt: soon }, create: { id: PS, classId: PC, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: PS }, update: { startsAt: soon }, create: { id: PS, classId: PC, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), capacity: 20, status: 'open' } })
     // Sporcu tier (pointRate %2) — booking pointsEarned=round(100*0.02)=2
     await prisma.user.upsert({ where: { id: PU }, update: { rewardPoints: 0, tierId: 2 }, create: { id: PU, username: `pt_${PU}`, email: `pt_${PU}@x.com`, passwordHash: 'x', fullName: 'Pt', rewardPoints: 0, tierId: 2, tierSportCounts: {} } })
     await prisma.booking.deleteMany({ where: { userId: PU } }); await prisma.rewardPoint.deleteMany({ where: { userId: PU } })
@@ -2173,7 +2173,7 @@ async function run() {
     // class.category KASITLI küçük harf (drift), ama sportCategoryId kanonik
     await prisma.class.upsert({ where: { id: LC }, update: { category: catName.toLowerCase(), sportCategoryId: cat!.id }, create: { id: LC, venueId: LV, title: 'LbDers', category: catName.toLowerCase(), sportCategoryId: cat!.id, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     const past = new Date(Date.now() - 2 * 86400000) // sezon içi geçmiş
-    await prisma.class_Session.upsert({ where: { id: LS }, update: { startsAt: past }, create: { id: LS, classId: LC, startsAt: past, endsAt: past, availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: LS }, update: { startsAt: past }, create: { id: LS, classId: LC, startsAt: past, endsAt: past, capacity: 20, status: 'open' } })
     await prisma.user.upsert({ where: { id: LU }, update: {}, create: { id: LU, username: `lb_${LU}`, email: `lb_${LU}@x.com`, passwordHash: 'x', fullName: 'Lb', neighborhoodId: V, tierSportCounts: {} } })
     await prisma.booking.deleteMany({ where: { userId: LU } })
     await prisma.booking.create({ data: { userId: LU, sessionId: LS, status: 'confirmed', checkedIn: true, checkedInAt: past, bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, venuePayout: 100, finalAmount: 100, bookingNumber: `LB-${Date.now()}` } })
@@ -2204,7 +2204,7 @@ async function run() {
     await prisma.venue.upsert({ where: { id: NV }, update: { isApproved: true, isActive: true }, create: { id: NV, name: 'NotifV', email: `ntv${NV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.class.upsert({ where: { id: NC }, update: {}, create: { id: NC, venueId: NV, title: 'NotifDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     const soon = new Date(Date.now() + 3 * 86400000)
-    await prisma.class_Session.upsert({ where: { id: NS }, update: { startsAt: soon }, create: { id: NS, classId: NC, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: NS }, update: { startsAt: soon }, create: { id: NS, classId: NC, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), capacity: 20, status: 'open' } })
     // pushToken YOK (web kullanıcısı) → eskiden hiçbir bildirim almıyordu
     await prisma.user.upsert({ where: { id: NU }, update: { pushToken: null }, create: { id: NU, username: `ntf_${NU}`, email: `ntf_${NU}@x.com`, passwordHash: 'x', fullName: 'Ntf', pushToken: null, tierSportCounts: {} } })
     await prisma.booking.deleteMany({ where: { userId: NU } })
@@ -2227,7 +2227,7 @@ async function run() {
     await prisma.venue.upsert({ where: { id: NV }, update: { isApproved: true, isActive: true, isVerified: true }, create: { id: NV, name: 'ReschedV', email: `rsv${NV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, isVerified: true, neighborhoodId: V, cityId: 1 } })
     await prisma.class.upsert({ where: { id: NC }, update: {}, create: { id: NC, venueId: NV, title: 'ReschedDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     const soon = new Date(Date.now() + 3 * 86400000)
-    await prisma.class_Session.upsert({ where: { id: NS }, update: { startsAt: soon }, create: { id: NS, classId: NC, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: NS }, update: { startsAt: soon }, create: { id: NS, classId: NC, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), capacity: 20, status: 'open' } })
     await prisma.user.upsert({ where: { id: NU }, update: {}, create: { id: NU, username: `rsc_${NU}`, email: `rsc_${NU}@x.com`, passwordHash: 'x', fullName: 'Rsc', tierSportCounts: {} } })
     await prisma.booking.deleteMany({ where: { userId: NU } })
     await prisma.notification.deleteMany({ where: { userId: NU } })
@@ -2373,7 +2373,7 @@ async function run() {
     await prisma.venue.upsert({ where: { id: CV }, update: { isApproved: true, isActive: true }, create: { id: CV, name: 'CpV', email: `cpv${CV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.class.upsert({ where: { id: CC }, update: {}, create: { id: CC, venueId: CV, title: 'CpD', category: catName, basePrice: 50, durationMinutes: 60, capacity: 20, isActive: true } })
     const soon = new Date(Date.now() + 2 * 86400000)
-    await prisma.class_Session.upsert({ where: { id: CS }, update: { startsAt: soon }, create: { id: CS, classId: CC, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: CS }, update: { startsAt: soon }, create: { id: CS, classId: CC, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), capacity: 20, status: 'open' } })
     await prisma.user.upsert({ where: { id: CU }, update: {}, create: { id: CU, username: `cp_${CU}`, email: `cp_${CU}@x.com`, passwordHash: 'x', fullName: 'Cp', tierSportCounts: {} } })
     await prisma.booking.deleteMany({ where: { userId: CU } })
     // Kuruş-altı fixed kupon oluşturmayı DENE → 2 ondalığa yuvarlanmalı (9.999 → 10.00)
@@ -2427,7 +2427,7 @@ async function run() {
     await prisma.venue.upsert({ where: { id: YV }, update: { isApproved: true, isActive: true }, create: { id: YV, name: 'YrV', email: `yrv${YV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.class.upsert({ where: { id: YC }, update: {}, create: { id: YC, venueId: YV, title: 'YrD', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     const future = new Date(Date.now() + 20 * 86400000)
-    await prisma.class_Session.upsert({ where: { id: YS }, update: { startsAt: future }, create: { id: YS, classId: YC, startsAt: future, endsAt: new Date(future.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: YS }, update: { startsAt: future }, create: { id: YS, classId: YC, startsAt: future, endsAt: new Date(future.getTime() + 3600000), capacity: 20, status: 'open' } })
     const thisYear = new Date().getUTCFullYear()
     // Kullanıcı: cari yılda 5 puanı VAR (meşru), rewardPointsYear = bu yıl
     await prisma.user.upsert({ where: { id: YU }, update: { rewardPoints: 5, rewardPointsYear: thisYear }, create: { id: YU, username: `yr_${YU}`, email: `yr_${YU}@x.com`, passwordHash: 'x', fullName: 'Yr', rewardPoints: 5, rewardPointsYear: thisYear, tierSportCounts: {} } })
@@ -2460,8 +2460,8 @@ async function run() {
     const TC2 = 990712
     await prisma.class.upsert({ where: { id: TC2 }, update: {}, create: { id: TC2, venueId: TV2, title: 'TrDstC', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     const soon = new Date(Date.now() + 2 * 86400000)
-    await prisma.class_Session.upsert({ where: { id: S1 }, update: { startsAt: soon }, create: { id: S1, classId: TC, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), availableSpots: 20, status: 'open' } })
-    await prisma.class_Session.upsert({ where: { id: S2 }, update: { startsAt: soon }, create: { id: S2, classId: TC2, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: S1 }, update: { startsAt: soon }, create: { id: S1, classId: TC, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), capacity: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: S2 }, update: { startsAt: soon }, create: { id: S2, classId: TC2, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), capacity: 20, status: 'open' } })
     await prisma.user.upsert({ where: { id: TU }, update: {}, create: { id: TU, username: `tr_${TU}`, email: `tr_${TU}@x.com`, passwordHash: 'x', fullName: 'Tr', tierSportCounts: {} } })
     await prisma.booking.deleteMany({ where: { userId: TU } })
     const bk = await prisma.booking.create({ data: { userId: TU, sessionId: S1, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, venuePayout: 100, finalAmount: 100, bookingNumber: `TR-${Date.now()}`, groupSize: 1 } })
@@ -2525,7 +2525,7 @@ async function run() {
     await prisma.venue.upsert({ where: { id: AV }, update: { isApproved: true, isActive: true }, create: { id: AV, name: 'AuthVenue', email: `av${AV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.class.upsert({ where: { id: AC }, update: {}, create: { id: AC, venueId: AV, title: 'AuthDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     const when = new Date(Date.now() + 2 * 86400000)
-    await prisma.class_Session.upsert({ where: { id: AS }, update: { startsAt: when }, create: { id: AS, classId: AC, startsAt: when, endsAt: new Date(when.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: AS }, update: { startsAt: when }, create: { id: AS, classId: AC, startsAt: when, endsAt: new Date(when.getTime() + 3600000), capacity: 20, status: 'open' } })
     await prisma.user.upsert({ where: { id: AU }, update: {}, create: { id: AU, username: `auth_${AU}`, email: `auth_${AU}@x.com`, passwordHash: 'x', fullName: 'Auth', tierSportCounts: {} } })
     await prisma.booking.deleteMany({ where: { sessionId: AS } })
     await prisma.booking.create({ data: { userId: AU, sessionId: AS, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 15, venueCommission: 15, venuePayout: 85, finalAmount: 100, bookingNumber: `AV-${Date.now()}`, checkInCode: 'SECRET99' } })
@@ -2559,7 +2559,7 @@ async function run() {
     await prisma.instructor.upsert({ where: { id: SI }, update: { isActive: true, venueId: SV }, create: { id: SI, venueId: SV, fullName: 'Susp Hoca', isActive: true } })
     await prisma.class.upsert({ where: { id: SC }, update: { instructorId: SI }, create: { id: SC, venueId: SV, instructorId: SI, title: 'SuspDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     const soon = new Date(Date.now() + 10 * 60000)
-    await prisma.class_Session.upsert({ where: { id: SS }, update: { startsAt: soon }, create: { id: SS, classId: SC, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: SS }, update: { startsAt: soon }, create: { id: SS, classId: SC, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), capacity: 20, status: 'open' } })
     await prisma.user.upsert({ where: { id: SU }, update: {}, create: { id: SU, username: `susp_${SU}`, email: `susp_${SU}@x.com`, passwordHash: 'x', fullName: 'Susp', tierSportCounts: {} } })
     await prisma.booking.deleteMany({ where: { sessionId: SS } })
     await prisma.booking.create({ data: { userId: SU, sessionId: SS, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, venuePayout: 100, finalAmount: 100, bookingNumber: `SV-${Date.now()}`, checkInCode: 'SUSP1234' } })
@@ -2581,7 +2581,7 @@ async function run() {
     await prisma.venue.upsert({ where: { id: WV }, update: { isApproved: true, isActive: true }, create: { id: WV, name: 'WlV', email: `wlv${WV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.class.upsert({ where: { id: WC }, update: {}, create: { id: WC, venueId: WV, title: 'WlD', category: catName, basePrice: 100, durationMinutes: 60, capacity: 1, isActive: true } })
     const past = new Date(Date.now() - 2 * 86400000)
-    await prisma.class_Session.upsert({ where: { id: WS }, update: { startsAt: past }, create: { id: WS, classId: WC, startsAt: past, endsAt: new Date(past.getTime() + 3600000), availableSpots: 1, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: WS }, update: { startsAt: past }, create: { id: WS, classId: WC, startsAt: past, endsAt: new Date(past.getTime() + 3600000), capacity: 1, status: 'open' } })
     await prisma.user.upsert({ where: { id: WU }, update: {}, create: { id: WU, username: `wlu_${WU}`, email: `wlu_${WU}@x.com`, passwordHash: 'x', fullName: 'Wlu', tierSportCounts: {} } })
     const utok = jwt.sign({ userId: WU, email: `wlu_${WU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
     const r = await http(`/api/waitlist/sessions/${WS}`, { method: 'POST', token: utok })
@@ -2622,11 +2622,11 @@ async function run() {
     await prisma.class.upsert({ where: { id: TC }, update: {}, create: { id: TC, venueId: TV, title: 'CcDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     await prisma.class_Session.deleteMany({ where: { classId: TC } })
     const when = new Date(Date.now() + 5 * 86400000)
-    await prisma.class_Session.create({ data: { classId: TC, startsAt: when, endsAt: new Date(when.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+    await prisma.class_Session.create({ data: { classId: TC, startsAt: when, endsAt: new Date(when.getTime() + 3600000), capacity: 20, status: 'open' } })
     // REGRESYON: (classId, startsAt) tekilliği yoktu → çift gönderim iki seans üretiyor, kontenjan ikiye bölünüyordu
     let ikinciOlustu = false
     try {
-      await prisma.class_Session.create({ data: { classId: TC, startsAt: when, endsAt: new Date(when.getTime() + 3600000), availableSpots: 20, status: 'open' } })
+      await prisma.class_Session.create({ data: { classId: TC, startsAt: when, endsAt: new Date(when.getTime() + 3600000), capacity: 20, status: 'open' } })
       ikinciOlustu = true
     } catch (e: any) { if (e?.code !== 'P2002') throw e }
     if (ikinciOlustu) throw new Error('aynı ders+saat için ikinci seans oluşabildi (DB tekilliği yok)')
@@ -2663,7 +2663,7 @@ async function run() {
     await prisma.venue.upsert({ where: { id: TV }, update: { isApproved: true, isActive: true }, create: { id: TV, name: 'WlVenue', email: `wl${TV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.class.upsert({ where: { id: TC }, update: {}, create: { id: TC, venueId: TV, title: 'WlDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 1, isActive: true } })
     const when = new Date(Date.now() + 3 * 86400000)
-    await prisma.class_Session.upsert({ where: { id: TS }, update: { startsAt: when }, create: { id: TS, classId: TC, startsAt: when, endsAt: new Date(when.getTime() + 3600000), availableSpots: 1, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: TS }, update: { startsAt: when }, create: { id: TS, classId: TC, startsAt: when, endsAt: new Date(when.getTime() + 3600000), capacity: 1, status: 'open' } })
     await prisma.user.upsert({ where: { id: TU }, update: {}, create: { id: TU, username: `wl_${TU}`, email: `wl_${TU}@x.com`, passwordHash: 'x', fullName: 'Wl', tierSportCounts: {} } })
     await prisma.waitlist.deleteMany({ where: { sessionId: TS } })
     // 31 dakika önce bildirilmiş ama yeri kapamamış bekleyen → yeniden seçilebilmeli
@@ -2729,7 +2729,7 @@ async function run() {
     if (!loT || !hiT || loT.pointRate >= hiT.pointRate) throw new Error('kurulum: farklı oranlı iki tier yok')
     await prisma.user.upsert({ where: { id: uid }, update: { tierId: loT.id, rewardPoints: 0 }, create: { id: uid, username: `pr_${uid}`, email: `pr_${uid}@x.com`, passwordHash: 'x', fullName: 'PR', tierSportCounts: {}, tierId: loT.id, rewardPoints: 0 } })
     await prisma.class.upsert({ where: { id: cid }, update: {}, create: { id: cid, venueId: V, title: 'PR Class', category: 'Yoga', basePrice: 1000, durationMinutes: 60, capacity: 10, isActive: true } })
-    await prisma.class_Session.upsert({ where: { id: sid }, update: { classId: cid, startsAt: new Date(Date.now() - 7200000), endsAt: new Date(Date.now() - 3600000) }, create: { id: sid, classId: cid, startsAt: new Date(Date.now() - 7200000), endsAt: new Date(Date.now() - 3600000), availableSpots: 10, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: sid }, update: { classId: cid, startsAt: new Date(Date.now() - 7200000), endsAt: new Date(Date.now() - 3600000) }, create: { id: sid, classId: cid, startsAt: new Date(Date.now() - 7200000), endsAt: new Date(Date.now() - 3600000), capacity: 10, status: 'open' } })
     const finalAmount = 1000
     const stalePts = Math.round(finalAmount * loT.pointRate / 100)   // rezervasyon-anı (düşük) oranı
     const freshPts = Math.round(finalAmount * hiT.pointRate / 100)   // check-in-anı (yüksek) oranı
@@ -2797,7 +2797,7 @@ async function run() {
     await prisma.class.deleteMany({ where: { id: UC } }).catch(() => {})
     await prisma.venue.upsert({ where: { id: UV }, update: { isApproved: true, isActive: true, isSuspended: false }, create: { id: UV, name: 'UnapprV', email: `uv${UV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.class.upsert({ where: { id: UC }, update: {}, create: { id: UC, venueId: UV, title: 'Unappr Class', category: 'Yoga', basePrice: 100, durationMinutes: 60, capacity: 10, isActive: true } })
-    await prisma.class_Session.upsert({ where: { id: US }, update: { classId: UC, startsAt: new Date(Date.now() + 3 * 86400000), endsAt: new Date(Date.now() + 3 * 86400000 + 3600000) }, create: { id: US, classId: UC, startsAt: new Date(Date.now() + 3 * 86400000), endsAt: new Date(Date.now() + 3 * 86400000 + 3600000), availableSpots: 10, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: US }, update: { classId: UC, startsAt: new Date(Date.now() + 3 * 86400000), endsAt: new Date(Date.now() + 3 * 86400000 + 3600000) }, create: { id: US, classId: UC, startsAt: new Date(Date.now() + 3 * 86400000), endsAt: new Date(Date.now() + 3 * 86400000 + 3600000), capacity: 10, status: 'open' } })
     const tok = jwt.sign({ venueId: UV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
     const { trYmd } = require('../src/utils/trFormat')
     const body = { date: trYmd(new Date(Date.now() + 4 * 86400000)), time: '10:00', capacity: 10 }
@@ -2898,7 +2898,7 @@ async function run() {
     await prisma.venue.upsert({ where: { id: RV }, update: { isApproved: true, isActive: true }, create: { id: RV, name: 'RevV', email: `rev${RV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.user.upsert({ where: { id: RU }, update: { tierSportCounts: {} }, create: { id: RU, username: `rev_${RU}`, email: `rev_${RU}@x.com`, passwordHash: 'x', fullName: 'Rev', tierSportCounts: {} } })
     await prisma.class.upsert({ where: { id: RC }, update: {}, create: { id: RC, venueId: RV, title: 'Rev Class', category: 'Yoga', basePrice: 100, durationMinutes: 60, capacity: 10, isActive: true } })
-    await prisma.class_Session.upsert({ where: { id: RS }, update: { classId: RC }, create: { id: RS, classId: RC, startsAt: new Date(Date.now() + 86400000), endsAt: new Date(Date.now() + 90000000), availableSpots: 10, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: RS }, update: { classId: RC }, create: { id: RS, classId: RC, startsAt: new Date(Date.now() + 86400000), endsAt: new Date(Date.now() + 90000000), capacity: 10, status: 'open' } })
     await prisma.booking.create({ data: { userId: RU, sessionId: RS, status: 'confirmed', bookingType: 'class', baseAmount: 777, commissionAmount: 0, venueCommission: 0, finalAmount: 777, venuePayout: 777, bookingNumber: `REV-${Date.now()}`, createdAt: inWindow } })
     const tok = jwt.sign({ venueId: RV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
     const r = await expectOk('/api/venue/revenue', { token: tok })
@@ -3057,6 +3057,83 @@ async function run() {
     const me = (r.json?.leaderboard || []).find((x: any) => x.id === uid)
     if (!me) throw new Error('sadece drop-in\'i olan kullanıcı liderlikte yok (drop-in sayılmıyor)')
     if (me.lessonCount < 1) throw new Error(`drop-in lessonCount ${me.lessonCount} (>=1 bekleniyor)`)
+  })
+
+  // Tur20 — DENETİM BULGUSU: Class_Session.capacity TOPLAM kapasitedir ve rezervasyonla
+  // azalmaz. Public uçlar eskiden bu ham sayıyı "availableSpots" adıyla döndürüyordu, üç
+  // istemci de KALAN YER sanıp dolu dersi "10 yer kaldı" diye gösteriyordu.
+  await check('Kapasite: public uçlar KALAN yeri döndürür (kapasiteyi değil)', async () => {
+    const CV = 990401, CC = 990401, CS = 990401, CU = 990401
+    await prisma.booking.deleteMany({ where: { session: { classId: CC } } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: CS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: CC } }).catch(() => {})
+    await prisma.venue.upsert({ where: { id: CV }, update: { isApproved: true, isActive: true, isSuspended: false }, create: { id: CV, name: 'CapV', email: `cv${CV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: CC }, update: { isActive: true }, create: { id: CC, venueId: CV, title: 'Cap Class', category: 'Yoga', basePrice: 100, durationMinutes: 60, capacity: 10, isActive: true } })
+    const st = new Date(Date.now() + 3 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: CS }, update: { classId: CC, startsAt: st, endsAt: new Date(st.getTime() + 3600000), capacity: 10, status: 'open' }, create: { id: CS, classId: CC, startsAt: st, endsAt: new Date(st.getTime() + 3600000), capacity: 10, status: 'open' } })
+    await prisma.user.upsert({ where: { id: CU }, update: {}, create: { id: CU, username: `cap_${CU}`, email: `cap_${CU}@x.com`, passwordHash: 'x', fullName: 'Cap' } })
+
+    // Boşken: kalan = kapasite = 10
+    const bos = await expectOk(`/api/public/sessions/${CS}`)
+    if (bos.json?.session?.spotsLeft !== 10) throw new Error(`boş seans spotsLeft ${bos.json?.session?.spotsLeft} (10 bekleniyor)`)
+    if (bos.json?.session?.capacity !== 10) throw new Error(`capacity ${bos.json?.session?.capacity} (10 bekleniyor)`)
+
+    // 4 kişilik rezervasyon → kalan 6, kapasite HÂLÂ 10
+    await prisma.booking.create({ data: { userId: CU, sessionId: CS, status: 'confirmed', groupSize: 4, bookingType: 'class', baseAmount: 400, commissionAmount: 0, venueCommission: 0, finalAmount: 400, venuePayout: 400, bookingNumber: `CAPA-${Date.now()}` } })
+    const dolu = await expectOk(`/api/public/sessions/${CS}`)
+    if (dolu.json?.session?.spotsLeft !== 6) throw new Error(`4 kişi sonrası spotsLeft ${dolu.json?.session?.spotsLeft} (6 bekleniyor — kapasite dönüyor olabilir)`)
+    if (dolu.json?.session?.capacity !== 10) throw new Error(`capacity rezervasyonla değişti: ${dolu.json?.session?.capacity}`)
+    // Geçiş takma adı da KALAN yer anlamında olmalı (eski istemciler yanlış göstermesin)
+    if (dolu.json?.session?.availableSpots !== 6) throw new Error(`availableSpots takma adı ${dolu.json?.session?.availableSpots} (6 bekleniyor)`)
+
+    // Liste ucu da aynı sözleşmeyi vermeli
+    const liste = await expectOk(`/api/public/sessions?venueId=${CV}`)
+    const s = (liste.json?.sessions || []).find((x: any) => x.id === CS)
+    if (!s) throw new Error('seans listede yok (kurulum hatalı)')
+    if (s.spotsLeft !== 6) throw new Error(`liste spotsLeft ${s.spotsLeft} (6 bekleniyor)`)
+
+    // Tamamen dolduğunda 0 — negatife düşmemeli
+    await prisma.booking.create({ data: { userId: CU, sessionId: CS, status: 'confirmed', groupSize: 6, bookingType: 'class', baseAmount: 600, commissionAmount: 0, venueCommission: 0, finalAmount: 600, venuePayout: 600, bookingNumber: `CAPB-${Date.now()}` } })
+    const full = await expectOk(`/api/public/sessions/${CS}`)
+    if (full.json?.session?.spotsLeft !== 0) throw new Error(`dolu seans spotsLeft ${full.json?.session?.spotsLeft} (0 bekleniyor)`)
+  })
+
+  // Tur20 — DENETİM BULGUSU: updateSession'da kapasite doğrulaması YOKTU. Dolu seansın
+  // kapasitesi doluluğun altına çekilebiliyor (aşırı satış), boş/geçersiz değer 500 veriyordu.
+  await check('Kapasite: seans güncelleme doluluğun altına düşüremez ve geçersiz değeri reddeder', async () => {
+    const UV2 = 990402, UC2 = 990402, US2 = 990402, UU2 = 990402
+    await prisma.booking.deleteMany({ where: { session: { classId: UC2 } } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: US2 } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: UC2 } }).catch(() => {})
+    await prisma.venue.upsert({ where: { id: UV2 }, update: { isApproved: true, isActive: true, isSuspended: false }, create: { id: UV2, name: 'CapV2', email: `cv${UV2}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: UC2 }, update: { isActive: true }, create: { id: UC2, venueId: UV2, title: 'Cap Class 2', category: 'Yoga', basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const st2 = new Date(Date.now() + 3 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: US2 }, update: { classId: UC2, startsAt: st2, endsAt: new Date(st2.getTime() + 3600000), capacity: 20, status: 'open' }, create: { id: US2, classId: UC2, startsAt: st2, endsAt: new Date(st2.getTime() + 3600000), capacity: 20, status: 'open' } })
+    await prisma.user.upsert({ where: { id: UU2 }, update: {}, create: { id: UU2, username: `cap2_${UU2}`, email: `cap2_${UU2}@x.com`, passwordHash: 'x', fullName: 'Cap2' } })
+    await prisma.booking.create({ data: { userId: UU2, sessionId: US2, status: 'confirmed', groupSize: 15, bookingType: 'class', baseAmount: 1500, commissionAmount: 0, venueCommission: 0, finalAmount: 1500, venuePayout: 1500, bookingNumber: `CAPC-${Date.now()}` } })
+
+    const tok = jwt.sign({ venueId: UV2, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const { trYmd } = require('../src/utils/trFormat')
+    const date = trYmd(new Date(Date.now() + 4 * 86400000))
+    const url = `/api/venue/classes/${UC2}/sessions/${US2}`
+
+    // 15 dolu → 5'e düşürme REDDEDİLMELİ
+    const kucult = await http(url, { method: 'PUT', token: tok, body: { date, time: '10:00', capacity: 5 } })
+    if (kucult.status !== 400) throw new Error(`dolu seans kapasitesi 5'e düşürülebildi: ${kucult.status} (aşırı satış)`)
+    const after = await prisma.class_Session.findUnique({ where: { id: US2 } })
+    if (after?.capacity !== 20) throw new Error(`red edilmesine rağmen kapasite değişti: ${after?.capacity}`)
+
+    // Geçersiz kapasiteler 400 olmalı (500 DEĞİL)
+    for (const bad of [undefined, '', 'abc', 0, -5]) {
+      const r = await http(url, { method: 'PUT', token: tok, body: { date, time: '10:00', capacity: bad } })
+      if (r.status !== 400) throw new Error(`geçersiz kapasite (${JSON.stringify(bad)}) → ${r.status} (400 bekleniyor)`)
+    }
+
+    // Doluluğa EŞİT ve ÜSTÜ kabul edilmeli
+    const esit = await http(url, { method: 'PUT', token: tok, body: { date, time: '10:00', capacity: 15 } })
+    if (esit.status !== 200) throw new Error(`doluluğa eşit kapasite reddedildi: ${esit.status}`)
+    const buyut = await http(url, { method: 'PUT', token: tok, body: { date, time: '11:00', capacity: 25 } })
+    if (buyut.status !== 200) throw new Error(`kapasite artırma reddedildi: ${buyut.status}`)
   })
 }
 

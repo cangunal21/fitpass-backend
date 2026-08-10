@@ -387,9 +387,11 @@ export const sendVenueBookingNotificationEmail = async (
   date: string,
   time: string,
   capacity: number,
-  availableSpots: number
+  // Çağıran ZATEN yeni rezervasyonu içeren kalan yeri geçiyor (capacity - occupiedSpots,
+  // occupiedSpots rezervasyon oluşturulduktan SONRA sayılıyor). Burada ayrıca "-1"
+  // uygulanıyordu → salona giden e-posta kalan yeri hep BİR EKSİK yazıyordu.
+  spotsLeft: number
 ) => {
-  const spotsLeft = availableSpots - 1
   const spotsWarning = spotsLeft <= 3
     ? `<div style="background: #FEF2F2; border-radius: 12px; padding: 14px; margin-bottom: 24px;">
         <p style="font-size: 13px; color: #DC2626; margin: 0;">⚠️ Bu seans için yalnızca <strong>${spotsLeft} yer kaldı!</strong></p>

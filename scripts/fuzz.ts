@@ -49,7 +49,7 @@ async function seed() {
   const cat = await prisma.sportCategory.findFirst({})
   await prisma.venue.upsert({ where: { id: V }, update: {}, create: { id: V, name: 'Fuzz Venue', email: `fuzz${V}@x.com`, passwordHash: 'x', address: 'Adres', isApproved: true, isActive: true, neighborhoodId: NB, cityId: 1 } })
   await prisma.class.upsert({ where: { id: C }, update: {}, create: { id: C, venueId: V, title: 'Fuzz Class', category: cat?.name || 'Yoga', sportCategoryId: cat?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
-  await prisma.class_Session.upsert({ where: { id: S }, update: {}, create: { id: S, classId: C, startsAt: new Date(Date.now() + 3 * 86400000), endsAt: new Date(Date.now() + 3 * 86400000 + 3600000), availableSpots: 20, status: 'open' } })
+  await prisma.class_Session.upsert({ where: { id: S }, update: {}, create: { id: S, classId: C, startsAt: new Date(Date.now() + 3 * 86400000), endsAt: new Date(Date.now() + 3 * 86400000 + 3600000), capacity: 20, status: 'open' } })
   await prisma.user.upsert({ where: { id: U }, update: {}, create: { id: U, username: `fuzz_${U}`, email: `fuzz_${U}@x.com`, passwordHash: 'x', fullName: 'Fuzz User', tierSportCounts: {} } })
   userToken = jwt.sign({ userId: U, email: `fuzz_${U}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
   venueToken = jwt.sign({ venueId: V, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })

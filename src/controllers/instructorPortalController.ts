@@ -145,7 +145,7 @@ export const createInstructorSession = async (req: Request, res: Response) => {
     const endsAt = new Date(startsAt.getTime() + (cls.durationMinutes || cls.duration || 60) * 60000)
 
     const session = await prisma.class_Session.create({
-      data: { classId, startsAt, endsAt, availableSpots: cap },
+      data: { classId, startsAt, endsAt, capacity: cap },
     })
 
     return res.status(201).json({ message: 'Seans oluşturuldu!', session })
@@ -168,7 +168,7 @@ export const getMyInstructorClasses = async (req: Request, res: Response) => {
         sessions: {
           where: { startsAt: { gte: now } },
           orderBy: { startsAt: 'asc' },
-          select: { id: true, startsAt: true, endsAt: true, availableSpots: true, status: true },
+          select: { id: true, startsAt: true, endsAt: true, capacity: true, status: true },
         },
       },
       orderBy: { createdAt: 'desc' },
