@@ -6,6 +6,7 @@
     "overlapSeconds": 20,
     "drainingSeconds": 25,
     "restartPolicyType": "ON_FAILURE",
-    "restartPolicyMaxRetries": 3
+    "restartPolicyMaxRetries": 3,
+    "preDeployCommand": "node scripts/db-deploy.cjs"
   }
 }

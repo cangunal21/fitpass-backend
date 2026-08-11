@@ -40,18 +40,52 @@ Regresyon testi: smoke → *"Deploy: /health hazır-olma sinyali verir ve SIGTER
 kapanır"*. Ayrı portta sunucu açar, sağlıklı olmasını bekler, `SIGTERM` yollar, drenaj
 penceresinde 503 gördüğünü ve sürecin **kod 0** ile kapandığını doğrular.
 
-## ⚠️ Şema değişikliklerinde dikkat
+## Şema değişiklikleri — `db push` DEĞİL, migration
 
-`npm start` → `npx prisma db push && node dist/index.js`. `overlapSeconds` yüzünden yeni ve
-eski konteyner **20 sn birlikte çalışır**. Bu sürede şema yeni hâldedir:
+### Neden değişti
 
-- **Ekleyici değişiklik** (yeni nullable kolon, yeni tablo, yeni index) → güvenli. Eski
-  konteyner o kolonu bilmez, sorun çıkmaz.
-- **Bozucu değişiklik** (kolon silme/yeniden adlandırma, `NOT NULL` ekleme) → eski konteyner
-  20 sn boyunca HATA verir. Bunu iki aşamada yap: (1) önce ekle + yaz, deploy et; (2) sonraki
-  deploy'da eskiyi kaldır.
-- Kolon adını değiştirmek yerine Prisma'da `@map` kullanmak DB'ye hiç dokunmaz — örnek:
-  `capacity Int @map("availableSpots")`.
+`npm start` eskiden her açılışta `npx prisma db push` çalıştırıyordu. Yerelde ölçüldü:
+şemadan bir kolon silindiğinde `db push` **7 satırlık tablodan o kolonu SESSİZCE düşürdü** —
+uyarı yok, onay yok, **çıkış kodu 0**. Yani şemaya yanlışlıkla dokunan biri, bir sonraki
+deploy'da üretim verisini kalıcı kaybedebiliyordu. `db push` bir prototipleme aracıdır;
+sürüm geçmişi, gözden geçirme ve geri alma imkânı yoktur.
+
+Artık: `railway.json → preDeployCommand: node scripts/db-deploy.cjs`
+
+### Yeni bir şema değişikliği nasıl yapılır
+
+```bash
+npm run db:migrate
+```
+
+`prisma migrate dev` şemayı DB'ye uygular **ve** `prisma/migrations/<zaman>_<ad>/migration.sql`
+dosyasını üretir. Bu dosya git'e girer: ne çalıştığı gözle görülür, geçmişte kalır.
+
+### Deploy'da ne oluyor (`scripts/db-deploy.cjs`)
+
+1. **Yıkıcı SQL kapısı** — bekleyen migration'larda `DROP TABLE/COLUMN`, `RENAME`,
+   `SET NOT NULL`, `DROP CONSTRAINT`, `TRUNCATE` varsa **deploy DURUR**. (Yorum satırındaki
+   kelimeler sayılmaz.)
+2. **İlk geçiş (baseline)** — DB'de tablolar var ama migration geçmişi yoksa `0_init`
+   *çalıştırılmadan* "uygulanmış" işaretlenir. Otomatiktir, elle bir şey yapman gerekmez.
+3. `prisma migrate deploy` — yalnız bekleyenleri uygular.
+
+Kapıya takılırsan hata mesajı ne yapman gerektiğini yazar. Özet:
+
+- **Kolon ADI değiştiriyorsan DB'ye hiç dokunma:** Prisma'da `@map` kullan —
+  `capacity Int @map("availableSpots")`. Kolon yerinde kalır, hiçbir risk yok.
+- **Gerçekten silmen gerekiyorsa iki aşamada yap:** (1) bu deploy'da yeni alanı ekle, kod iki
+  alanı da yazsın; (2) sonraki deploy'da eskiyi kaldıran migration'ı yaz.
+- **Bilinçli ve güvenliyse** migration dosyasının başına gerekçesini yaz:
+  `-- ALLOW-DESTRUCTIVE: veri yeni alana taşındı, eski alan artık okunmuyor`
+
+Bu neden önemli: `overlapSeconds=20` yüzünden yeni ve eski konteyner 20 sn **birlikte**
+çalışır. Ekleyici değişiklik güvenlidir (eski konteyner yeni kolonu bilmez, umursamaz);
+bir kolon o anda kaybolursa eski konteyner 20 sn hata verir ve veri kaybı geri alınamaz.
+
+Regresyon testi: smoke → *"Şema: yıkıcı migration SQL'i deploy kapısına takılır"*. Kapının
+desenlerini, yanlış-alarm vermediğini, `ALLOW-DESTRUCTIVE` çıkışını ve `npm start`'ta
+`db push` kalmadığını doğrular.
 
 ## Doğrulama
 

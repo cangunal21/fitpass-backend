@@ -6,7 +6,7 @@
     "test": "npm run smoke",
     "dev": "ts-node src/index.ts",
     "build": "npx prisma generate && tsc",
-    "start": "npx prisma db push && node dist/index.js",
+    "start": "node dist/index.js",
     "seed": "ts-node prisma/seed.ts",
     "smoke": "ts-node scripts/smoke.ts",
     "iyzico:test": "ts-node scripts/iyzico-sandbox-test.ts",
@@ -17,7 +17,9 @@
     "backup:prod:logical": "bash scripts/backup-prod-logical.sh",
     "typecheck": "tsc --noEmit",
     "typecheck:ci": "tsc -p tsconfig.ci.json",
-    "backfill:titleen": "ts-node scripts/backfill-title-en.ts"
+    "backfill:titleen": "ts-node scripts/backfill-title-en.ts",
+    "db:deploy": "node scripts/db-deploy.cjs",
+    "db:migrate": "npx prisma migrate dev"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

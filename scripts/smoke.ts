@@ -3077,6 +3077,54 @@ async function run() {
     if (me.lessonCount < 1) throw new Error(`drop-in lessonCount ${me.lessonCount} (>=1 bekleniyor)`)
   })
 
+  // Tur20 — ŞEMA GÜVENLİK KAPISI. Ölçüldü: `prisma db push` şemadan kolon silindiğinde
+  // 7 satırlık tablodan o kolonu SESSİZCE düşürdü (uyarı yok, çıkış kodu 0). `npm start` her
+  // açılışta db push çalıştırdığı için şemaya yanlışlıkla dokunan biri üretim verisini
+  // kaybedebiliyordu. Artık deploy versiyonlanmış migration'larla yapılıyor ve bekleyen
+  // migration'larda yıkıcı SQL varsa deploy DURUYOR. Bu test kapının desenlerini sabitler.
+  await check('Şema: yıkıcı migration SQL\'i deploy kapısına takılır', async () => {
+    const { yikiciBul } = require('../scripts/db-deploy.cjs')
+
+    const yakalanmali: [string, string][] = [
+      ['ALTER TABLE "Booking" DROP COLUMN "notes";', 'DROP COLUMN'],
+      ['DROP TABLE "Booking";', 'DROP TABLE'],
+      ['ALTER TABLE "Booking" RENAME COLUMN "a" TO "b";', 'RENAME'],
+      ['ALTER TABLE "Booking" ALTER COLUMN "x" SET NOT NULL;', 'SET NOT NULL'],
+      ['TRUNCATE "Booking";', 'TRUNCATE'],
+      ['ALTER TABLE "Booking" DROP CONSTRAINT "fk";', 'DROP CONSTRAINT'],
+    ]
+    for (const [sql, beklenen] of yakalanmali) {
+      const b = yikiciBul(sql)
+      if (b.length === 0) throw new Error(`yıkıcı SQL yakalanmadı (${beklenen}): ${sql}`)
+    }
+
+    // GÜVENLİ olanlar takılmamalı (yanlış alarm deploy'u boşuna bloklar)
+    const gecmeli = [
+      'ALTER TABLE "Booking" ADD COLUMN "yeni" TEXT;',
+      'CREATE TABLE "Yeni" ("id" SERIAL PRIMARY KEY);',
+      'CREATE INDEX "i" ON "Booking"("userId");',
+      'CREATE UNIQUE INDEX IF NOT EXISTS "u" ON "Booking"("bookingNumber");',
+      // yorum içinde geçen yıkıcı kelime yanlış alarm VERMEMELİ
+      '-- Bu migration DROP COLUMN yapmaz, sadece açıklama\nALTER TABLE "Booking" ADD COLUMN "y2" TEXT;',
+      '/* DROP TABLE demiyoruz */ ALTER TABLE "Booking" ADD COLUMN "y3" TEXT;',
+    ]
+    for (const sql of gecmeli) {
+      const b = yikiciBul(sql)
+      if (b.length > 0) throw new Error(`güvenli SQL yanlışlıkla yıkıcı sayıldı (${b.join(',')}): ${sql.slice(0, 60)}`)
+    }
+
+    // Bilinçli silme: ALLOW-DESTRUCTIVE işareti kapıyı açar (karar git'te izli kalır)
+    const izinli = yikiciBul('-- ALLOW-DESTRUCTIVE: veri yeni alana taşındı\nALTER TABLE "Booking" DROP COLUMN "notes";')
+    if (izinli.length !== 0) throw new Error('ALLOW-DESTRUCTIVE işareti kapıyı açmıyor — bilinçli silme imkânsız hale gelir')
+
+    // Deploy hattı gerçekten migration kullanmalı: start'ta db push KALMAMALI
+    const fs2 = require('fs'), path2 = require('path')
+    const pkg = JSON.parse(fs2.readFileSync(path2.join(__dirname, '../package.json'), 'utf8'))
+    if (/db\s+push/.test(pkg.scripts?.start || '')) throw new Error('npm start hâlâ `prisma db push` çalıştırıyor — sessiz kolon silme riski geri geldi')
+    const rj = JSON.parse(fs2.readFileSync(path2.join(__dirname, '../railway.json'), 'utf8'))
+    if (!/db-deploy/.test(rj.deploy?.preDeployCommand || '')) throw new Error('railway.json preDeployCommand şema kapısını çağırmıyor')
+  })
+
   // Tur20 — SIFIR-KESİNTİ DEPLOY. Ölçülmüştü: her Railway deploy'unda ~30sn 502 penceresi vardı
   // (healthcheckPath tanımsız → trafik hazır olmayan konteynere dönüyor; SIGTERM işleyicisi yok →
   // uçan istekler ölüyor). Bu test iki mekanizmayı da doğrular: /health açılış bitmeden 503 der,
