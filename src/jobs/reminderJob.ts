@@ -51,10 +51,27 @@ export const sendRemindersJob = async () => {
         const venueName = booking.session!.class.venue?.name || ''
         const classTitle = booking.session!.class.title
 
+        // GÖNDERİM SONUCU TAKİBİ: reminderSent yukarıda gönderimden ÖNCE işaretleniyor (çift
+        // gönderimi engelleyen atomik sahiplenme). Ama gönderim başarısız olursa bayrak true
+        // kaldığı için hatırlatma bir daha DENENMİYORDU: Resend kesintisi/kota aşımı sırasında
+        // o pencereye düşen herkes hatırlatmasız kalıyor, loglar temiz görünüyordu.
+        // Artık hiçbir kanal teslim edemediyse bayrak geri alınıyor → bir sonraki tarama
+        // yeniden dener. Pencere (+90..+150dk) doğal bir üst sınır: seans pencereden çıkınca
+        // deneme kendiliğinden durur, sonsuz döngü olmaz.
+        let denenen = 0
+        let teslim = 0
+
         const rLoc = (booking.user?.locale || 'tr') as Locale
         if (booking.user?.email && booking.user.emailReminders !== false) {
-          await sendReminderEmail(booking.user.email, booking.user.fullName, classTitle, date, time, venueName, rLoc)
-          console.log(`✅ Hatırlatma maili gönderildi: booking#${booking.id}`) // PII loglamıyoruz (KVKK + Sentry'ye sızmasın)
+          denenen++
+          const mailRes: any = await sendReminderEmail(booking.user.email, booking.user.fullName, classTitle, date, time, venueName, rLoc)
+          // Sarmalayıcı hata FIRLATMAZ, { data: null, error } DÖNDÜRÜR (Resend SDK davranışı).
+          if (mailRes?.error) {
+            console.error(`⚠️ Hatırlatma maili BAŞARISIZ: booking#${booking.id}`)
+          } else {
+            teslim++
+            console.log(`✅ Hatırlatma maili gönderildi: booking#${booking.id}`) // PII loglamıyoruz (KVKK + Sentry'ye sızmasın)
+          }
         }
 
         // "bugün" SABİT yazılıydı: hatırlatma penceresi (+90..+150 dk) İstanbul gece yarısını
@@ -64,10 +81,23 @@ export const sendRemindersJob = async () => {
         const dayLabel = trYmd(startsAt) === trYmd(new Date()) ? notifyText(rLoc, 'reminder_today') : trDateShort(startsAt)
         const rPush = notifyPush(rLoc, 'class_reminder', { classTitle, date: dayLabel, time, venue: venueName })
         if (booking.user?.pushToken && rPush) {
-          await sendPushNotification(booking.user.pushToken, rPush.title, rPush.body)
-          console.log(`📱 Push bildirimi gönderildi: user#${booking.userId}`) // PII loglamıyoruz
+          denenen++
+          const pushOk = await sendPushNotification(booking.user.pushToken, rPush.title, rPush.body)
+          if (pushOk) {
+            teslim++
+            console.log(`📱 Push bildirimi gönderildi: user#${booking.userId}`) // PII loglamıyoruz
+          } else {
+            console.error(`⚠️ Hatırlatma push'u BAŞARISIZ: user#${booking.userId}`)
+          }
         }
-        // reminderSent zaten yukarıda atomik sahiplenmede işaretlendi.
+
+        // Kanal DENENDİ ama hiçbiri teslim edilemedi → sahiplenmeyi geri ver, sonraki tarama denesin.
+        // (Kanal hiç yoksa — e-posta yok, push token yok — bayrak true kalır: denenecek bir şey yok.)
+        if (denenen > 0 && teslim === 0) {
+          await prisma.booking.updateMany({ where: { id: booking.id }, data: { reminderSent: false } })
+          sent--
+          console.error(`↩️ Hatırlatma hiçbir kanaldan gitmedi, tekrar denenecek: booking#${booking.id}`)
+        }
       } catch (e) {
         console.error(`Reminder error for booking ${booking.id}:`, e)
       }

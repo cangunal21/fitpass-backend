@@ -16,6 +16,7 @@ import { seasonInfo } from '../src/utils/season'
 import { ensureBadges } from '../src/utils/ensureBadges'
 import { awardSeasonChampions } from '../src/jobs/championJob'
 import { sendRatingPrompts } from '../src/jobs/ratingPromptJob'
+import { sendRemindersJob } from '../src/jobs/reminderJob'
 import prisma from '../src/utils/prisma'
 
 const PORT = 3199
@@ -3066,6 +3067,88 @@ async function run() {
     const me = (r.json?.leaderboard || []).find((x: any) => x.id === uid)
     if (!me) throw new Error('sadece drop-in\'i olan kullanıcı liderlikte yok (drop-in sayılmıyor)')
     if (me.lessonCount < 1) throw new Error(`drop-in lessonCount ${me.lessonCount} (>=1 bekleniyor)`)
+  })
+
+  // Tur20 — DENETİM BULGUSU: salon rezervasyonlu seansı 12 saatten yakına taşıyabiliyordu.
+  // cancelBooking "derse 12 saatten az kaldıysa iptal yok" diyor → kullanıcı ne derse gidebiliyor
+  // ne parasını geri alabiliyordu. Salon o saate almak istiyorsa seansı SİLEBİLİR (herkes iade alır).
+  await check('Yetki: rezervasyonlu seans 12 saatten YAKINA taşınamaz (iptal hakkı korunur)', async () => {
+    const YV = 990511, YC = 990511, YS = 990511, YU = 990511
+    await prisma.booking.deleteMany({ where: { session: { classId: YC } } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: YS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: YC } }).catch(() => {})
+    await prisma.venue.upsert({ where: { id: YV }, update: { isApproved: true, isActive: true, isSuspended: false }, create: { id: YV, name: 'TasimaSalon', email: `ts${YV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: YC }, update: { venueId: YV, isActive: true }, create: { id: YC, venueId: YV, title: 'TasimaDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const uzak = new Date(Date.now() + 10 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: YS }, update: { classId: YC, startsAt: uzak, endsAt: new Date(uzak.getTime() + 3600000), status: 'open', capacity: 20 }, create: { id: YS, classId: YC, startsAt: uzak, endsAt: new Date(uzak.getTime() + 3600000), capacity: 20, status: 'open' } })
+    await prisma.user.upsert({ where: { id: YU }, update: {}, create: { id: YU, username: `tas_${YU}`, email: `tas_${YU}@x.com`, passwordHash: 'x', fullName: 'Tasima', tierSportCounts: {} } })
+    const vtok = jwt.sign({ venueId: YV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const { trYmd: _ymd } = require('../src/utils/trFormat')
+    const url = `/api/venue/classes/${YC}/sessions/${YS}`
+
+    // REZERVASYON YOKKEN yakına taşımak SERBEST olmalı (kimsenin hakkı yok)
+    const yarin = new Date(Date.now() + 8 * 3600000) // +8 saat → 12'nin içinde
+    const bosTasi = await http(url, { method: 'PUT', token: vtok, body: { date: _ymd(yarin), time: '23:30', capacity: 20 } })
+    if (bosTasi.status !== 200) throw new Error(`rezervasyonsuz seans yakına taşınamadı: ${bosTasi.status} ${bosTasi.text.slice(0, 120)}`)
+
+    // Seansı tekrar uzağa al ve REZERVASYON ekle
+    await http(url, { method: 'PUT', token: vtok, body: { date: _ymd(uzak), time: '20:00', capacity: 20 } })
+    await prisma.booking.create({ data: { userId: YU, sessionId: YS, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `TAS-${Date.now()}` } })
+
+    // Artık 12 saatten yakına taşınamamalı
+    const yakin = await http(url, { method: 'PUT', token: vtok, body: { date: _ymd(new Date(Date.now() + 6 * 3600000)), time: '23:30', capacity: 20 } })
+    if (yakin.status !== 400) throw new Error(`rezervasyonlu seans 12 saatten yakına taşınabildi: ${yakin.status} — kullanıcının iptal hakkı yok oldu`)
+    const kalan = await prisma.class_Session.findUnique({ where: { id: YS }, select: { startsAt: true } })
+    if (!kalan || (kalan.startsAt.getTime() - Date.now()) / 3600000 < 12) throw new Error('red edilmesine rağmen seans yakına taşındı')
+
+    // 12 saatten UZAĞA taşımak hâlâ serbest
+    const uzagaTasi = await http(url, { method: 'PUT', token: vtok, body: { date: _ymd(new Date(Date.now() + 3 * 86400000)), time: '19:00', capacity: 20 } })
+    if (uzagaTasi.status !== 200) throw new Error(`rezervasyonlu seans uzağa taşınamadı: ${uzagaTasi.status} ${uzagaTasi.text.slice(0, 120)}`)
+
+    await prisma.booking.deleteMany({ where: { sessionId: YS } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: YS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: YC } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: YU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: YV } }).catch(() => {})
+  })
+
+  // Tur20 — DENETİM BULGUSU: hatırlatma gönderimi BAŞARISIZ olsa bile reminderSent=true
+  // kalıyordu (bayrak gönderimden ÖNCE, çift-gönderim koruması olarak işaretleniyor). Resend
+  // kesintisi/kota aşımı sırasında o pencereye düşen herkes hatırlatmasız kalıyor, loglar
+  // temiz görünüyordu — hata sessizdi. Artık hiçbir kanal teslim edemezse bayrak geri alınır.
+  await check('Hatırlatma: gönderim başarısızsa reminderSent geri alınır (tekrar denenir)', async () => {
+    const RV = 990501, RC = 990501, RS = 990501, RU1 = 990501, RU2 = 990502
+    await prisma.booking.deleteMany({ where: { session: { classId: RC } } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: RS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: RC } }).catch(() => {})
+    await prisma.venue.upsert({ where: { id: RV }, update: { isApproved: true, isActive: true }, create: { id: RV, name: 'HatirlatmaSalon', email: `hs${RV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: RC }, update: { venueId: RV, isActive: true }, create: { id: RC, venueId: RV, title: 'HatirlatmaDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    // Hatırlatma penceresi: +90..+150 dk → tam ortası
+    const when = new Date(Date.now() + 120 * 60 * 1000)
+    await prisma.class_Session.upsert({ where: { id: RS }, update: { classId: RC, startsAt: when, endsAt: new Date(when.getTime() + 3600000), status: 'open' }, create: { id: RS, classId: RC, startsAt: when, endsAt: new Date(when.getTime() + 3600000), capacity: 20, status: 'open' } })
+
+    // U1: TEK kanalı push ve o da BAŞARISIZ olacak (token 'ExponentPushToken' ile başlamıyor →
+    // sendPushNotification ağa hiç çıkmadan false döner). E-posta kanalı kapalı.
+    await prisma.user.upsert({ where: { id: RU1 }, update: { pushToken: 'gecersiz-token', emailReminders: false }, create: { id: RU1, username: `hat_${RU1}`, email: `hat_${RU1}@x.com`, passwordHash: 'x', fullName: 'Hat1', tierSportCounts: {}, pushToken: 'gecersiz-token', emailReminders: false } })
+    // U2: HİÇBİR kanal yok (push token yok, e-posta kapalı) → denenecek bir şey yok, bayrak KALMALI
+    await prisma.user.upsert({ where: { id: RU2 }, update: { pushToken: null, emailReminders: false }, create: { id: RU2, username: `hat_${RU2}`, email: `hat_${RU2}@x.com`, passwordHash: 'x', fullName: 'Hat2', tierSportCounts: {}, pushToken: null, emailReminders: false } })
+
+    const mk = (uid: number, n: string) => prisma.booking.create({ data: { userId: uid, sessionId: RS, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: n, reminderSent: false } })
+    const b1 = await mk(RU1, `HAT1-${Date.now()}`)
+    const b2 = await mk(RU2, `HAT2-${Date.now()}`)
+
+    await sendRemindersJob()
+
+    const a1 = await prisma.booking.findUnique({ where: { id: b1.id }, select: { reminderSent: true } })
+    if (a1?.reminderSent !== false) throw new Error('gönderim başarısız olmasına rağmen reminderSent=true kaldı — hatırlatma bir daha DENENMEZ')
+    const a2 = await prisma.booking.findUnique({ where: { id: b2.id }, select: { reminderSent: true } })
+    if (a2?.reminderSent !== true) throw new Error('kanalı olmayan kullanıcıda bayrak geri alındı — sonsuz yeniden deneme olur')
+
+    await prisma.booking.deleteMany({ where: { sessionId: RS } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: RS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: RC } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: { in: [RU1, RU2] } } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: RV } }).catch(() => {})
   })
 
   // Tur20 — DENETİM BULGUSU: onayı GERİ ALINMIŞ salon check-in yapmaya devam edebiliyordu.

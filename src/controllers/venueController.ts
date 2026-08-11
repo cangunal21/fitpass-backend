@@ -880,6 +880,7 @@ export const updateSession = async (req: Request, res: Response) => {
     // kontrol ile update arasında yeni rezervasyon girip sınırı yine aşabilirdi
     // (createBooking da aynı satırı kilitler; kilit sırası Class_Session → Booking).
     const CAP_ERR = 'CAPACITY_BELOW_OCCUPANCY'
+    const RESCHED_ERR = 'RESCHEDULE_INSIDE_CANCEL_WINDOW'
     let updated
     try {
       updated = await prisma.$transaction(async (tx) => {
@@ -890,6 +891,18 @@ export const updateSession = async (req: Request, res: Response) => {
         })
         const occupied = occ._sum.groupSize || 0
         if (cap < occupied) throw Object.assign(new Error(CAP_ERR), { occupied })
+
+        // REZERVASYONLU SEANS 12 SAATTEN YAKINA TAŞINAMAZ.
+        // cancelBooking'de "derse 12 saatten az kaldıysa iptal yok" kuralı var. Salon seansı
+        // yakına çekince kullanıcının iptal hakkı HABERSİZ yok oluyordu: 20 Ağustos 20:00'ye
+        // rezervasyon yaptırıp 11 Ağustos 07:00'ye taşınan kullanıcı ne derse gidebiliyor ne
+        // parasını geri alabiliyordu (bildirim gidiyor ama iptal ucu 400 dönüyor).
+        // Salon gerçekten o saate almak istiyorsa seansı SİLEBİLİR — o yol herkesi düzgün
+        // şekilde iade edip bilgilendiriyor (purgeBookingsForSessions).
+        if (occupied > 0) {
+          const saatKala = (startsAt.getTime() - Date.now()) / 3600000
+          if (saatKala < 12) throw Object.assign(new Error(RESCHED_ERR), { saatKala })
+        }
         return tx.class_Session.update({
           where: { id: sessionId },
           data: { startsAt, endsAt, capacity: cap },
@@ -899,6 +912,11 @@ export const updateSession = async (req: Request, res: Response) => {
       if (e?.message === CAP_ERR) {
         return res.status(400).json({
           error: `Bu seansta ${e.occupied} kişilik rezervasyon var; kapasite ${e.occupied} kişinin altına düşürülemez.`,
+        })
+      }
+      if (e?.message === RESCHED_ERR) {
+        return res.status(400).json({
+          error: 'Rezervasyonu olan bir seansı 12 saatten yakına taşıyamazsınız — bu, müşterilerin iptal hakkını ortadan kaldırır. Seansı iptal ederseniz herkese iade yapılır.',
         })
       }
       // (classId, startsAt) DB'de tekil — aynı saate taşıma "Sunucu hatası" değil,

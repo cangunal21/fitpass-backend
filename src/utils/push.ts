@@ -8,8 +8,11 @@ import prisma from './prisma'
 //     kullanıcının token'ı sonsuza dek denenmeye devam ediyordu.
 const PUSH_TIMEOUT_MS = 8000
 
-export const sendPushNotification = async (pushToken: string, title: string, body: string, data?: Record<string, unknown>) => {
-  if (!pushToken?.startsWith('ExponentPushToken')) return
+// Dönüş: gönderim GERÇEKTEN teslim edildiyse true. Eskiden her yolda undefined dönüyordu;
+// çağıran "gitti mi" diye soramıyordu (hatırlatma job'ı bu yüzden başarısız gönderimi
+// başarılı sayıp reminderSent=true bırakıyordu). Mevcut çağıranlar dönüşü yok sayar.
+export const sendPushNotification = async (pushToken: string, title: string, body: string, data?: Record<string, unknown>): Promise<boolean> => {
+  if (!pushToken?.startsWith('ExponentPushToken')) return false
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), PUSH_TIMEOUT_MS)
   try {
@@ -30,7 +33,7 @@ export const sendPushNotification = async (pushToken: string, title: string, bod
     })
     if (!res.ok) {
       console.error('[push FAIL] HTTP', res.status, title)
-      return
+      return false
     }
     const json: any = await res.json().catch(() => null)
     const ticket = Array.isArray(json?.data) ? json.data[0] : json?.data
@@ -41,9 +44,12 @@ export const sendPushNotification = async (pushToken: string, title: string, bod
         // Token artık geçersiz (uygulama silinmiş/yeniden kurulmuş) → bir daha denenmesin
         await prisma.user.updateMany({ where: { pushToken }, data: { pushToken: null } }).catch(() => {})
       }
+      return false
     }
+    return true
   } catch (err: any) {
     console.error('Push notification error:', err?.name === 'AbortError' ? 'timeout' : err)
+    return false
   } finally {
     clearTimeout(timer)
   }

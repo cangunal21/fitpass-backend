@@ -484,6 +484,9 @@ export const sendVenueRegistrationAdminEmail = async (
   })
 }
 
+// Dönüş: sarmalayıcının sonucu ({ error } varsa gönderim BAŞARISIZ). Eskiden sonuç
+// çağırana hiç verilmiyordu; hatırlatma job'ı Resend hatasını göremiyor, reminderSent=true
+// bırakıp kullanıcıyı hatırlatmasız bırakıyordu.
 export const sendReminderEmail = async (to: string, fullName: string, classTitle: string, date: string, time: string, venueName: string, locale?: Locale) => {
   const loc = L(locale)
   const T = tt(loc, {
@@ -494,7 +497,7 @@ export const sendReminderEmail = async (to: string, fullName: string, classTitle
           body1: `Hi <strong>${esc(fullName)}</strong>, just a quick reminder about your class today.`,
           note: "Heads up: you can't cancel within 12 hours of the class." },
   })
-  await resend.emails.send({
+  return await resend.emails.send({
     from: FROM_EMAIL,
     to,
     subject: T.subject,
