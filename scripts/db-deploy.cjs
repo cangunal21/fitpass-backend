@@ -24,7 +24,8 @@
  */
 // .env'i uygulamayla AYNI şekilde yükle: Railway'de DATABASE_URL gerçek bir ortam değişkeni
 // ama yerelde .env'de duruyor. Yüklenmezse betik yerelde "DATABASE_URL tanımlı değil" der.
-try { require('dotenv').config() } catch { /* dotenv yoksa ortam değişkenine güven */ }
+// quiet: dotenv v17+ deploy loglarına üçüncü-taraf reklam satırı basıyor; sussun.
+try { require('dotenv').config({ quiet: true }) } catch { /* dotenv yoksa ortam değişkenine güven */ }
 
 const { execFileSync } = require('child_process')
 const fs = require('fs')
