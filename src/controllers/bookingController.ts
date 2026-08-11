@@ -875,12 +875,14 @@ export const transferBooking = async (req: Request, res: Response) => {
         // (özellikle yüzde) kullanan kullanıcıya fazla iade çıkardı. (ödeme entegrasyonunda karta iade)
         const priceRefund = money(Math.max(0, booking.finalAmount - newFinalAmount))
 
-        // Puanı yeni (daha ucuz olabilen) tutara göre yeniden hesapla. Aksi halde pahalı ders
-        // bookla → ucuza transfer et → fazla puanı tut (redemption gelince istismar) + pointsEarned
-        // bayat kalır. rewardPoints bakiyesi de farkla eşitlenir.
+        // pointsEarned = TAHMİN, bakiye DEĞİL. Puan yalnızca check-in'de kredilenir
+        // (awardAttendanceOnCheckin; createBooking satır ~186 bunu açıkça söylüyor) ve orada
+        // GÜNCEL tier oranıyla yeniden hesaplanıp pointsEarned'a tekrar yazılır. Transfer ise
+        // yalnızca check-in YAPILMAMIŞ rezervasyonda mümkün (aşağıdaki CAS: checkedIn: false)
+        // → bu rezervasyonun puanı bakiyede henüz YOKTUR. Bu yüzden burada yalnız tahmini
+        // tazeliyoruz; bakiyeye DOKUNMUYORUZ.
         const uTier = await tx.user.findUnique({ where: { id: userId }, select: { tier: { select: { pointRate: true } } } })
         const newPoints = newFinalAmount > 0 ? Math.round(newFinalAmount * ((uTier?.tier?.pointRate || 0) / 100)) : 0
-        const pointsDelta = newPoints - booking.pointsEarned
 
         // CAS: yalnızca booking HÂLÂ beklenen durumdaysa (confirmed, kaynak seansta, check-in yok)
         // taşı. booking kilitten önce okundu; eşzamanlı iptal/transfer bu arada durumu değiştirdiyse
@@ -900,20 +902,15 @@ export const transferBooking = async (req: Request, res: Response) => {
         })
         if (flip.count === 0) throw new BookingError('Rezervasyon durumu değişti, transfer yapılamadı. Lütfen tekrar deneyin.', 409)
 
-        // Puan farkını bakiyeye yansıt (ucuz derse geçişte fazla puan geri alınır) + audit satırı.
-        // NEGATİF fark bakiyeyi NEGATİFE düşürmesin (cancelBooking ile aynı invariant): kilitle + clamp.
-        if (pointsDelta !== 0) {
-          let applied = pointsDelta
-          if (pointsDelta < 0) {
-            await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`
-            const cur = await tx.user.findUnique({ where: { id: userId }, select: { rewardPoints: true } })
-            applied = -Math.min(-pointsDelta, cur?.rewardPoints || 0)
-          }
-          if (applied !== 0) {
-            await tx.user.update({ where: { id: userId }, data: { rewardPoints: { increment: applied } } })
-            await tx.rewardPoint.create({ data: { userId, points: applied, source: 'booking_transfer', bookingId } })
-          }
-        }
+        // BAKİYEYE DOKUNULMAZ — burada eskiden `pointsDelta` bakiyeye yansıtılıyordu ve bu,
+        // puan kredilendirmesi rezervasyondan CHECK-IN'e taşındığında geride kalmış bir artıktı:
+        //  • Ucuza transfer (delta < 0): hiç kredilenmemiş puan GERÇEK bakiyeden düşülüyordu.
+        //    Örn. bakiye 100, ₺600 seansı ₺200'e transfer → 100'den 80'e iniyordu; kullanıcı
+        //    başka derslerden kazandığı puanı kaybediyordu (defterde -20 'booking_transfer').
+        //  • Arada tier yükseldiyse (delta > 0): derse hiç gidilmeden bakiyeye puan EKLENİYOR,
+        //    sonra check-in'de aynı ders için ikinci kez puan veriliyordu.
+        // Doğru davranış: yalnız tahmini (pointsEarned) tazele; gerçek kredi check-in'de,
+        // güncel tier oranıyla ve idempotent olarak verilsin.
         const updated = await tx.booking.findUnique({
           where: { id: bookingId },
           include: { session: { include: { class: true } } },

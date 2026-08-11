@@ -1468,7 +1468,13 @@ async function run() {
     await prisma.class_Session.deleteMany({ where: { id: 990171 } })
   })
 
-  await check('Transfer: ucuz derse geçişte puan yeniden hesaplanır + bakiye eşitlenir', async () => {
+  // NOT (Tur20): Bu test eskiden "bakiye de farkla eşitlenir" diye bitiyordu. O beklenti, puanın
+  // REZERVASYONDA kredilendiği eski modelden kalmaydı. Bugün puan yalnız CHECK-IN'de kredileniyor
+  // (createBooking'in kendi yorumu bunu söylüyor; cancelBooking da yalnız checkedIn ise geri alıyor)
+  // ve transfer zaten yalnız checkedIn=false rezervasyonda mümkün → transfer edilebilir bir
+  // rezervasyonun puanı bakiyede HİÇ olamaz. Testin kurduğu "bakiye 2 + pointsEarned 2 + checkedIn
+  // false" durumu artık ULAŞILAMAZ bir durumdu; beklenti bakiyenin DEĞİŞMEMESİ olarak düzeltildi.
+  await check('Transfer: ucuz derse geçişte pointsEarned tazelenir, BAKİYE değişmez', async () => {
     const TV = 990141, TU = 990141
     const scat = await prisma.sportCategory.findFirst({})
     await prisma.venue.upsert({ where: { id: TV }, update: { isApproved: true, isActive: true }, create: { id: TV, name: 'Transfer Salon', email: `trf${TV}@x.com`, passwordHash: 'x', address: 'Adres', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
@@ -1486,7 +1492,7 @@ async function run() {
     if (after?.pointsEarned !== 1) throw new Error(`pointsEarned ${after?.pointsEarned} (1 bekleniyor — ucuz derse göre)`)
     if (after?.finalAmount !== 100) throw new Error(`finalAmount ${after?.finalAmount} (100 bekleniyor)`)
     const up = await prisma.user.findUnique({ where: { id: TU }, select: { rewardPoints: true } })
-    if (up?.rewardPoints !== 1) throw new Error(`rewardPoints ${up?.rewardPoints} (1 bekleniyor — fazla puan geri alındı)`)
+    if (up?.rewardPoints !== 2) throw new Error(`rewardPoints ${up?.rewardPoints} (2 bekleniyor — transfer kredilenmemiş puana DOKUNMAMALI)`)
   })
 
   await check('Kupon: kişi başı limit ikinci kullanımı engeller (400)', async () => {
@@ -3057,6 +3063,54 @@ async function run() {
     const me = (r.json?.leaderboard || []).find((x: any) => x.id === uid)
     if (!me) throw new Error('sadece drop-in\'i olan kullanıcı liderlikte yok (drop-in sayılmıyor)')
     if (me.lessonCount < 1) throw new Error(`drop-in lessonCount ${me.lessonCount} (>=1 bekleniyor)`)
+  })
+
+  // Tur20 — DENETİM BULGUSU: transfer, HİÇ KREDİLENMEMİŞ puanı gerçek bakiyeye yansıtıyordu.
+  // Puan kredilendirmesi rezervasyondan check-in'e taşınınca transferBooking'deki bakiye
+  // senkronu artık yanlış: (a) ucuza transferde kullanıcının BAŞKA derslerden kazandığı puan
+  // düşülüyor, (b) arada tier yükseldiyse derse gitmeden puan ekleniyor ve check-in'de ikinci
+  // kez veriliyordu. Transfer zaten yalnız checkedIn=false rezervasyonda mümkün.
+  await check('Puan: transfer bakiyeye DOKUNMAZ (kredilenmemiş puan düşülmez/eklenmez)', async () => {
+    const TV = 990461, TCA = 990461, TCB = 990462, TSA = 990461, TSB = 990462, TU = 990461
+    await prisma.venue.upsert({ where: { id: TV }, update: { isApproved: true, isActive: true, isSuspended: false }, create: { id: TV, name: 'TransferV', email: `tv${TV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: TCA }, update: { basePrice: 600, isActive: true, venueId: TV }, create: { id: TCA, venueId: TV, title: 'PahalıT', category: catName, basePrice: 600, durationMinutes: 60, capacity: 20, isActive: true } })
+    await prisma.class.upsert({ where: { id: TCB }, update: { basePrice: 200, isActive: true, venueId: TV }, create: { id: TCB, venueId: TV, title: 'UcuzT', category: catName, basePrice: 200, durationMinutes: 60, capacity: 20, isActive: true } })
+    const fut = new Date(Date.now() + 2 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: TSA }, update: { classId: TCA, startsAt: fut, status: 'open', capacity: 20 }, create: { id: TSA, classId: TCA, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), capacity: 20, status: 'open' } })
+    await prisma.class_Session.upsert({ where: { id: TSB }, update: { classId: TCB, startsAt: fut, status: 'open', capacity: 20 }, create: { id: TSB, classId: TCB, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), capacity: 20, status: 'open' } })
+    // Bakiyesi OLAN kullanıcı: başka derslerden kazanılmış 100 puan
+    await prisma.booking.deleteMany({ where: { userId: TU } }).catch(() => {})
+    await prisma.rewardPoint.deleteMany({ where: { userId: TU } }).catch(() => {})
+    await prisma.user.upsert({ where: { id: TU }, update: { rewardPoints: 100, tierId: 1 }, create: { id: TU, username: `trf_${TU}`, email: `trf_${TU}@x.com`, passwordHash: 'x', fullName: 'Trf', tierId: 1, tierSportCounts: {}, rewardPoints: 100 } })
+    const tok = jwt.sign({ userId: TU, email: `trf_${TU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+
+    const bk = await http('/api/bookings', { method: 'POST', token: tok, body: { sessionId: TSA } })
+    if (bk.status !== 201) throw new Error(`kurulum booking: ${bk.status} ${bk.text.slice(0, 120)}`)
+    const bid = bk.json?.booking?.id
+    // Rezervasyon bakiyeyi DEĞİŞTİRMEMELİ (puan check-in'de verilir)
+    const uAfterBook = await prisma.user.findUnique({ where: { id: TU }, select: { rewardPoints: true } })
+    if (uAfterBook?.rewardPoints !== 100) throw new Error(`rezervasyon bakiyeyi değiştirdi: ${uAfterBook?.rewardPoints} (100 bekleniyor)`)
+
+    const tr = await http(`/api/bookings/${bid}/transfer`, { method: 'PUT', token: tok, body: { targetSessionId: TSB } })
+    if (tr.status !== 200) throw new Error(`transfer: ${tr.status} ${tr.text.slice(0, 140)}`)
+
+    // ASIL İDDİA: ucuza transfer bakiyeyi DÜŞÜRMEMELİ
+    const uAfter = await prisma.user.findUnique({ where: { id: TU }, select: { rewardPoints: true } })
+    if (uAfter?.rewardPoints !== 100) throw new Error(`transfer bakiyeyi değiştirdi: ${uAfter?.rewardPoints} (100 bekleniyor) — kredilenmemiş puan bakiyeden düşülüyor`)
+    // Defterde transfer kaynaklı satır OLMAMALI
+    const defter = await prisma.rewardPoint.findMany({ where: { userId: TU } })
+    if (defter.length !== 0) throw new Error(`transfer defter satırı yazdı: ${JSON.stringify(defter.map(d => ({ p: d.points, s: d.source })))}`)
+    // pointsEarned tahmini yine de tazelenmeli (ucuz seansa göre)
+    const b1 = await prisma.booking.findUnique({ where: { id: bid }, select: { pointsEarned: true, finalAmount: true, sessionId: true } })
+    if (b1?.sessionId !== TSB) throw new Error('transfer seansı taşımadı')
+    if (b1?.finalAmount !== 200) throw new Error(`yeni tutar 200 olmalı, ${b1?.finalAmount}`)
+
+    await prisma.booking.deleteMany({ where: { userId: TU } }).catch(() => {})
+    await prisma.rewardPoint.deleteMany({ where: { userId: TU } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: { in: [TSA, TSB] } } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: { in: [TCA, TCB] } } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: TU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: TV } }).catch(() => {})
   })
 
   // Tur20 — DENETİM BULGUSU: salon/eğitmen realm'inde parola değişimi ESKİ JWT'leri iptal
