@@ -252,6 +252,11 @@ model Venue {
   phone                String?
   email                String?       @unique
   passwordHash         String?
+  // Parola en son ne zaman değişti. Salon/eğitmen token'ları 7 gün geçerli ve refresh-token
+  // tablosu YOK → parola değişince eski JWT'leri iptal edecek başka bir kanca yoktu: ele
+  // geçirilmiş oturum, parola sıfırlansa bile 7 gün tam yetkiyle çalışmaya devam ediyordu.
+  // venueAuthMiddleware token'ın iat'ini bu değerle karşılaştırıp eskileri reddeder.
+  passwordChangedAt    DateTime?
   website              String?
   coverImageUrl        String?
   images               Json          @default("[]")
@@ -321,6 +326,7 @@ model Instructor {
   // veri-kaybı uyarısına takılmaz (salon-kontrollü, düşük hacimli oluşturma). Login findFirst kullanır.
   email        String? // eğitmen girişi + davet e-postası
   passwordHash String? // eğitmen kendi şifresini belirleyince (davet/reset) dolar
+  passwordChangedAt DateTime? // bkz. Venue.passwordChangedAt — eski JWT'leri iptal eder
   inviteStatus String   @default("none") // none | pending (davet gönderildi) | active (giriş kurdu)
   avgRating    Float    @default(0)
   totalReviews Int      @default(0)

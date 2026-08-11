@@ -24,11 +24,19 @@ export const instructorAuthMiddleware = async (req: Request, res: Response, next
     // Token 7 gün geçerli → login anındaki isActive'e güvenme; her istekte tazele (60sn cache, ucuz).
     // Silinmiş ya da pasifleştirilmiş eğitmen token'ı, süresi dolana kadar içeride kalmasın.
     const state = await cached(`instructorActive:${decoded.instructorId}`, 60000, async () => {
-      const inst = await prisma.instructor.findUnique({ where: { id: decoded.instructorId }, select: { isActive: true } })
-      return inst ? (inst.isActive ? 'active' : 'inactive') : 'missing'
+      const inst = await prisma.instructor.findUnique({ where: { id: decoded.instructorId }, select: { isActive: true, passwordChangedAt: true } })
+      if (!inst) return { s: 'missing' as const, pwAt: null as number | null }
+      return {
+        s: inst.isActive ? ('active' as const) : ('inactive' as const),
+        pwAt: inst.passwordChangedAt ? Math.floor(inst.passwordChangedAt.getTime() / 1000) : null,
+      }
     })
-    if (state === 'missing') return res.status(401).json({ error: 'Geçersiz token.' })
-    if (state === 'inactive') return res.status(403).json({ error: 'Eğitmen hesabınız aktif değil.' })
+    if (state.s === 'missing') return res.status(401).json({ error: 'Geçersiz token.' })
+    if (state.s === 'inactive') return res.status(403).json({ error: 'Eğitmen hesabınız aktif değil.' })
+    // Parola değişimi eski token'ları iptal eder — bkz. venueAuth.ts (aynı gerekçe, aynı desen).
+    if (state.pwAt && typeof decoded.iat === 'number' && decoded.iat < state.pwAt) {
+      return res.status(401).json({ error: 'Şifreniz değiştirildi, lütfen tekrar giriş yapın.' })
+    }
     ;(req as any).instructorId = decoded.instructorId
     next()
   } catch {

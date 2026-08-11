@@ -11,6 +11,7 @@ import crypto from 'crypto'
 import { trAddDays, trDate, trInstant, trTime, trWeekday, trYmd } from '../utils/trFormat'
 import { reversiblePoints } from '../utils/tier'
 import { cityIdOfNeighborhood } from '../utils/geo'
+import { invalidate } from '../utils/cache'
 import { notifyFields, notifyPush } from '../utils/notifyText'
 import { Locale } from '../utils/locale'
 const money = (x: number) => Math.round(x * 100) / 100 // bookingController ile aynı 2-ondalık yuvarlama
@@ -351,7 +352,11 @@ export const changeVenuePassword = async (req: Request, res: Response) => {
     if (!isValid) return res.status(401).json({ error: 'Mevcut şifre hatalı.' })
 
     const newHash = await bcrypt.hash(newPassword, 12)
-    await prisma.venue.update({ where: { id: venueId }, data: { passwordHash: newHash } })
+    // passwordChangedAt: salon token'ı 7 gün geçerli ve refresh tablosu YOK → parola değişince
+    // eski JWT'leri iptal edecek başka kanca yok. Damga atılmazsa ele geçirilmiş oturum, parola
+    // değiştirilse bile 7 gün boyunca IBAN/TCKN okumaya ve ders silmeye devam ederdi.
+    await prisma.venue.update({ where: { id: venueId }, data: { passwordHash: newHash, passwordChangedAt: new Date() } })
+    invalidate(`venueState:${venueId}`) // 60sn cache → iptal ANINDA etki etsin
 
     return res.json({ message: 'Şifre başarıyla değiştirildi.' })
   } catch (err) {
@@ -992,10 +997,11 @@ export const venueResetPassword = async (req: Request, res: Response) => {
         data: { used: true },
       })
       if (claim.count === 0) return false
-      await tx.venue.update({ where: { id: resetToken.venueId }, data: { passwordHash } })
+      await tx.venue.update({ where: { id: resetToken.venueId }, data: { passwordHash, passwordChangedAt: new Date() } })
       return true
     })
     if (!ok) return res.status(400).json({ error: 'Geçersiz veya süresi dolmuş link.' })
+    invalidate(`venueState:${resetToken.venueId}`) // eski token'lar ANINDA geçersiz olsun
     return res.json({ message: 'Şifre güncellendi.' })
   } catch (err) {
     console.error(err)

@@ -24,11 +24,24 @@ export const venueAuthMiddleware = async (req: Request, res: Response, next: Nex
     // duruma güvenme. Askıya alınan/pasif/silinen salonun token'ı OKUMA uçlarında (gelir/IBAN/TCKN/
     // rezervasyon) süresi dolana kadar kalmasın. 60sn cache (ucuz). suspendVenue cache'i geçersiz kılar.
     const state = await cached(`venueState:${decoded.venueId}`, 60000, async () => {
-      const v = await prisma.venue.findUnique({ where: { id: decoded.venueId }, select: { isActive: true, isSuspended: true } })
-      return v ? ((v.isSuspended || v.isActive === false) ? 'inactive' : 'active') : 'missing'
+      const v = await prisma.venue.findUnique({ where: { id: decoded.venueId }, select: { isActive: true, isSuspended: true, passwordChangedAt: true } })
+      if (!v) return { s: 'missing' as const, pwAt: null as number | null }
+      return {
+        s: (v.isSuspended || v.isActive === false) ? ('inactive' as const) : ('active' as const),
+        // saniyeye yuvarla: JWT iat saniye cinsinden
+        pwAt: v.passwordChangedAt ? Math.floor(v.passwordChangedAt.getTime() / 1000) : null,
+      }
     })
-    if (state === 'missing') return res.status(401).json({ error: 'Geçersiz token.' })
-    if (state === 'inactive') return res.status(403).json({ error: 'Salonunuz askıya alınmış veya pasif.' })
+    if (state.s === 'missing') return res.status(401).json({ error: 'Geçersiz token.' })
+    if (state.s === 'inactive') return res.status(403).json({ error: 'Salonunuz askıya alınmış veya pasif.' })
+    // PAROLA DEĞİŞİMİ ESKİ TOKEN'LARI İPTAL EDER. Salon token'ı 7 gün geçerli ve refresh-token
+    // tablosu yok; bu karşılaştırma olmadan ele geçirilmiş bir oturum, parola sıfırlansa bile
+    // 7 gün boyunca IBAN/TCKN okumaya ve ders silmeye devam ediyordu (kullanıcı realm'i bunu
+    // zaten doğru yapıyor: authController parola yazmasıyla aynı transaction'da refresh'leri iptal ediyor).
+    // Kesin küçüktür: parola değişimiyle AYNI saniyede alınan taze token geçerli kalsın.
+    if (state.pwAt && typeof decoded.iat === 'number' && decoded.iat < state.pwAt) {
+      return res.status(401).json({ error: 'Şifreniz değiştirildi, lütfen tekrar giriş yapın.' })
+    }
     ;(req as any).venueId = decoded.venueId
     next()
   } catch {

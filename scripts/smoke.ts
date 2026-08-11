@@ -3059,6 +3059,47 @@ async function run() {
     if (me.lessonCount < 1) throw new Error(`drop-in lessonCount ${me.lessonCount} (>=1 bekleniyor)`)
   })
 
+  // Tur20 — DENETİM BULGUSU: salon/eğitmen realm'inde parola değişimi ESKİ JWT'leri iptal
+  // etmiyordu. Token 7 gün geçerli, refresh tablosu yok → ele geçirilmiş oturum, parola
+  // sıfırlansa bile 7 gün IBAN/TCKN okumaya ve ders silmeye devam ediyordu. Kullanıcı realm'i
+  // bunu zaten doğru yapıyordu (asimetri yalnız salon/eğitmendeydi).
+  await check('Yetki: salon parola değişimi ESKİ token\'ları iptal eder (cache dahil)', async () => {
+    const PV = 990451 // 9904xx bloğunda KULLANILMAYAN id (990431 eski bir testin salonuyla çakışıyordu)
+    const pw = 'EskiParola123!'
+    const hash = await bcrypt.hash(pw, 12)
+    // email UPDATE dalında da yazılıyor: aynı id'den kalma bayat bir satır varsa e-postası
+    // farklı kalıp login adımını sahte-kırmızı yapıyordu.
+    await prisma.venue.upsert({
+      where: { id: PV },
+      update: { email: `pv${PV}@x.com`, passwordHash: hash, passwordChangedAt: null, isApproved: true, isActive: true, isSuspended: false },
+      create: { id: PV, name: 'ParolaSalon', email: `pv${PV}@x.com`, passwordHash: hash, address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 },
+    })
+    // iat'i GEÇMİŞE al: parola damgasıyla aynı saniyeye düşüp testi sahte-yeşil yapmasın
+    const eski = jwt.sign({ venueId: PV, role: 'venue', iat: Math.floor(Date.now() / 1000) - 120 }, JWT_SECRET, { expiresIn: '7d' })
+
+    // 1) Önce çalıştığını doğrula — ve bu istek venueState cache'ini DOLDURSUN
+    const once = await http('/api/venue/me', { token: eski })
+    if (once.status !== 200) throw new Error(`kurulum: eski token baştan çalışmıyor (${once.status})`)
+
+    // 2) Parolayı panelden değiştir
+    const chg = await http('/api/venue/change-password', { method: 'PUT', token: eski, body: { currentPassword: pw, newPassword: 'YeniParola123!' } })
+    if (chg.status !== 200) throw new Error(`parola değiştirilemedi: ${chg.status} ${chg.text.slice(0, 120)}`)
+
+    // 3) ESKİ token artık reddedilmeli — 60sn cache invalidate edilmezse burası hâlâ 200 döner
+    const sonra = await http('/api/venue/me', { token: eski })
+    if (sonra.status === 200) throw new Error('parola değiştikten SONRA eski token hâlâ geçerli (iptal yok ya da cache düşmedi)')
+    if (sonra.status !== 401) throw new Error(`eski token için 401 bekleniyordu, ${sonra.status} geldi`)
+
+    // 4) YENİ giriş çalışmalı (iptal mekanizması yeni oturumu da kilitlemesin)
+    const login = await http('/api/venue/login', { method: 'POST', body: { email: `pv${PV}@x.com`, password: 'YeniParola123!' } })
+    if (login.status !== 200 || !login.json?.token) throw new Error(`yeni parolayla giriş başarısız: ${login.status} ${login.text.slice(0, 140)}`)
+    const yeniTok = login.json.token
+    const yeni = await http('/api/venue/me', { token: yeniTok })
+    if (yeni.status !== 200) throw new Error(`yeni token reddedildi: ${yeni.status} — iptal kapısı taze oturumu da kesiyor`)
+
+    await prisma.venue.deleteMany({ where: { id: PV } }).catch(() => {})
+  })
+
   // Tur20 — DENETİM BULGUSU: favori listesi sözleşmesi. Uç DÜZ salon nesnesi döndürüyor
   // (favs.map(f => f.venue)); mobil ekran `{ venue: {...} }` sarmalayıcısı bekliyordu → boş
   // kartlar + karta dokununca çökme. Web aynı ucu düz biçimde doğru tüketiyordu, yani sunucu

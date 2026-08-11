@@ -5,6 +5,7 @@ import prisma from '../utils/prisma'
 import { generateToken } from '../utils/jwt'
 import { isValidEmail, MIN_PASSWORD } from '../utils/validate'
 import { sendInstructorPasswordResetEmail } from '../utils/email'
+import { invalidate } from '../utils/cache'
 
 // Eğitmen (instructor) auth realm — venue realm'inin aynası. GÜVENLİK: token payload'ı SADECE
 // {instructorId, email, role:'instructor'} taşır; venueId ASLA eklenmez → salon finans/check-in
@@ -109,10 +110,12 @@ export const instructorSetPassword = async (req: Request, res: Response) => {
         data: { used: true },
       })
       if (claimed.count === 0) return false
-      await tx.instructor.update({ where: { id: resetToken.instructorId }, data: { passwordHash, inviteStatus: 'active' } })
+      // passwordChangedAt: bkz. Venue — eğitmen token'ı da 7 gün, refresh yok.
+      await tx.instructor.update({ where: { id: resetToken.instructorId }, data: { passwordHash, inviteStatus: 'active', passwordChangedAt: new Date() } })
       return true
     })
     if (!ok) return res.status(400).json({ error: 'Geçersiz veya süresi dolmuş link.' })
+    invalidate(`instructorActive:${resetToken.instructorId}`) // eski token'lar ANINDA geçersiz olsun
     return res.json({ message: 'Şifre belirlendi. Artık giriş yapabilirsiniz.' })
   } catch (err) {
     console.error(err)
