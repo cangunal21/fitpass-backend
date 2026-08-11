@@ -80,9 +80,12 @@ export const NOTIFY: Record<string, Entry> = {
     pushBody: { tr: '{classTitle} · {date} {time}.{refund}', en: '{classTitle} · {date} {time}.{refund}' },
   },
   session_rescheduled: {
+    // İADE HAKKI METNE YAZILIR: saati salon değiştirdiği için kullanıcı, normal iptal
+    // penceresinden (12 saat kala iptal yok, 12-24 saat yarım iade) MUAF olarak tam iade
+    // ile iptal edebilir (cancelBooking: rescheduledAt). Hakkı bilmeyen kullanamaz.
     body: {
-      tr: '"{classTitle}" dersinin saati değişti: yeni tarih {date} {time}.',
-      en: '"{classTitle}" has been rescheduled: new date {date} {time}.',
+      tr: '"{classTitle}" dersinin saati değişti: yeni tarih {date} {time}. Yeni saat sana uymuyorsa ders başlayana kadar ÜCRETSİZ iptal edebilirsin (tam iade).',
+      en: '"{classTitle}" has been rescheduled: new date {date} {time}. If the new time does not work for you, you can cancel FREE of charge until the class starts (full refund).',
     },
     pushTitle: { tr: 'Ders saati değişti', en: 'Class time changed' },
   },

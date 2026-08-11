@@ -933,7 +933,14 @@ export const updateSession = async (req: Request, res: Response) => {
     // hatırlatma kalıcı bastırılıyordu).
     if (eskiStartsAt.getTime() !== startsAt.getTime()) {
       const yeniTarih = trDate(startsAt), yeniSaat = trTime(startsAt)
-      await prisma.booking.updateMany({ where: { sessionId, status: 'confirmed' }, data: { reminderSent: false } }).catch(() => {})
+      // rescheduledAt DAMGASI: yeni saat kullanıcının tercihi değil → iptal penceresi kuralından
+      // muaf tutulur ve TAM İADE hakkı doğar (cancelBooking bu alanı okuyor). reminderSent=false
+      // ile birlikte tek yazmada: düzeltilmiş hatırlatma tekrar gitsin.
+      // .catch YOK: damga atılamazsa kullanıcı iade hakkını sessizce kaybeder — hata görünsün.
+      await prisma.booking.updateMany({
+        where: { sessionId, status: 'confirmed' },
+        data: { reminderSent: false, rescheduledAt: new Date() },
+      })
       const affected = await prisma.booking.findMany({
         where: { sessionId, status: 'confirmed' },
         select: { user: { select: { id: true, email: true, fullName: true, pushToken: true, locale: true } } },

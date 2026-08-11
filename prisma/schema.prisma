@@ -485,6 +485,12 @@ model Booking {
   checkInCode      String?        @unique
   checkedIn        Boolean        @default(false)
   checkedInAt      DateTime?
+  // SALON DERSİ ERTELEDİ: seansın saati salon tarafından değiştirildiğinde damgalanır.
+  // Yeni saat kullanıcının tercihi DEĞİLDİR → iptal penceresi kuralı (12 saat kala iptal yok,
+  // 12-24 saat yarım iade) bu rezervasyonda uygulanmaz; kullanıcı ders başlayana kadar
+  // TAM İADE ile iptal edebilir. Kullanıcı kendi isteğiyle transfer ederse damga silinir
+  // (yeni seansı kendi seçmiş olur).
+  rescheduledAt    DateTime?
   coupon           Coupon?        @relation(fields: [couponId], references: [id])
   couponId         Int?
   creditUsed       Int            @default(0)

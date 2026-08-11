@@ -458,9 +458,11 @@ export const cancelBooking = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Rezervasyon zaten iptal edilmiş.' })
     }
 
-    // İptal politikası: 12 saat içinde iptal yok, 12-24 saat yarım iade, 24 saat üstü tam iade
+    // İptal politikası: 12 saat içinde iptal yok, 12-24 saat yarım iade, 24 saat üstü tam iade.
+    // MUAFİYET: seansı SALON ertelediyse (booking.rescheduledAt) bu kural uygulanmaz — yeni saat
+    // kullanıcının tercihi değil. Ders başlayana kadar TAM İADE ile iptal edebilir.
     const sessionStartsAt = booking.session?.startsAt
-    if (sessionStartsAt) {
+    if (sessionStartsAt && !booking.rescheduledAt) {
       const now = new Date()
       const hoursUntilSession = (new Date(sessionStartsAt).getTime() - now.getTime()) / (1000 * 60 * 60)
 
@@ -498,8 +500,13 @@ export const cancelBooking = async (req: Request, res: Response) => {
       const freshHours = fresh.session?.startsAt
         ? (new Date(fresh.session.startsAt).getTime() - Date.now()) / 3600000
         : 999
-      if (freshHours < 12) return { kind: 'tooLate' as const, hoursLeft: Math.round(freshHours * 10) / 10 }
-      const rType = freshHours >= 24 ? 'full' : 'half'
+      // SALON ERTELEDİ → iptal penceresi kuralı uygulanmaz, iade TAM. Kullanıcı bu saati
+      // seçmedi; "12 saat kala iptal yok" ve "12-24 saat yarım iade" onun kusuru değil.
+      const salonErteledi = !!fresh.rescheduledAt
+      if (!salonErteledi && freshHours < 12) return { kind: 'tooLate' as const, hoursLeft: Math.round(freshHours * 10) / 10 }
+      // Ders BAŞLADIYSA artık iptal edilemez (ertelenmiş olsa bile) — geçmiş seansa iade yok.
+      if (freshHours <= 0) return { kind: 'tooLate' as const, hoursLeft: Math.round(freshHours * 10) / 10 }
+      const rType = (salonErteledi || freshHours >= 24) ? 'full' : 'half'
       const rAmount = rType === 'full' ? fresh.finalAmount : money((fresh.finalAmount || 0) / 2)
 
       // CAS'i transferBooking:783 ile SİMETRİK yap: yalnız status değil, matematiği besleyen
@@ -897,6 +904,11 @@ export const transferBooking = async (req: Request, res: Response) => {
             finalAmount: newFinalAmount,
             discountAmount: couponDiscount,
             pointsEarned: newPoints,
+            // Salon-erteleme damgası TRANSFERDE SİLİNİR: kullanıcı yeni seansı KENDİ seçti,
+            // dolayısıyla ertelemeden doğan "pencere kuralından muaf tam iade" hakkı tükenir.
+            // (Silinmezse kullanıcı bir kez ertelenen dersi istediği seansa taşıyıp süresiz
+            // tam-iade hakkı taşırdı.)
+            rescheduledAt: null,
             notes: `${booking.notes ? booking.notes + ' | ' : ''}Transfer edildi${priceRefund > 0 ? ` (₺${priceRefund} iade)` : ''}`,
           },
         })

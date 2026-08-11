@@ -2849,7 +2849,11 @@ async function run() {
     // 1) Backend kuralı hâlâ 12/24 mü? (kural değişirse metinler de gözden geçirilmeli)
     const bc = fs.readFileSync(path.join(__dirname, '../src/controllers/bookingController.ts'), 'utf8')
     if (!/freshHours\s*<\s*12/.test(bc)) throw new Error('12 saat iptal kapısı bulunamadı — kural değişmişse metinler de güncellenmeli')
-    if (!/freshHours\s*>=\s*24\s*\?\s*'full'\s*:\s*'half'/.test(bc)) throw new Error('24s tam / 12-24s yarım kuralı bulunamadı — metinler gözden geçirilmeli')
+    // Tur20: kurala MUAFİYET eklendi (salon ertelerse tam iade) → regex yeni ifadeye göre.
+    if (!/salonErteledi\s*\|\|\s*freshHours\s*>=\s*24\s*\)\s*\?\s*'full'\s*:\s*'half'/.test(bc)) throw new Error('24s tam / 12-24s yarım kuralı bulunamadı — metinler gözden geçirilmeli')
+    // Erteleme muafiyeti kullanıcıya DUYURULMALI: hakkı bilmeyen kullanamaz.
+    const nt = fs.readFileSync(path.join(__dirname, '../src/utils/notifyText.ts'), 'utf8')
+    if (!/session_rescheduled[\s\S]{0,600}?ÜCRETSİZ iptal/.test(nt)) throw new Error('erteleme bildiriminde ücretsiz iptal hakkı yazmıyor — kullanıcı hakkından habersiz kalır')
     // 2) İstemci metinleri "12 saate kadar ücretsiz" gibi yanıltıcı ifade İÇERMEMELİ
     const misleading = [/12 saat öncesine kadar ücretsiz/i, /free cancellation up to 12 hours/i, /cancel for free up to 12 hours/i]
     const files = [
@@ -3069,6 +3073,55 @@ async function run() {
     if (me.lessonCount < 1) throw new Error(`drop-in lessonCount ${me.lessonCount} (>=1 bekleniyor)`)
   })
 
+  // Tur20 — ÜRÜN KARARI (kullanıcı onayı): SALON dersi ertelediğinde kullanıcı, iptal
+  // penceresi kuralından muaf olarak TAM İADE ile iptal edebilmeli. Yeni saat onun tercihi
+  // değil; "12-24 saat kala yarım iade" cezasını salonun kararı yüzünden ödememeli.
+  await check('İptal: salon erteleyince kullanıcı pencere kuralından muaf TAM iade alır', async () => {
+    const EV = 990521, EC = 990521, ES = 990521, EU = 990521
+    await prisma.booking.deleteMany({ where: { session: { classId: EC } } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: ES } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: EC } }).catch(() => {})
+    await prisma.venue.upsert({ where: { id: EV }, update: { isApproved: true, isActive: true, isSuspended: false }, create: { id: EV, name: 'ErtelemeSalon', email: `es${EV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: EC }, update: { venueId: EV, isActive: true, basePrice: 200 }, create: { id: EC, venueId: EV, title: 'ErtelemeDers', category: catName, basePrice: 200, durationMinutes: 60, capacity: 20, isActive: true } })
+    await prisma.user.upsert({ where: { id: EU }, update: {}, create: { id: EU, username: `ert_${EU}`, email: `ert_${EU}@x.com`, passwordHash: 'x', fullName: 'Erteleme', tierSportCounts: {} } })
+    const utok = jwt.sign({ userId: EU, email: `ert_${EU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const vtok = jwt.sign({ venueId: EV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const { trYmd: _y, trTime: _t } = require('../src/utils/trFormat')
+    const url = `/api/venue/classes/${EC}/sessions/${ES}`
+    const hedefE = (d: Date) => ({ date: _y(d), time: _t(d) }) // sabit saat yazmak flaky yapıyor
+
+    // KONTROL 1: erteleme YOKKEN, 12-24 saat aralığı YARIM iade olmalı (mevcut politika bozulmasın)
+    const yirmiSaat = new Date(Date.now() + 20 * 3600000)
+    await prisma.class_Session.upsert({ where: { id: ES }, update: { classId: EC, startsAt: yirmiSaat, endsAt: new Date(yirmiSaat.getTime() + 3600000), status: 'open', capacity: 20 }, create: { id: ES, classId: EC, startsAt: yirmiSaat, endsAt: new Date(yirmiSaat.getTime() + 3600000), capacity: 20, status: 'open' } })
+    const bk1 = await http('/api/bookings', { method: 'POST', token: utok, body: { sessionId: ES } })
+    if (bk1.status !== 201) throw new Error(`kurulum booking: ${bk1.status} ${bk1.text.slice(0, 120)}`)
+    const c1 = await http(`/api/bookings/${bk1.json.booking.id}/cancel`, { method: 'PUT', token: utok })
+    if (c1.status !== 200) throw new Error(`kontrol iptali: ${c1.status} ${c1.text.slice(0, 120)}`)
+    if (!/Yarım iade/.test(c1.json?.message || '')) throw new Error(`ertelenmemiş 20 saatlik rezervasyon YARIM iade almalıydı: ${c1.json?.message}`)
+
+    // ASIL SENARYO: uzak bir seansa rezervasyon → salon 20 saate ÇEKİYOR → tam iade hakkı
+    const uzak = new Date(Date.now() + 10 * 86400000)
+    await prisma.class_Session.update({ where: { id: ES }, data: { startsAt: uzak, endsAt: new Date(uzak.getTime() + 3600000) } })
+    const bk2 = await http('/api/bookings', { method: 'POST', token: utok, body: { sessionId: ES } })
+    if (bk2.status !== 201) throw new Error(`2. booking: ${bk2.status} ${bk2.text.slice(0, 120)}`)
+    const bid = bk2.json.booking.id
+
+    const tasi = await http(url, { method: 'PUT', token: vtok, body: { ...hedefE(yirmiSaat), capacity: 20 } })
+    if (tasi.status !== 200) throw new Error(`salon ertelemesi başarısız: ${tasi.status} ${tasi.text.slice(0, 140)}`)
+    const damga = await prisma.booking.findUnique({ where: { id: bid }, select: { rescheduledAt: true } })
+    if (!damga?.rescheduledAt) throw new Error('erteleme damgası (rescheduledAt) atılmadı — kullanıcı iade hakkını kaybeder')
+
+    const c2 = await http(`/api/bookings/${bid}/cancel`, { method: 'PUT', token: utok })
+    if (c2.status !== 200) throw new Error(`ertelenen rezervasyon iptal edilemedi: ${c2.status} ${c2.text.slice(0, 140)}`)
+    if (!/Tam iade/.test(c2.json?.message || '')) throw new Error(`salon ertelediği hâlde TAM iade verilmedi: ${c2.json?.message}`)
+
+    await prisma.booking.deleteMany({ where: { sessionId: ES } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: ES } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: EC } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: EU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: EV } }).catch(() => {})
+  })
+
   // Tur20 — DENETİM BULGUSU: salon rezervasyonlu seansı 12 saatten yakına taşıyabiliyordu.
   // cancelBooking "derse 12 saatten az kaldıysa iptal yok" diyor → kullanıcı ne derse gidebiliyor
   // ne parasını geri alabiliyordu. Salon o saate almak istiyorsa seansı SİLEBİLİR (herkes iade alır).
@@ -3083,26 +3136,28 @@ async function run() {
     await prisma.class_Session.upsert({ where: { id: YS }, update: { classId: YC, startsAt: uzak, endsAt: new Date(uzak.getTime() + 3600000), status: 'open', capacity: 20 }, create: { id: YS, classId: YC, startsAt: uzak, endsAt: new Date(uzak.getTime() + 3600000), capacity: 20, status: 'open' } })
     await prisma.user.upsert({ where: { id: YU }, update: {}, create: { id: YU, username: `tas_${YU}`, email: `tas_${YU}@x.com`, passwordHash: 'x', fullName: 'Tasima', tierSportCounts: {} } })
     const vtok = jwt.sign({ venueId: YV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
-    const { trYmd: _ymd } = require('../src/utils/trFormat')
+    const { trYmd: _ymd, trTime: _hm } = require('../src/utils/trFormat')
     const url = `/api/venue/classes/${YC}/sessions/${YS}`
+    // Hedefin KENDİ İstanbul gün+saatini kullan. Sabit bir saat ('23:30') yazmak, testin koştuğu
+    // saate göre hedefi gün sınırının ötesine atıp 12 saatten UZAĞA düşürebiliyordu (flaky).
+    const hedef = (ms: number) => { const d = new Date(Date.now() + ms); return { date: _ymd(d), time: _hm(d) } }
 
     // REZERVASYON YOKKEN yakına taşımak SERBEST olmalı (kimsenin hakkı yok)
-    const yarin = new Date(Date.now() + 8 * 3600000) // +8 saat → 12'nin içinde
-    const bosTasi = await http(url, { method: 'PUT', token: vtok, body: { date: _ymd(yarin), time: '23:30', capacity: 20 } })
+    const bosTasi = await http(url, { method: 'PUT', token: vtok, body: { ...hedef(8 * 3600000), capacity: 20 } })
     if (bosTasi.status !== 200) throw new Error(`rezervasyonsuz seans yakına taşınamadı: ${bosTasi.status} ${bosTasi.text.slice(0, 120)}`)
 
     // Seansı tekrar uzağa al ve REZERVASYON ekle
-    await http(url, { method: 'PUT', token: vtok, body: { date: _ymd(uzak), time: '20:00', capacity: 20 } })
+    await http(url, { method: 'PUT', token: vtok, body: { ...hedef(10 * 86400000), capacity: 20 } })
     await prisma.booking.create({ data: { userId: YU, sessionId: YS, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `TAS-${Date.now()}` } })
 
     // Artık 12 saatten yakına taşınamamalı
-    const yakin = await http(url, { method: 'PUT', token: vtok, body: { date: _ymd(new Date(Date.now() + 6 * 3600000)), time: '23:30', capacity: 20 } })
+    const yakin = await http(url, { method: 'PUT', token: vtok, body: { ...hedef(6 * 3600000), capacity: 20 } })
     if (yakin.status !== 400) throw new Error(`rezervasyonlu seans 12 saatten yakına taşınabildi: ${yakin.status} — kullanıcının iptal hakkı yok oldu`)
     const kalan = await prisma.class_Session.findUnique({ where: { id: YS }, select: { startsAt: true } })
     if (!kalan || (kalan.startsAt.getTime() - Date.now()) / 3600000 < 12) throw new Error('red edilmesine rağmen seans yakına taşındı')
 
     // 12 saatten UZAĞA taşımak hâlâ serbest
-    const uzagaTasi = await http(url, { method: 'PUT', token: vtok, body: { date: _ymd(new Date(Date.now() + 3 * 86400000)), time: '19:00', capacity: 20 } })
+    const uzagaTasi = await http(url, { method: 'PUT', token: vtok, body: { ...hedef(3 * 86400000), capacity: 20 } })
     if (uzagaTasi.status !== 200) throw new Error(`rezervasyonlu seans uzağa taşınamadı: ${uzagaTasi.status} ${uzagaTasi.text.slice(0, 120)}`)
 
     await prisma.booking.deleteMany({ where: { sessionId: YS } }).catch(() => {})
