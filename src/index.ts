@@ -12,6 +12,7 @@ import prisma from './utils/prisma'
 import { sendRemindersJob } from './jobs/reminderJob'
 import { sendStreakNudges } from './jobs/streakJob'
 import { sendRatingPrompts } from './jobs/ratingPromptJob'
+import { sweepWaitlist } from './jobs/waitlistJob'
 import { ensureTiers } from './utils/ensureTiers'
 import { ensureGeo } from './utils/ensureGeo'
 import { ensureBadges } from './utils/ensureBadges'
@@ -306,6 +307,11 @@ const server = app.listen(PORT, async () => {
   // Ders sonrası puanlama hatırlatması: 30 dk'da bir (job kendi içinde 2sa+ / checkedIn / tek-puan filtreler)
   sendRatingPrompts()
   setInterval(sendRatingPrompts, 30 * 60 * 1000)
+  // Bekleme listesi süpürgesi: 10 dk'da bir. Bildirim önceliği penceresi 30 dk olduğu için
+  // 10 dk, penceresi dolan bekleyeni makul sürede yakalar. Yerin NASIL açıldığına bakmaz
+  // (iptal, pencere dolması, salonun kapasiteyi artırması) — durum-tabanlı mutabakat.
+  sweepWaitlist()
+  setInterval(sweepWaitlist, 10 * 60 * 1000)
 })
 
 // ─────────────────────────────────────────────────────────────────────────────

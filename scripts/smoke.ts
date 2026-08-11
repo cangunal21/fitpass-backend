@@ -17,6 +17,7 @@ import { ensureBadges } from '../src/utils/ensureBadges'
 import { awardSeasonChampions } from '../src/jobs/championJob'
 import { sendRatingPrompts } from '../src/jobs/ratingPromptJob'
 import { sendRemindersJob } from '../src/jobs/reminderJob'
+import { sweepWaitlist } from '../src/jobs/waitlistJob'
 import prisma from '../src/utils/prisma'
 
 const PORT = 3199
@@ -3075,6 +3076,58 @@ async function run() {
     const me = (r.json?.leaderboard || []).find((x: any) => x.id === uid)
     if (!me) throw new Error('sadece drop-in\'i olan kullanıcı liderlikte yok (drop-in sayılmıyor)')
     if (me.lessonCount < 1) throw new Error(`drop-in lessonCount ${me.lessonCount} (>=1 bekleniyor)`)
+  })
+
+  // Tur20 — DENETİM BULGUSU: boşalan yer SESSİZCE boş kalıyordu. notifyFirstWaitlistUser
+  // yalnız iptal OLAYINDA çağrılıyordu; (a) 30 dk'lık öncelik penceresi dolduğunda ve
+  // (b) salon KAPASİTEYİ ARTIRDIĞINDA kimse tekrar bakmıyordu. Süpürge job'ı durum-tabanlı
+  // çalışır: "yeri olan + bekleyeni olan" seansı bulur, yerin nasıl açıldığına bakmaz.
+  // Ayrıca sıra sıralaması düzeltildi: penceresi dolan kişi hâlâ en eski satır olduğu için
+  // her turda YİNE o seçiliyordu (arkasındakiler süresiz bloklanıyordu).
+  await check('Bekleme listesi: pencere dolunca VE kapasite artınca sıradakine haber gider', async () => {
+    const WV = 990531, WC = 990531, WS = 990531, W1 = 990531, W2 = 990532, WB = 990533
+    await prisma.waitlist.deleteMany({ where: { sessionId: WS } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { session: { classId: WC } } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: WS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: WC } }).catch(() => {})
+    await prisma.venue.upsert({ where: { id: WV }, update: { isApproved: true, isActive: true, isSuspended: false }, create: { id: WV, name: 'BeklemeSalon', email: `bs${WV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: WC }, update: { venueId: WV, isActive: true }, create: { id: WC, venueId: WV, title: 'BeklemeDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const fut = new Date(Date.now() + 3 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: WS }, update: { classId: WC, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), capacity: 1, status: 'open' }, create: { id: WS, classId: WC, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), capacity: 1, status: 'open' } })
+    const mkU = (id: number) => prisma.user.upsert({ where: { id }, update: { banned: false }, create: { id, username: `bek_${id}`, email: `bek_${id}@x.com`, passwordHash: 'x', fullName: 'Bekleyen', tierSportCounts: {} } })
+    await mkU(W1); await mkU(W2); await mkU(WB)
+    await prisma.booking.create({ data: { userId: WB, sessionId: WS, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `BEK-${Date.now()}` } })
+
+    // İki kişi bekliyor; W1 ÖNCE sıraya girmiş (createdAt daha eski)
+    await prisma.waitlist.create({ data: { userId: W1, sessionId: WS, status: 'waiting', createdAt: new Date(Date.now() - 60 * 60000) } })
+    await prisma.waitlist.create({ data: { userId: W2, sessionId: WS, status: 'waiting', createdAt: new Date(Date.now() - 30 * 60000) } })
+
+    // Seans DOLU (1/1) → süpürge kimseye haber vermemeli
+    await sweepWaitlist()
+    let w1 = await prisma.waitlist.findUnique({ where: { userId_sessionId: { userId: W1, sessionId: WS } } })
+    if (w1?.status !== 'waiting') throw new Error('dolu seansta bildirim gitti (yer yokken haber verilmemeli)')
+
+    // (a) SALON KAPASİTEYİ ARTIRIYOR → 1 yer açılır, sıradaki W1'e haber gitmeli
+    await prisma.class_Session.update({ where: { id: WS }, data: { capacity: 2 } })
+    await sweepWaitlist()
+    w1 = await prisma.waitlist.findUnique({ where: { userId_sessionId: { userId: W1, sessionId: WS } } })
+    if (w1?.status !== 'notified') throw new Error('kapasite artınca bekleme listesine haber GİTMEDİ')
+    let w2 = await prisma.waitlist.findUnique({ where: { userId_sessionId: { userId: W2, sessionId: WS } } })
+    if (w2?.status !== 'waiting') throw new Error('tek yer açıldı ama İKİ kişiye birden haber gitti')
+
+    // (b) W1 yeri kapamıyor, 30 dk'lık ÖNCELİK PENCERESİ doluyor → sıra W2'ye GEÇMELİ.
+    // Eski sıralamada (yalnız createdAt) yine W1 seçiliyordu → W2 süresiz bloklanıyordu.
+    await prisma.waitlist.update({ where: { id: w1!.id }, data: { notifiedAt: new Date(Date.now() - 31 * 60000) } })
+    await sweepWaitlist()
+    w2 = await prisma.waitlist.findUnique({ where: { userId_sessionId: { userId: W2, sessionId: WS } } })
+    if (w2?.status !== 'notified') throw new Error('öncelik penceresi dolunca sıra DEVREDİLMEDİ — cevap vermeyen ilk kişi arkasındakileri süresiz bloklar')
+
+    await prisma.waitlist.deleteMany({ where: { sessionId: WS } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { sessionId: WS } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: WS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: WC } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: { in: [W1, W2, WB] } } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: WV } }).catch(() => {})
   })
 
   // Tur20 — ŞEMA GÜVENLİK KAPISI. Ölçüldü: `prisma db push` şemadan kolon silindiğinde

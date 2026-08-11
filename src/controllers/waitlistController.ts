@@ -131,7 +131,14 @@ export const notifyFirstWaitlistUser = async (sessionId: number) => {
             -- seçilmiyordu. Railway'de TZ=UTC olduğu için tesadüfen çalışırdı — doğru olduğu için değil.
             OR (w.status = 'notified' AND w."notifiedAt" < (NOW() AT TIME ZONE 'UTC') - INTERVAL '30 minutes')
           )
-        ORDER BY w."createdAt" ASC
+        -- SIRA GERÇEKTEN DEVREDİLİR. Eskiden yalnız createdAt'e göre sıralanıyordu: penceresi
+        -- dolan kişi HÂLÂ en eski satır olduğu için her turda YİNE o seçiliyordu. Yani "30
+        -- dakikalık öncelik penceresi" sırayı hiç ilerletmiyor, cevap vermeyen ilk kişi
+        -- arkasındaki herkesi süresiz blokluyor ve yer boş kalmaya devam ediyordu.
+        -- Artık: önce HİÇ bildirilmemiş olanlar ('waiting'), sonra penceresi dolmuş olanlar;
+        -- her grubun kendi içinde sıra yeri (createdAt) korunur. Herkes bir tur aldıktan
+        -- sonra baştakiler yeniden sıraya girer → açlık (starvation) yok, sıra da bozulmaz.
+        ORDER BY (w.status = 'notified') ASC, w."createdAt" ASC
         LIMIT 1
         FOR UPDATE OF w SKIP LOCKED`
       if (!rows.length) return null
