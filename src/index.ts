@@ -13,6 +13,7 @@ import { sendRemindersJob } from './jobs/reminderJob'
 import { sendStreakNudges } from './jobs/streakJob'
 import { sendRatingPrompts } from './jobs/ratingPromptJob'
 import { sweepWaitlist } from './jobs/waitlistJob'
+import { reconcileAttendancePoints } from './jobs/attendanceJob'
 import { ensureTiers } from './utils/ensureTiers'
 import { ensureGeo } from './utils/ensureGeo'
 import { ensureBadges } from './utils/ensureBadges'
@@ -312,6 +313,11 @@ const server = app.listen(PORT, async () => {
   // (iptal, pencere dolması, salonun kapasiteyi artırması) — durum-tabanlı mutabakat.
   sweepWaitlist()
   setInterval(sweepWaitlist, 10 * 60 * 1000)
+  // Katılım puanı mutabakatı: 15 dk'da bir. Check-in'de puan kredisi bilerek "ateşle-unut"
+  // (müşteri kapıda beklerken check-in yavaşlamasın); başarısız olursa kullanıcı hak ettiği
+  // puanı hiç almaz ve kimse fark etmez. Bu job kredilenmemiş check-in'leri tamamlar.
+  reconcileAttendancePoints()
+  setInterval(reconcileAttendancePoints, 15 * 60 * 1000)
 })
 
 // ─────────────────────────────────────────────────────────────────────────────

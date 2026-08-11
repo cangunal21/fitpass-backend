@@ -18,6 +18,7 @@ import { awardSeasonChampions } from '../src/jobs/championJob'
 import { sendRatingPrompts } from '../src/jobs/ratingPromptJob'
 import { sendRemindersJob } from '../src/jobs/reminderJob'
 import { sweepWaitlist } from '../src/jobs/waitlistJob'
+import { reconcileAttendancePoints } from '../src/jobs/attendanceJob'
 import prisma from '../src/utils/prisma'
 
 const PORT = 3199
@@ -3128,6 +3129,50 @@ async function run() {
     await prisma.class.deleteMany({ where: { id: WC } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: { in: [W1, W2, WB] } } }).catch(() => {})
     await prisma.venue.deleteMany({ where: { id: WV } }).catch(() => {})
+  })
+
+  // Tur20 — DENETİM BULGUSU: check-in'de puan kredisi "ateşle-unut" çağrılıyor (bilinçli:
+  // müşteri kapıda beklerken check-in yavaşlamasın). Ama çağrı başarısız olursa booking
+  // checkedIn=true kalır, defterde 'attendance' satırı OLMAZ → kullanıcı hak ettiği puanı
+  // HİÇ almaz ve kimse fark etmez. Mutabakat job'ı bunu tamamlar (idempotent).
+  await check('Puan: kredilenmemiş check-in mutabakatla tamamlanır, çift kredi olmaz', async () => {
+    const AV = 990541, AC = 990541, AS2 = 990541, AU = 990541
+    await prisma.rewardPoint.deleteMany({ where: { userId: AU } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { session: { classId: AC } } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: AS2 } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: AC } }).catch(() => {})
+    await prisma.venue.upsert({ where: { id: AV }, update: { isApproved: true, isActive: true }, create: { id: AV, name: 'MutabakatSalon', email: `ms${AV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: AC }, update: { venueId: AV, isActive: true, basePrice: 200 }, create: { id: AC, venueId: AV, title: 'MutabakatDers', category: catName, basePrice: 200, durationMinutes: 60, capacity: 20, isActive: true } })
+    const past = new Date(Date.now() - 2 * 3600000)
+    await prisma.class_Session.upsert({ where: { id: AS2 }, update: { classId: AC, startsAt: past, endsAt: new Date(past.getTime() + 3600000) }, create: { id: AS2, classId: AC, startsAt: past, endsAt: new Date(past.getTime() + 3600000), capacity: 20, status: 'open' } })
+    // tierId 1 = Aday (%1) → 200 TL için 2 puan
+    await prisma.user.upsert({ where: { id: AU }, update: { rewardPoints: 0, tierId: 1 }, create: { id: AU, username: `mut_${AU}`, email: `mut_${AU}@x.com`, passwordHash: 'x', fullName: 'Mutabakat', tierId: 1, tierSportCounts: {}, rewardPoints: 0 } })
+
+    // "Ateşle-unut çağrısı BAŞARISIZ oldu" durumunu taklit et: check-in yapılmış ama defter satırı YOK
+    const bk = await prisma.booking.create({ data: { userId: AU, sessionId: AS2, status: 'confirmed', bookingType: 'class', baseAmount: 200, commissionAmount: 0, venueCommission: 0, finalAmount: 200, venuePayout: 200, bookingNumber: `MUT-${Date.now()}`, checkedIn: true, checkedInAt: new Date(), pointsEarned: 2 } })
+    const once = await prisma.user.findUnique({ where: { id: AU }, select: { rewardPoints: true } })
+    if (once?.rewardPoints !== 0) throw new Error(`kurulum: bakiye 0 olmalı, ${once?.rewardPoints}`)
+
+    // 1) Mutabakat eksiği tamamlamalı
+    await reconcileAttendancePoints()
+    const defter = await prisma.rewardPoint.findMany({ where: { bookingId: bk.id, source: 'attendance' } })
+    if (defter.length !== 1) throw new Error(`mutabakat sonrası 'attendance' satırı ${defter.length} (1 bekleniyor) — kredilenmemiş check-in tamamlanmadı`)
+    const sonra = await prisma.user.findUnique({ where: { id: AU }, select: { rewardPoints: true } })
+    if ((sonra?.rewardPoints || 0) <= 0) throw new Error(`bakiyeye puan yazılmadı: ${sonra?.rewardPoints}`)
+
+    // 2) TEKRAR koşmak ÇİFT kredi vermemeli (idempotent)
+    await reconcileAttendancePoints()
+    const defter2 = await prisma.rewardPoint.findMany({ where: { bookingId: bk.id, source: 'attendance' } })
+    if (defter2.length !== 1) throw new Error(`ikinci mutabakat çift kredi yazdı: ${defter2.length} satır`)
+    const sonra2 = await prisma.user.findUnique({ where: { id: AU }, select: { rewardPoints: true } })
+    if (sonra2?.rewardPoints !== sonra?.rewardPoints) throw new Error(`ikinci mutabakat bakiyeyi değiştirdi: ${sonra?.rewardPoints} → ${sonra2?.rewardPoints}`)
+
+    await prisma.rewardPoint.deleteMany({ where: { userId: AU } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { sessionId: AS2 } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: AS2 } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: AC } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: AU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: AV } }).catch(() => {})
   })
 
   // Tur20 — ŞEMA GÜVENLİK KAPISI. Ölçüldü: `prisma db push` şemadan kolon silindiğinde
