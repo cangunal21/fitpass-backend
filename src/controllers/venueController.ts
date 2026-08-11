@@ -804,6 +804,12 @@ export const getVenueBookings = async (req: Request, res: Response) => {
       select: {
         id: true, status: true, bookingType: true, groupSize: true, bookingNumber: true,
         checkedIn: true, checkedInAt: true, createdAt: true,
+        // finalAmount = müşterinin ÖDEDİĞİ tutar. include→select'e geçilirken (checkInCode
+        // sızıntısını kapatmak için) para alanları da düşmüştü; web ve mobil salon paneli
+        // bu alanı basmaya devam ettiği için ekranda "₺undefined" yazıyordu.
+        // Komisyon kırılımı (commissionAmount/venueCommission/venuePayout) BİLEREK dönmez —
+        // o bilgi gelir raporunda; buradaki sözleşme smoke testiyle sabitlenmiştir.
+        finalAmount: true,
         // Veri minimizasyonu (KVKK): salona müşteri e-postası verilmez — check-in kodla, roster isimle.
         user: { select: { id: true, fullName: true, username: true } },
         session: { select: { id: true, startsAt: true, class: { select: { title: true, category: true } } } },

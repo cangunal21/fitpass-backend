@@ -2541,6 +2541,9 @@ async function run() {
     const blob = JSON.stringify(r.json)
     if (blob.includes('SECRET99')) throw new Error('checkInCode salona SIZDI (müşteri adına check-in yapabilir)')
     if (blob.includes('venuePayout') || blob.includes('commissionAmount')) throw new Error('komisyon kırılımı yanıtta')
+    // Tur20: finalAmount (müşterinin ödediği tutar) DÖNMELİ — include→select geçişinde düşmüştü,
+    // web+mobil salon paneli "₺undefined" basıyordu. Komisyon gizli, ödenen tutar görünür.
+    if (r.json?.bookings?.[0]?.finalAmount !== 100) throw new Error(`finalAmount dönmüyor (${r.json?.bookings?.[0]?.finalAmount}) — salon paneli ₺undefined gösterir`)
     await prisma.booking.deleteMany({ where: { sessionId: AS } }).catch(() => {})
     await prisma.class_Session.deleteMany({ where: { id: AS } }).catch(() => {})
     await prisma.class.deleteMany({ where: { id: AC } }).catch(() => {})
@@ -3063,6 +3066,45 @@ async function run() {
     const me = (r.json?.leaderboard || []).find((x: any) => x.id === uid)
     if (!me) throw new Error('sadece drop-in\'i olan kullanıcı liderlikte yok (drop-in sayılmıyor)')
     if (me.lessonCount < 1) throw new Error(`drop-in lessonCount ${me.lessonCount} (>=1 bekleniyor)`)
+  })
+
+  // Tur20 — DENETİM BULGUSU: özel drop-in slotu HİÇ açılamıyordu. Sunucu görüntülemede ?code=,
+  // katılımda privateCode bekliyor; hiçbir istemci göndermiyordu → salon özel slot üretebiliyor
+  // ama davetli 404/403 alıyordu (özellik tamamen ölü). Bu test sözleşmenin iki ucunu da sabitler.
+  await check('Drop-in: özel slot kodla görüntülenir ve kodla katılınır, kodsuz kapalı', async () => {
+    const PV = 990471, PS = 990471, PU = 990471
+    const cat = await prisma.sportCategory.findFirst({})
+    if (!cat) throw new Error('kurulum: sportCategory yok')
+    await prisma.dropInParticipant.deleteMany({ where: { slotId: PS } }).catch(() => {})
+    await prisma.dropInSlot.deleteMany({ where: { id: PS } }).catch(() => {})
+    await prisma.venue.upsert({ where: { id: PV }, update: { isApproved: true, isActive: true, isSuspended: false }, create: { id: PV, name: 'OzelDropV', email: `odv${PV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    const st = new Date(Date.now() + 2 * 86400000)
+    await prisma.dropInSlot.create({ data: { id: PS, venueId: PV, sportCategoryId: cat.id, title: 'Ozel Mac', startsAt: st, endsAt: new Date(st.getTime() + 3600000), format: '5v5', totalPlayers: 10, totalPrice: 500, pricePerPerson: 50, visibility: 'private', privateCode: 'GIZLI42', status: 'open' } })
+    await prisma.user.upsert({ where: { id: PU }, update: {}, create: { id: PU, username: `odu_${PU}`, email: `odu_${PU}@x.com`, passwordHash: 'x', fullName: 'OzelDavetli', tierSportCounts: {} } })
+    const tok = jwt.sign({ userId: PU, email: `odu_${PU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+
+    // KODSUZ görüntüleme → 404 (id enumerasyonuyla roster sızmasın)
+    const kodsuz = await http(`/api/public/dropin/${PS}`)
+    if (kodsuz.status !== 404) throw new Error(`kodsuz görüntüleme ${kodsuz.status} (404 bekleniyor)`)
+    // YANLIŞ kod → 404
+    const yanlis = await http(`/api/public/dropin/${PS}?code=YANLIS`)
+    if (yanlis.status !== 404) throw new Error(`yanlış kod ${yanlis.status} (404 bekleniyor)`)
+    // DOĞRU kod → 200 ve privateCode yanıttan STRIP edilmiş olmalı
+    const dogru = await http(`/api/public/dropin/${PS}?code=GIZLI42`)
+    if (dogru.status !== 200 || !dogru.json?.slot) throw new Error(`doğru kodla görüntülenemedi: ${dogru.status} ${dogru.text.slice(0, 120)}`)
+    if (dogru.text.includes('GIZLI42')) throw new Error('privateCode yanıtta SIZDI')
+
+    // KODSUZ katılım → 403
+    const joinKodsuz = await http(`/api/bookings/dropin/${PS}/join`, { method: 'POST', token: tok, body: {} })
+    if (joinKodsuz.status !== 403) throw new Error(`kodsuz katılım ${joinKodsuz.status} (403 bekleniyor)`)
+    // DOĞRU kodla katılım → başarılı
+    const joinDogru = await http(`/api/bookings/dropin/${PS}/join`, { method: 'POST', token: tok, body: { privateCode: 'GIZLI42' } })
+    if (joinDogru.status !== 200 && joinDogru.status !== 201) throw new Error(`kodla katılım başarısız: ${joinDogru.status} ${joinDogru.text.slice(0, 140)}`)
+
+    await prisma.dropInParticipant.deleteMany({ where: { slotId: PS } }).catch(() => {})
+    await prisma.dropInSlot.deleteMany({ where: { id: PS } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: PU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: PV } }).catch(() => {})
   })
 
   // Tur20 — DENETİM BULGUSU: transfer, HİÇ KREDİLENMEMİŞ puanı gerçek bakiyeye yansıtıyordu.
