@@ -41,7 +41,7 @@ async function purgeBookingsForSessions(tx: any, sessionIds: number[]) {
   // defterde aynı bookingId için iki ters kayıt kalırdı).
   const bookings = await tx.booking.findMany({
     where: { sessionId: { in: sessionIds } },
-    select: { id: true, userId: true, pointsEarned: true, status: true, createdAt: true, checkedIn: true },
+    select: { id: true, userId: true, pointsEarned: true, status: true, createdAt: true, checkedIn: true, couponId: true },
   })
   if (bookings.length === 0) return []
   const ids = bookings.map((b: any) => b.id)
@@ -68,6 +68,24 @@ async function purgeBookingsForSessions(tx: any, sessionIds: number[]) {
   await tx.review.updateMany({ where: { bookingId: { in: ids } }, data: { bookingId: null } })
   await tx.commissionHistory.deleteMany({ where: { bookingId: { in: ids } } })
   await tx.activityLog.deleteMany({ where: { bookingId: { in: ids } } })
+
+  // KUPON HAKKI İADE — cancelBooking bunu yapıyordu ama SİLME yolu yapmıyordu: salon seansı/dersi
+  // silince o rezervasyonların yaktığı usedCount kalıcı kalıyordu. maxUses=10'luk kupon, hiç
+  // gerçekleşmemiş 10 rezervasyon yüzünden tükenmiş görünüyordu (kampanya sessizce ölüyordu).
+  // YALNIZCA hakkı hâlâ TUTAN rezervasyonlar (confirmed/pending) sayılır: 'cancelled' olanların
+  // kuponu iptal anında zaten iade edildi, ikinci kez iade edilirse usedCount olduğundan düşük kalır.
+  const couponCounts = new Map<number, number>()
+  for (const b of bookings) {
+    if (b.couponId && (b.status === 'confirmed' || b.status === 'pending')) {
+      couponCounts.set(b.couponId, (couponCounts.get(b.couponId) || 0) + 1)
+    }
+  }
+  for (const [couponId, n] of couponCounts) {
+    const c = await tx.coupon.findUnique({ where: { id: couponId }, select: { usedCount: true } })
+    const dec = Math.min(n, c?.usedCount || 0) // 0'ın altına inmesin (cancelBooking ile aynı invariant)
+    if (dec > 0) await tx.coupon.update({ where: { id: couponId }, data: { usedCount: { decrement: dec } } })
+  }
+
   await tx.booking.deleteMany({ where: { id: { in: ids } } })
   return bookings as { id: number; userId: number; status: string }[]
 }

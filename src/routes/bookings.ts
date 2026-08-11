@@ -2,7 +2,7 @@ import { registerNumericParams } from '../middlewares/numericParams'
 import { Router } from 'express'
 import { createBooking, getMyBookings, cancelBooking, joinDropIn, checkInBooking, checkInDropIn, getTransferOptions, transferBooking } from '../controllers/bookingController'
 import { authMiddleware } from '../middlewares/auth'
-import { venueAuthMiddleware } from '../middlewares/venueAuth'
+import { venueAuthMiddleware, venueApprovedMiddleware } from '../middlewares/venueAuth'
 
 const router = Router()
 registerNumericParams(router)
@@ -13,7 +13,14 @@ router.put('/:id/cancel', authMiddleware, cancelBooking)
 router.get('/:id/transfer-options', authMiddleware, getTransferOptions)
 router.put('/:id/transfer', authMiddleware, transferBooking)
 router.post('/dropin/:slotId/join', authMiddleware, joinDropIn)
-router.post('/checkin', venueAuthMiddleware, checkInBooking)
-router.post('/dropin-checkin', venueAuthMiddleware, checkInDropIn)
+// venueApprovedMiddleware ŞART: venueAuthMiddleware yalnız isActive/isSuspended bakıyor,
+// isApproved'a BAKMIYOR. Admin bir salonun onayını geri aldığında (adminController.approveVenue
+// yalnız isApproved yazar; isActive true, isSuspended false kalır) salon check-in yapmaya devam
+// edebiliyordu: kullanıcıya puan/streak/rozet/tier ilerlemesi veriliyor ve o salona yorum yazma
+// kapısı (reviewController: `if (!booking.checkedIn)`) açılıyordu. Yani platformdan kaldırılmış
+// salon puan üretmeye devam ediyordu. Eğitmen realm'inde bu kapı ZATEN vardı
+// (instructorPortalController: `!iv.isApproved → 403`); asimetri salonun kendi realm'indeydi.
+router.post('/checkin', venueAuthMiddleware, venueApprovedMiddleware, checkInBooking)
+router.post('/dropin-checkin', venueAuthMiddleware, venueApprovedMiddleware, checkInDropIn)
 
 export default router

@@ -55,7 +55,7 @@ export const venueApprovedMiddleware = async (req: Request, res: Response, next:
     const venueId = (req as any).venueId
     const venue = await prisma.venue.findUnique({ where: { id: venueId }, select: { isApproved: true, isActive: true } })
     if (!venue?.isApproved) {
-      return res.status(403).json({ error: 'Salonunuz henüz onaylanmadı. Onay sonrası ders ekleyebilirsiniz.' })
+      return res.status(403).json({ error: 'Salonunuz onaylı değil. Onay sonrası ders ekleyebilir ve check-in yapabilirsiniz.' })
     }
     // Donmuş (askıya alınmış) salon, login sonrası suspend edilse ve elinde geçerli token
     // olsa bile YENİ ders/seans/dropin ekleyemez (venueLogin sadece yeni girişi engelliyordu).

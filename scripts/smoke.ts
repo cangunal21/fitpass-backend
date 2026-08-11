@@ -3068,6 +3068,77 @@ async function run() {
     if (me.lessonCount < 1) throw new Error(`drop-in lessonCount ${me.lessonCount} (>=1 bekleniyor)`)
   })
 
+  // Tur20 — DENETİM BULGUSU: onayı GERİ ALINMIŞ salon check-in yapmaya devam edebiliyordu.
+  // venueAuthMiddleware yalnız isActive/isSuspended bakıyor; isApproved'a bakan
+  // venueApprovedMiddleware bu iki uçta yoktu → platformdan kaldırılmış salon kullanıcıya
+  // puan/streak/rozet kazandırmaya ve yorum kapısını açmaya devam ediyordu.
+  await check('Yetki: onayı KALDIRILMIŞ salon check-in YAPAMAZ', async () => {
+    const DV = 990481, DC = 990481, DS = 990481, DU = 990481
+    await prisma.booking.deleteMany({ where: { session: { classId: DC } } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: DS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: DC } }).catch(() => {})
+    await prisma.venue.upsert({ where: { id: DV }, update: { isApproved: true, isActive: true, isSuspended: false }, create: { id: DV, name: 'OnaySalon', email: `os${DV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: DC }, update: { venueId: DV, isActive: true }, create: { id: DC, venueId: DV, title: 'OnayDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const past = new Date(Date.now() - 20 * 60000)
+    await prisma.class_Session.upsert({ where: { id: DS }, update: { classId: DC, startsAt: past, endsAt: new Date(Date.now() + 40 * 60000) }, create: { id: DS, classId: DC, startsAt: past, endsAt: new Date(Date.now() + 40 * 60000), capacity: 20, status: 'open' } })
+    await prisma.user.upsert({ where: { id: DU }, update: {}, create: { id: DU, username: `ons_${DU}`, email: `ons_${DU}@x.com`, passwordHash: 'x', fullName: 'Onay', tierSportCounts: {} } })
+    const kod = 'ONAYKOD1'
+    await prisma.booking.create({ data: { userId: DU, sessionId: DS, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `ONS-${Date.now()}`, checkInCode: kod, checkedIn: false } })
+    const vtok = jwt.sign({ venueId: DV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+
+    // ONAYLIYKEN çalışmalı (kurulum doğrulaması — test yanlış sebeple yeşil olmasın)
+    const ok = await http('/api/bookings/checkin', { method: 'POST', token: vtok, body: { code: kod } })
+    if (ok.status !== 200) throw new Error(`kurulum: onaylı salon check-in yapamadı (${ok.status} ${ok.text.slice(0, 120)})`)
+
+    // ONAY KALDIRILINCA 403
+    await prisma.booking.updateMany({ where: { sessionId: DS }, data: { checkedIn: false, checkedInAt: null } })
+    await prisma.venue.update({ where: { id: DV }, data: { isApproved: false } })
+    const red = await http('/api/bookings/checkin', { method: 'POST', token: vtok, body: { code: kod } })
+    if (red.status !== 403) throw new Error(`onayı kaldırılmış salon check-in yapabildi: ${red.status}`)
+    const b = await prisma.booking.findFirst({ where: { sessionId: DS }, select: { checkedIn: true } })
+    if (b?.checkedIn) throw new Error('403 dönmesine rağmen booking checkedIn oldu')
+
+    await prisma.booking.deleteMany({ where: { sessionId: DS } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: DS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: DC } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: DU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: DV } }).catch(() => {})
+  })
+
+  // Tur20 — DENETİM BULGUSU: seans/ders silinince kupon usedCount iade EDİLMİYORDU (iptal
+  // yolunda ediliyor). maxUses'lı kampanya, hiç gerçekleşmemiş rezervasyonlar yüzünden tükeniyordu.
+  await check('Kupon: seans silinince kullanım hakkı İADE edilir (iptalle simetrik)', async () => {
+    const KV = 990491, KC = 990491, KS = 990491, KU = 990491
+    await prisma.booking.deleteMany({ where: { session: { classId: KC } } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: KS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: KC } }).catch(() => {})
+    await prisma.coupon.deleteMany({ where: { code: 'SILINEN10' } }).catch(() => {})
+    await prisma.venue.upsert({ where: { id: KV }, update: { isApproved: true, isActive: true, isSuspended: false }, create: { id: KV, name: 'KuponSalon', email: `ks${KV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: KC }, update: { venueId: KV, isActive: true }, create: { id: KC, venueId: KV, title: 'KuponDers2', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const fut = new Date(Date.now() + 2 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: KS }, update: { classId: KC, startsAt: fut, status: 'open', capacity: 20 }, create: { id: KS, classId: KC, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), capacity: 20, status: 'open' } })
+    await prisma.user.upsert({ where: { id: KU }, update: {}, create: { id: KU, username: `kup_${KU}`, email: `kup_${KU}@x.com`, passwordHash: 'x', fullName: 'Kupon', tierSportCounts: {} } })
+    const cp = await prisma.coupon.create({ data: { venueId: KV, code: 'SILINEN10', discountType: 'fixed', discountValue: 10, maxUses: 10, isActive: true } })
+    const utok = jwt.sign({ userId: KU, email: `kup_${KU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+
+    const bk = await http('/api/bookings', { method: 'POST', token: utok, body: { sessionId: KS, couponCode: 'SILINEN10' } })
+    if (bk.status !== 201) throw new Error(`kurulum booking: ${bk.status} ${bk.text.slice(0, 120)}`)
+    const c1 = await prisma.coupon.findUnique({ where: { id: cp.id }, select: { usedCount: true } })
+    if (c1?.usedCount !== 1) throw new Error(`kurulum: usedCount 1 olmalı, ${c1?.usedCount}`)
+
+    // Salon SEANSI SİLER → kupon hakkı geri gelmeli
+    const vtok = jwt.sign({ venueId: KV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const del = await http(`/api/venue/classes/${KC}/sessions/${KS}`, { method: 'DELETE', token: vtok })
+    if (del.status !== 200) throw new Error(`seans silinemedi: ${del.status} ${del.text.slice(0, 120)}`)
+    const c2 = await prisma.coupon.findUnique({ where: { id: cp.id }, select: { usedCount: true } })
+    if (c2?.usedCount !== 0) throw new Error(`seans silinince kupon hakkı iade edilmedi: usedCount ${c2?.usedCount} (0 bekleniyor)`)
+
+    await prisma.coupon.deleteMany({ where: { code: 'SILINEN10' } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: KC } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: KU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: KV } }).catch(() => {})
+  })
+
   // Tur20 — DENETİM BULGUSU: özel drop-in slotu HİÇ açılamıyordu. Sunucu görüntülemede ?code=,
   // katılımda privateCode bekliyor; hiçbir istemci göndermiyordu → salon özel slot üretebiliyor
   // ama davetli 404/403 alıyordu (özellik tamamen ölü). Bu test sözleşmenin iki ucunu da sabitler.
