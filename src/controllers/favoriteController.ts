@@ -64,6 +64,9 @@ export const getMyFavorites = async (req: Request, res: Response) => {
           select: {
             id: true, name: true, address: true, avgRating: true,
             totalReviews: true, coverImageUrl: true, isApproved: true,
+            // neighborhood: istemciler salon kartında semt gösteriyor; seçilmediği için
+            // mobilde satır boş kalıyordu (adrese düşürmek yerine semti gönder).
+            neighborhood: { select: { id: true, name: true } },
             sportCategories: { include: { sportCategory: { select: { name: true } } } }
           }
         }
@@ -99,6 +102,7 @@ export const getUserFavorites = async (req: Request, res: Response) => {
           select: {
             id: true, name: true, address: true, avgRating: true,
             totalReviews: true, coverImageUrl: true,
+            neighborhood: { select: { id: true, name: true } },
             sportCategories: { include: { sportCategory: { select: { name: true } } } }
           }
         }

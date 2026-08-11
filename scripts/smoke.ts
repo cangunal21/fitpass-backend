@@ -3059,6 +3059,32 @@ async function run() {
     if (me.lessonCount < 1) throw new Error(`drop-in lessonCount ${me.lessonCount} (>=1 bekleniyor)`)
   })
 
+  // Tur20 — DENETİM BULGUSU: favori listesi sözleşmesi. Uç DÜZ salon nesnesi döndürüyor
+  // (favs.map(f => f.venue)); mobil ekran `{ venue: {...} }` sarmalayıcısı bekliyordu → boş
+  // kartlar + karta dokununca çökme. Web aynı ucu düz biçimde doğru tüketiyordu, yani sunucu
+  // doğru, istemci yanlıştı. Bu test biçimi SABİTLER: uç sarmalayıcıya dönerse burada kırılır.
+  await check('Favoriler: uç DÜZ salon nesnesi döndürür (venue sarmalayıcısı YOK) + semt taşır', async () => {
+    const FU = 990421
+    await prisma.user.upsert({ where: { id: FU }, update: {}, create: { id: FU, username: `fav_${FU}`, email: `fav_${FU}@x.com`, passwordHash: 'x', fullName: 'Fav' } })
+    await prisma.favoriteVenue.deleteMany({ where: { userId: FU } }).catch(() => {})
+    await prisma.favoriteVenue.create({ data: { userId: FU, venueId: V } })
+    const tok = jwt.sign({ userId: FU, email: `fav_${FU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await expectOk('/api/favorites/my', { token: tok })
+    const list = r.json?.favorites
+    if (!Array.isArray(list) || list.length !== 1) throw new Error(`favori listesi beklenmedik: ${JSON.stringify(list)?.slice(0, 120)}`)
+    const f = list[0]
+    if (f.venue !== undefined) throw new Error('uç venue sarmalayıcısı döndürdü — istemciler DÜZ biçim bekliyor')
+    if (typeof f.id !== 'number' || typeof f.name !== 'string') throw new Error(`düz salon alanları yok: ${Object.keys(f).join(',')}`)
+    if (!('neighborhood' in f)) throw new Error('neighborhood seçilmemiş — salon kartında semt satırı boş kalır')
+    // Public profil ucu da AYNI biçimi vermeli (iki uç ayrışırsa istemci birinde kırılır)
+    const pubUser = await prisma.user.findUnique({ where: { id: FU }, select: { username: true } })
+    const p = await expectOk(`/api/favorites/user/${pubUser!.username}`)
+    const pf = (p.json?.favorites || [])[0]
+    if (pf && pf.venue !== undefined) throw new Error('public favori ucu farklı biçim döndürüyor (sarmalayıcı)')
+    await prisma.favoriteVenue.deleteMany({ where: { userId: FU } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: FU } }).catch(() => {})
+  })
+
   // Tur20 — DENETİM BULGUSU: şampiyon BİLDİRİMİ hiç gitmiyordu. Rozetleri yazan sorgu başarılı,
   // ardından "bu koşuda yazılanlar"ı bulan sorgu UserBadge'de OLMAYAN createdAt alanına bakıyordu
   // (şemadaki ad earnedAt) → her koşuda Prisma hatası, dıştaki catch yutuyor, sonraki koşu
