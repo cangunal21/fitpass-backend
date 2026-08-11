@@ -3059,6 +3059,54 @@ async function run() {
     if (me.lessonCount < 1) throw new Error(`drop-in lessonCount ${me.lessonCount} (>=1 bekleniyor)`)
   })
 
+  // Tur20 — DENETİM BULGUSU: şampiyon BİLDİRİMİ hiç gitmiyordu. Rozetleri yazan sorgu başarılı,
+  // ardından "bu koşuda yazılanlar"ı bulan sorgu UserBadge'de OLMAYAN createdAt alanına bakıyordu
+  // (şemadaki ad earnedAt) → her koşuda Prisma hatası, dıştaki catch yutuyor, sonraki koşu
+  // "zaten verildi" korumasından erken dönüyor → kayıp KALICI. Mevcut şampiyon testleri yalnız
+  // ROZETİ doğruladığı için hata 19 denetim turundan geçmişti; bu test BİLDİRİMİ doğruluyor.
+  await check('Sezon şampiyonu: rozetle birlikte BİLDİRİM de gider ve tekrar koşuda çiftlenmez', async () => {
+    const testNow = new Date(2026, 11, 15) // biten sezon Güz 2026 (lansman zeminini geçer)
+    const cur = seasonInfo(testNow)
+    const prev = seasonInfo(new Date(cur.start.getTime() - 86400000))
+    const scat = await prisma.sportCategory.findFirst({})
+    await ensureBadges()
+    const champB = await prisma.badge.findUnique({ where: { key: 'season_champion' }, select: { id: true } })
+    if (!champB) throw new Error('season_champion rozeti yok (ensureBadges)')
+    const NB = 990411, CL = 990411, SS = 990411, UU = 990411
+    await prisma.neighborhood.upsert({ where: { id: NB }, update: {}, create: { id: NB, name: 'BildirimMah', latitude: 41, longitude: 29, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: CL }, update: { sportCategoryId: scat?.id ?? null }, create: { id: CL, venueId: V, title: 'BildirimDers', category: catName, sportCategoryId: scat?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const inPrev = new Date(prev.start.getTime() + 5 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: SS }, update: { startsAt: inPrev, endsAt: new Date(inPrev.getTime() + 3600000) }, create: { id: SS, classId: CL, startsAt: inPrev, endsAt: new Date(inPrev.getTime() + 3600000), status: 'open', capacity: 20 } })
+    await prisma.user.upsert({ where: { id: UU }, update: { neighborhoodId: NB, activityPrivacy: 'public', banned: false }, create: { id: UU, username: `bld_${UU}`, email: `bld_${UU}@x.com`, passwordHash: 'x', fullName: 'Bildirim', tierId: 1, tierSportCounts: {}, neighborhoodId: NB, activityPrivacy: 'public' } })
+    await prisma.booking.deleteMany({ where: { userId: UU } })
+    await prisma.notification.deleteMany({ where: { userId: UU } })
+    await prisma.userBadge.deleteMany({ where: { badgeId: champB.id, seasonKey: prev.key } })
+    await prisma.booking.create({ data: { userId: UU, sessionId: SS, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `BLD-${Date.now()}`, checkedIn: true, checkedInAt: new Date() } })
+
+    await awardSeasonChampions(testNow)
+
+    const rozet = await prisma.userBadge.findFirst({ where: { userId: UU, badgeId: champB.id, seasonKey: prev.key } })
+    if (!rozet) throw new Error('şampiyon rozeti verilmedi (kurulum hatalı)')
+    const bildirimler = await prisma.notification.findMany({ where: { userId: UU, messageKey: 'season_champion' } })
+    if (bildirimler.length === 0) throw new Error('rozet verildi ama BİLDİRİM gitmedi (createdAt/earnedAt hatası geri geldi)')
+    if (bildirimler.length !== 1) throw new Error(`tek bildirim bekleniyordu, ${bildirimler.length} tane var`)
+    const p: any = bildirimler[0].messageParams
+    if (!p?.season) throw new Error('bildirim parametrelerinde sezon adı yok')
+
+    // İKİNCİ koşu: rozetler zaten var → yeni bildirim YAZILMAMALI (çift push koruması)
+    await awardSeasonChampions(testNow)
+    const sonra = await prisma.notification.count({ where: { userId: UU, messageKey: 'season_champion' } })
+    if (sonra !== 1) throw new Error(`ikinci koşu bildirimi çiftledi: ${sonra}`)
+
+    await prisma.userBadge.deleteMany({ where: { badgeId: champB.id, seasonKey: prev.key } }).catch(() => {})
+    await prisma.notification.deleteMany({ where: { userId: UU } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { userId: UU } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: SS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: CL } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: UU } }).catch(() => {})
+    await prisma.neighborhood.deleteMany({ where: { id: NB } }).catch(() => {})
+  })
+
   // Tur20 — DENETİM BULGUSU: Class_Session.capacity TOPLAM kapasitedir ve rezervasyonla
   // azalmaz. Public uçlar eskiden bu ham sayıyı "availableSpots" adıyla döndürüyordu, üç
   // istemci de KALAN YER sanıp dolu dersi "10 yer kaldı" diye gösteriyordu.

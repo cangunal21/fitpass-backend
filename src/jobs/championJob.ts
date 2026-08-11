@@ -93,16 +93,23 @@ export async function awardSeasonChampions(now: Date = new Date()) {
     if (toCreate.length === 0) return
     // skipDuplicates: job tekrar çalışsa/yarışsa aynı sezon-şampiyon rozetini iki kez YAZMASIN
     // (userbadge_award_unique ifade-index'i ile ON CONFLICT DO NOTHING).
-    await prisma.userBadge.createMany({ data: toCreate, skipDuplicates: true })
-
-    // BİLDİRİM YALNIZCA BU KOŞUDA GERÇEKTEN YAZILAN SATIRLARDAN. Eskiden yukarıda HESAPLANAN
-    // winnersByUser kümesinden besleniyordu: satır 30'daki "zaten verildi mi" koruması atomik
-    // olmayan bir count() olduğu için iki örtüşen koşuda ikisi de count=0 görüp devam edebiliyor;
-    // rozetler skipDuplicates sayesinde tek kalıyor ama her şampiyona İKİ bildirim + İKİ push
-    // gidiyordu. createdAt penceresiyle "bu koşuda eklenenler" ayıklanır.
-    const runStart = new Date(Date.now() - 60000)
-    const written = await prisma.userBadge.findMany({
-      where: { badgeId: champBadge.id, seasonKey: prev.key, createdAt: { gte: runStart } },
+    //
+    // BİLDİRİM YALNIZCA BU KOŞUDA GERÇEKTEN YAZILAN SATIRLARDAN gitmeli: satır 32'deki
+    // "zaten verildi mi" koruması atomik olmayan bir count() olduğu için iki örtüşen koşuda
+    // ikisi de count=0 görüp devam edebiliyor; rozetler skipDuplicates sayesinde tek kalıyor
+    // ama her şampiyona İKİ bildirim + İKİ push giderdi.
+    //
+    // Eskiden bu ayrım "son 60 saniyede eklenenler" zaman penceresiyle yapılıyordu ve pencere
+    // UserBadge'de OLMAYAN bir alana bakıyordu (createdAt; şemadaki ad earnedAt) → sorgu HER
+    // koşuda Prisma doğrulama hatası atıyor, dıştaki catch onu sessizce yutuyordu. Sonuç:
+    // rozetler veriliyor ama TEK BİR bildirim bile gitmiyor; üstelik bir sonraki koşu satır
+    // 32'den erken döndüğü için kayıp KALICI oluyordu.
+    //
+    // createManyAndReturn ile hangi satırların yazıldığını DB söylüyor: ne zaman penceresi,
+    // ne saat kayması, ne de yanlış alan adı riski kalıyor.
+    const written = await prisma.userBadge.createManyAndReturn({
+      data: toCreate,
+      skipDuplicates: true,
       select: { userId: true },
     })
     if (written.length === 0) return // hepsi zaten vardı → bu koşu yeni bir şey yazmadı, susalım
