@@ -308,11 +308,15 @@ async function cleanup() {
 }
 
 async function waitForServer() {
+  // '/' DEĞİL '/health': kök uç sunucu dinlemeye başlar başlamaz 200 dönüyordu, ama açılış
+  // işleri (ensureIndexes — rozet çift-veriş korumasının DAYANDIĞI tekillik index'leri) hâlâ
+  // sürüyordu. Testler o pencerede başlayınca yarış oluşuyordu. /health artık bootTamam
+  // bayrağına bakıyor → gerçek hazır-olma sinyali.
   for (let i = 0; i < 90; i++) {
-    try { const r = await fetch(BASE + '/'); if (r.ok) return } catch {}
+    try { const r = await fetch(BASE + '/health'); if (r.ok) return } catch {}
     await new Promise(r => setTimeout(r, 1000))
   }
-  throw new Error('Sunucu başlamadı')
+  throw new Error('Sunucu başlamadı (veya açılış işleri tamamlanmadı)')
 }
 
 async function run() {
@@ -3071,6 +3075,52 @@ async function run() {
     const me = (r.json?.leaderboard || []).find((x: any) => x.id === uid)
     if (!me) throw new Error('sadece drop-in\'i olan kullanıcı liderlikte yok (drop-in sayılmıyor)')
     if (me.lessonCount < 1) throw new Error(`drop-in lessonCount ${me.lessonCount} (>=1 bekleniyor)`)
+  })
+
+  // Tur20 — SIFIR-KESİNTİ DEPLOY. Ölçülmüştü: her Railway deploy'unda ~30sn 502 penceresi vardı
+  // (healthcheckPath tanımsız → trafik hazır olmayan konteynere dönüyor; SIGTERM işleyicisi yok →
+  // uçan istekler ölüyor). Bu test iki mekanizmayı da doğrular: /health açılış bitmeden 503 der,
+  // SIGTERM sonrası 503'e döner (yönlendirici trafiği kessin) ve süreç TEMİZ (kod 0) kapanır.
+  await check('Deploy: /health hazır-olma sinyali verir ve SIGTERM\'de temiz kapanır', async () => {
+    const path = require('path')
+    const altPort = PORT + 7
+    const alt = spawn('npx', ['ts-node', 'src/index.ts'], {
+      env: { ...process.env, PORT: String(altPort), DISABLE_RATE_LIMIT: 'true', ADMIN_SECRET, CRON_SECRET },
+      cwd: path.join(__dirname, '..'), detached: true, stdio: 'ignore',
+    })
+    const altBase = `http://localhost:${altPort}`
+    const hGet = async () => { try { const r = await fetch(altBase + '/health'); return { s: r.status, j: await r.json().catch(() => null) } } catch { return { s: 0, j: null } } }
+    try {
+      // 1) SAĞLIKLI olana kadar bekle (açılış işleri bitince)
+      let hazir = false
+      for (let i = 0; i < 90; i++) {
+        const h = await hGet()
+        if (h.s === 200 && (h.j as any)?.ok === true) { hazir = true; break }
+        await new Promise(r => setTimeout(r, 1000))
+      }
+      if (!hazir) throw new Error('alt sunucu 90sn içinde sağlıklı olmadı')
+
+      // 2) SIGTERM → drenaj penceresinde /health 503 + shutting_down demeli
+      process.kill(-alt.pid!, 'SIGTERM')
+      let gordu503 = false
+      for (let i = 0; i < 25; i++) {
+        const h = await hGet()
+        if (h.s === 503 && (h.j as any)?.state === 'shutting_down') { gordu503 = true; break }
+        if (h.s === 0) break // zaten kapanmış (drenajı kaçırdık)
+        await new Promise(r => setTimeout(r, 100))
+      }
+      if (!gordu503) throw new Error('SIGTERM sonrası /health 503/shutting_down dönmedi — yönlendirici trafiği kesmez, istekler ölür')
+
+      // 3) TEMİZ çıkış (kod 0) — zorla öldürülmüyor
+      const kod = await new Promise<number | null>((resolve) => {
+        const t = setTimeout(() => resolve(-1), 20000)
+        alt.on('exit', (c) => { clearTimeout(t); resolve(c) })
+      })
+      if (kod === -1) throw new Error('süreç 20sn içinde kapanmadı (graceful shutdown takıldı)')
+      if (kod !== 0) throw new Error(`süreç temiz kapanmadı, çıkış kodu ${kod}`)
+    } finally {
+      try { if (alt.pid) process.kill(-alt.pid, 'SIGKILL') } catch { /* zaten ölmüş */ }
+    }
   })
 
   // Tur20 — ÜRÜN KARARI (kullanıcı onayı): SALON dersi ertelediğinde kullanıcı, iptal

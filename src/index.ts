@@ -210,7 +210,18 @@ app.get('/', (req, res) => {
 // için "process çalışıyor" ≠ "sistem çalışıyor". DB düşse bile /health 200 döner; bunu ayırt etmek
 // için readiness ucu gerekiyor. Railway healthcheck'i /health (liveness) kullanmalı — /health/ready
 // kullanılırsa geçici bir DB kesintisi deploy'u geri alır.
+// SIFIR-KESİNTİ DEPLOY DURUMU.
+// bootTamam: açılış işleri (ensureIndexes vb.) bitene kadar false. Railway healthcheck'i bu uca
+// baktığı için yeni konteyner HAZIR OLMADAN trafik almaz — ölçülen ~30sn'lik 502 penceresi
+// buradan geliyordu (healthcheckPath tanımlı değildi, trafik anında yeni konteynere dönüyordu).
+// kapaniyor: SIGTERM sonrası true. Uç 503 dönünce yönlendirici bu konteynere YENİ istek yollamayı
+// keser; uçmakta olan istekler graceful shutdown içinde tamamlanır.
+let bootTamam = false
+let kapaniyor = false
+
 app.get('/health', (req, res) => {
+  if (kapaniyor) return res.status(503).json({ ok: false, state: 'shutting_down' })
+  if (!bootTamam) return res.status(503).json({ ok: false, state: 'booting' })
   res.json({
     ok: true,
     uptime: Math.round(process.uptime()),
@@ -261,18 +272,28 @@ process.on('uncaughtException', (err) => {
   console.error('UncaughtException (yakalandı, sunucu ayakta):', err)
 })
 
-app.listen(PORT, async () => {
-  console.log(`✅ Fitpass sunucusu http://localhost:${PORT} adresinde çalışıyor`)
+const server = app.listen(PORT, async () => {
+  console.log(`✅ Fitpass sunucusu http://localhost:${PORT} adresinde çalışıyor (açılış işleri sürüyor)`)
   // Seviye (Tier) yapılandırmasını kanonik değerlere hizala (Aday %1 → Olimpik %5)
   ensureTiers()
   // İl + ilçe verisini garanti et (İstanbul seed'li; 4 yeni il + tüm ilçeleri idempotent ekle)
   ensureGeo()
-  // DB-seviyesi tekillik index'leri — ÖNCE ve AWAIT'li olmalı: rozet çift-veriş koruması YALNIZCA bu
-  // ifade-index'i sayesinde çalışıyor. Beklenmeden başlatılırsa, index kurulmadan önce gelen istek/job
-  // rozet yazabilir ve skipDuplicates hiçbir şey engellemez (çift rozet + çift bildirim).
-  await ensureIndexes()
-  // Kanonik rozetleri (sezon şampiyonu) garanti et, sonra biten sezon şampiyonlarını ödüllendir
-  await ensureBadges()
+  try {
+    // DB-seviyesi tekillik index'leri — ÖNCE ve AWAIT'li olmalı: rozet çift-veriş koruması YALNIZCA bu
+    // ifade-index'i sayesinde çalışıyor. Beklenmeden başlatılırsa, index kurulmadan önce gelen istek/job
+    // rozet yazabilir ve skipDuplicates hiçbir şey engellemez (çift rozet + çift bildirim).
+    await ensureIndexes()
+    // Kanonik rozetleri (sezon şampiyonu) garanti et
+    await ensureBadges()
+    // BURADAN İTİBAREN TRAFİK ALABİLİR. /health bu bayrağa bakıyor; Railway healthcheck'i de
+    // /health'e baktığı için yeni konteyner ancak index'ler kurulduktan sonra trafik alır.
+    // Bayrak set EDİLMEZSE (açılış hatası) healthcheck geçmez ve Railway ESKİ sürümü ayakta
+    // tutar — bozuk bir konteynere trafik dönmesindense deploy'un geri alınması yeğdir.
+    bootTamam = true
+    console.log('✅ Açılış işleri tamamlandı — sunucu trafiğe hazır')
+  } catch (e) {
+    console.error('❌ AÇILIŞ HATASI — sunucu SAĞLIKSIZ kalacak (healthcheck geçmeyecek):', e)
+  }
   awardSeasonChampions()
   // Sezon dönümünü yakalamak için 12 saatte bir kontrol (sezon başına tek kez ödül verir)
   setInterval(() => { awardSeasonChampions() }, 12 * 60 * 60 * 1000)
@@ -286,5 +307,43 @@ app.listen(PORT, async () => {
   sendRatingPrompts()
   setInterval(sendRatingPrompts, 30 * 60 * 1000)
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GRACEFUL SHUTDOWN — deploy sırasında uçmakta olan istekler ÖLMESİN.
+// Railway yeni sürümü ayağa kaldırırken eskisine SIGTERM yollar; işleyici olmadan Node
+// süreci ANINDA ölüyor ve o an işlenen her istek (rezervasyon, check-in, ödeme) yarıda
+// kalıyordu. Sıra: sağlıksız işaretle → yönlendirici trafiği kessin diye kısa bekle →
+// yeni bağlantıları kapat → uçanları bitir → DB havuzunu kapat → çık.
+// drainingSeconds (railway.json) SIGTERM ile SIGKILL arası süredir; aşağıdaki toplam
+// süre ondan KISA olmalı, aksi halde zorla öldürülürüz.
+// ─────────────────────────────────────────────────────────────────────────────
+const DRENAJ_MS = 3000   // yönlendiricinin /health'i 503 görmesi için
+const ZORLA_MS = 12000   // takılan bağlantılar için üst sınır
+
+async function gracefulShutdown(signal: string) {
+  if (kapaniyor) return
+  kapaniyor = true
+  console.log(`🛑 ${signal} alındı — graceful shutdown başlıyor`)
+
+  // Takılırsak bile mutlaka çık (unref: bu zamanlayıcı süreci ayakta TUTMASIN)
+  const zorlaCik = setTimeout(() => {
+    console.error('⚠️ Graceful shutdown zaman aşımı — zorla çıkılıyor')
+    process.exit(0)
+  }, ZORLA_MS)
+  zorlaCik.unref()
+
+  await new Promise(r => setTimeout(r, DRENAJ_MS))
+
+  server.close(async () => {
+    try { await prisma.$disconnect() } catch { /* kapanışta yut */ }
+    console.log('✅ Bağlantılar kapandı, temiz çıkılıyor')
+    process.exit(0)
+  })
+  // Keep-alive ile boşta bekleyen bağlantılar server.close()'u süresiz bekletebilir.
+  server.closeIdleConnections?.()
+}
+
+process.on('SIGTERM', () => { void gracefulShutdown('SIGTERM') })
+process.on('SIGINT', () => { void gracefulShutdown('SIGINT') })
 
 export default app
