@@ -81,7 +81,7 @@ async function seed() {
     const id = B + 100 + i
     await prisma.user.upsert({
       where: { id }, update: { tierId, rewardPoints: 0 },
-      create: { id, username: `stress_${id}`, email: `stress_${id}@x.com`, passwordHash: 'x', fullName: `Stress ${i}`, tierSportCounts: {}, tierId, rewardPoints: 0 },
+      create: { id, username: `stress_${id}`, email: `stress_${id}@x.com`, passwordHash: 'x', fullName: `Stress ${i}`, tierId, rewardPoints: 0 },
     })
     await prisma.rewardPoint.deleteMany({ where: { userId: id } }).catch(() => {})
     users.push({ id, token: jwt.sign({ userId: id, email: `stress_${id}@x.com` }, JWT_SECRET, { expiresIn: '1h' }) })

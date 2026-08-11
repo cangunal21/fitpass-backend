@@ -159,8 +159,6 @@ model User {
   pushToken              String?
   tier                   Tier?         @relation(fields: [tierId], references: [id])
   tierId                 Int?
-  tierSportCounts        Json          @default("{}")
-  yearlyTierResetDate    DateTime?
   totalLessonsCompleted  Int           @default(0)
   rewardPoints           Int           @default(0)
   rewardPointsYear       Int? // puanların ait olduğu yıl (yıllık reset için)

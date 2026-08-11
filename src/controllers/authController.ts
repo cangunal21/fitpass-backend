@@ -70,7 +70,6 @@ export const register = async (req: Request, res: Response) => {
         // istekte X-Locale ile senkron kalır (authMiddleware.syncLocale).
         locale: localeFromReq(req),
         tierId: 1, // Aday tier (pointRate %1) — atanmazsa ilk getMe'ye kadar tier null → ilk booking pointRate 0
-        tierSportCounts: {},
         preferredSports: cleanSports,
         preferredNeighborhoods: cleanNeighborhoods,
         // İlk tercih mahallesi varsa kullanıcının mahallesi olarak da ata
