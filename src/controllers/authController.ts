@@ -166,6 +166,11 @@ export const login = async (req: Request, res: Response) => {
         email: user.email,
         fullName: user.fullName,
         avatarUrl: user.avatarUrl,
+        // neighborhoodId: web/mobil "Bana yakın" sıralaması bu alanı istemciden gönderiyor
+        // (params.userNeighborhoodId). Login yanıtında YOKTU → getUser() hep undefined
+        // döndürüyor, parametre hiç gitmiyor ve sunucu mesafeye göre sıralamayı SESSİZCE
+        // atlayıp normal sıralama uyguluyordu: özellik hiç çalışmıyordu.
+        neighborhoodId: user.neighborhoodId ?? null,
       }
     })
   } catch (error) {
