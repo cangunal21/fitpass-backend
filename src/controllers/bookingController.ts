@@ -170,7 +170,10 @@ export const createBooking = async (req: Request, res: Response) => {
             pointsEarned,
             couponId: coupon?.id || null,
             bookingNumber: `BK-${crypto.randomUUID()}`,
-            checkInCode: crypto.randomBytes(4).toString('hex').toUpperCase(),
+            // 6 bayt (12 hex): 4 bayt ~4.3 milyar idi ve @unique olduğu için çarpışma P2002
+            // fırlatıp kullanıcıya "Sunucu hatası" (500) olarak dönüyordu. 6 bayt çarpışma
+            // olasılığını pratikte sıfırlar; ayrıca kod hâlâ elle okunabilir uzunlukta.
+            checkInCode: crypto.randomBytes(6).toString('hex').toUpperCase(),
             taggedFriends: cleanTags.length ? cleanTags : [],
           },
           include: {
@@ -410,7 +413,7 @@ export const joinDropIn = async (req: Request, res: Response) => {
             slotId,
             userId,
             status: 'confirmed',
-            checkInCode: crypto.randomBytes(4).toString('hex').toUpperCase(),
+            checkInCode: crypto.randomBytes(6).toString('hex').toUpperCase(),
           }
         })
 
@@ -904,6 +907,10 @@ export const transferBooking = async (req: Request, res: Response) => {
             finalAmount: newFinalAmount,
             discountAmount: couponDiscount,
             pointsEarned: newPoints,
+            // Hatırlatma bayrağı SIFIRLANIR: eski seans için hatırlatma gönderilmişse
+            // reminderSent=true kalıyordu ve reminderJob yalnız false olanları taradığı için
+            // YENİ seans için hatırlatma HİÇ gitmiyordu (kullanıcı transfer ettiği dersi kaçırır).
+            reminderSent: false,
             // Salon-erteleme damgası TRANSFERDE SİLİNİR: kullanıcı yeni seansı KENDİ seçti,
             // dolayısıyla ertelemeden doğan "pencere kuralından muaf tam iade" hakkı tükenir.
             // (Silinmezse kullanıcı bir kez ertelenen dersi istediği seansa taşıyıp süresiz

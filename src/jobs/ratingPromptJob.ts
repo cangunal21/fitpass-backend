@@ -2,6 +2,7 @@ import prisma from '../utils/prisma'
 import { sendPushNotification } from '../utils/push'
 import { notifyFields, notifyPush } from '../utils/notifyText'
 import { Locale } from '../utils/locale'
+import { istanbulHour } from '../utils/streak'
 
 // Ders bitiminden ~2 saat sonra "dersini puanla" hatırlatması.
 // Puanlama hakkı ders BİTER bitmez açılır (reviewController createReview: endsAt); bu job yalnızca
@@ -11,6 +12,13 @@ import { Locale } from '../utils/locale'
 export const sendRatingPrompts = async () => {
   try {
     const now = new Date()
+    // SESSİZ SAAT: geç biten dersler (ör. 22:30) + 2 saat = gece yarısından sonra "dersini
+    // puanla" push'u demekti. Bu bir HATIRLATMA, acil bir bildirim değil — sabahı bekleyebilir.
+    // ratingPromptSent yalnız GERÇEKTEN gönderilince yazıldığı için erteleme kayıp yaratmaz:
+    // 7 günlük taban penceresi sayesinde ertesi sabah aynı booking yine seçilir.
+    const saat = istanbulHour(now)
+    if (!process.env.RATING_PROMPT_FORCE && (saat < 9 || saat >= 22)) return
+
     const twoHoursAgo = new Date(now.getTime() - 120 * 60 * 1000)
     const floor = new Date(now.getTime() - 7 * 86400000) // 7 gün taban: eski birikmiş booking'leri tarama
 

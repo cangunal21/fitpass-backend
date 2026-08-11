@@ -3175,6 +3175,61 @@ async function run() {
     await prisma.venue.deleteMany({ where: { id: AV } }).catch(() => {})
   })
 
+  // Tur20 — DÜŞÜK SEVİYELİ DENETİM BULGULARI (toplu)
+  await check('Tur20 küçükler: transfer hatırlatması, check-in kodu, doluluk sayımı, e-posta tarihi', async () => {
+    const KV = 990551, KC1 = 990551, KC2 = 990552, KS1 = 990551, KS2 = 990552, KU = 990551
+    await prisma.booking.deleteMany({ where: { userId: KU } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: { in: [KS1, KS2] } } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: { in: [KC1, KC2] } } }).catch(() => {})
+    await prisma.venue.upsert({ where: { id: KV }, update: { isApproved: true, isActive: true, isSuspended: false }, create: { id: KV, name: 'KucuklerSalon', email: `ks${KV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: KC1 }, update: { venueId: KV, isActive: true, basePrice: 200 }, create: { id: KC1, venueId: KV, title: 'Pahali', category: catName, basePrice: 200, durationMinutes: 60, capacity: 20, isActive: true } })
+    await prisma.class.upsert({ where: { id: KC2 }, update: { venueId: KV, isActive: true, basePrice: 100 }, create: { id: KC2, venueId: KV, title: 'Ucuz', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const fut = new Date(Date.now() + 3 * 86400000)
+    for (const [id, cls] of [[KS1, KC1], [KS2, KC2]] as [number, number][]) {
+      await prisma.class_Session.upsert({ where: { id }, update: { classId: cls, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), capacity: 20, status: 'open' }, create: { id, classId: cls, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), capacity: 20, status: 'open' } })
+    }
+    await prisma.user.upsert({ where: { id: KU }, update: {}, create: { id: KU, username: `kuc_${KU}`, email: `kuc_${KU}@x.com`, passwordHash: 'x', fullName: 'Kucukler', tierId: 1, tierSportCounts: {} } })
+    const tok = jwt.sign({ userId: KU, email: `kuc_${KU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+
+    const bk = await http('/api/bookings', { method: 'POST', token: tok, body: { sessionId: KS1 } })
+    if (bk.status !== 201) throw new Error(`kurulum booking: ${bk.status} ${bk.text.slice(0, 120)}`)
+    const bid = bk.json.booking.id
+
+    // (a) CHECK-IN KODU yeterince geniş olmalı — 4 bayt (8 hex) çarpışma riski 500'e dönüyordu
+    const kod = await prisma.booking.findUnique({ where: { id: bid }, select: { checkInCode: true } })
+    if (!kod?.checkInCode || kod.checkInCode.length < 12) throw new Error(`checkInCode kısa (${kod?.checkInCode?.length}) — çarpışma riski`)
+
+    // (b) TRANSFER hatırlatma bayrağını sıfırlamalı; yoksa yeni seans için hatırlatma HİÇ gitmez
+    await prisma.booking.update({ where: { id: bid }, data: { reminderSent: true } })
+    const tr = await http(`/api/bookings/${bid}/transfer`, { method: 'PUT', token: tok, body: { targetSessionId: KS2 } })
+    if (tr.status !== 200) throw new Error(`transfer: ${tr.status} ${tr.text.slice(0, 120)}`)
+    const sonra = await prisma.booking.findUnique({ where: { id: bid }, select: { reminderSent: true, sessionId: true } })
+    if (sonra?.sessionId !== KS2) throw new Error('transfer seansı taşımadı')
+    if (sonra?.reminderSent !== false) throw new Error('transfer sonrası reminderSent=true kaldı — yeni seans için hatırlatma gitmez')
+
+    // (c) SALON PANELİ DOLULUĞU iptal edilenleri saymamalı
+    await prisma.booking.updateMany({ where: { id: bid }, data: { status: 'cancelled' } })
+    const vtok = jwt.sign({ venueId: KV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const me = await expectOk('/api/venue/me', { token: vtok })
+    const cls2 = (me.json?.venue?.classes || []).find((c: any) => c.id === KC2)
+    const sess = (cls2?.sessions || []).find((x: any) => x.id === KS2)
+    if (!sess) throw new Error('salon panelinde seans yok (kurulum hatalı)')
+    if (sess._count?.bookings !== 0) throw new Error(`iptal edilen rezervasyon doluluğa sayıldı: _count=${sess._count?.bookings} (0 bekleniyor)`)
+
+    // (d) HATIRLATMA E-POSTASINDA sabit "bugünkü ders" kalmamalı (gece yarısını aşan pencerede yanlış)
+    const fs3 = require('fs'), path3 = require('path')
+    const mail = fs3.readFileSync(path3.join(__dirname, '../src/utils/email.ts'), 'utf8')
+    const govde = mail.slice(mail.indexOf('export const sendReminderEmail'), mail.indexOf('export const sendWaitlistNotificationEmail'))
+    if (/bugünkü dersinizi/.test(govde)) throw new Error('hatırlatma e-postasında sabit "bugünkü ders" duruyor')
+    if (/your class today/i.test(govde)) throw new Error('hatırlatma e-postasının EN metninde sabit "today" duruyor')
+
+    await prisma.booking.deleteMany({ where: { userId: KU } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: { in: [KS1, KS2] } } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: { in: [KC1, KC2] } } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: KU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: KV } }).catch(() => {})
+  })
+
   // Tur20 — ŞEMA GÜVENLİK KAPISI. Ölçüldü: `prisma db push` şemadan kolon silindiğinde
   // 7 satırlık tablodan o kolonu SESSİZCE düşürdü (uyarı yok, çıkış kodu 0). `npm start` her
   // açılışta db push çalıştırdığı için şemaya yanlışlıkla dokunan biri üretim verisini

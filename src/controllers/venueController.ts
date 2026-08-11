@@ -295,7 +295,10 @@ export const getVenueMe = async (req: Request, res: Response) => {
             sessions: {
               select: {
                 id: true, startsAt: true, endsAt: true, capacity: true,
-                _count: { select: { bookings: true } },
+                // İPTAL EDİLENLER SAYILMAZ: filtresiz _count TÜM rezervasyonları sayıyordu →
+                // mobil salon paneli doluluğu (ve ondan türetilen kapasiteyi) olduğundan
+                // YÜKSEK gösteriyordu. Filtre createBooking'in kapasite kapısıyla aynı.
+                _count: { select: { bookings: { where: { status: { in: ['confirmed', 'pending'] } } } } },
                 bookings: {
                   where: { status: { in: ['confirmed', 'pending'] } },
                   select: { id: true, status: true, user: { select: { id: true, fullName: true, username: true } } }

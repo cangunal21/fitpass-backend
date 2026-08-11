@@ -491,10 +491,14 @@ export const sendReminderEmail = async (to: string, fullName: string, classTitle
   const loc = L(locale)
   const T = tt(loc, {
     tr: { subject: `⏰ Dersiniz 2 saat sonra başlıyor — ${classTitle}`, heading: 'Dersiniz yaklaşıyor! ⏰',
-          body1: `Merhaba <strong>${esc(fullName)}</strong>, bugünkü dersinizi hatırlatmak istedik.`,
+          // "bugünkü" SABİT yazılıydı: hatırlatma penceresi (+90..+150 dk) İstanbul gece
+          // yarısını aştığında ders aslında ERTESİ gün oluyor. Push tarafı bu hata için
+          // düzeltilmişti ama e-posta düzeltilmemişti → aynı anda giden iki bildirim
+          // çelişiyordu. Tarihi metne yazmak belirsizliği tamamen kaldırır.
+          body1: `Merhaba <strong>${esc(fullName)}</strong>, ${esc(date)} tarihli dersinizi hatırlatmak istedik.`,
           note: 'Unutma: derse 12 saatten az kaldığında iptal yapılamaz.' },
     en: { subject: `⏰ Your class starts in 2 hours — ${classTitle}`, heading: 'Your class is coming up! ⏰',
-          body1: `Hi <strong>${esc(fullName)}</strong>, just a quick reminder about your class today.`,
+          body1: `Hi <strong>${esc(fullName)}</strong>, just a quick reminder about your class on ${esc(date)}.`,
           note: "Heads up: you can't cancel within 12 hours of the class." },
   })
   return await resend.emails.send({
