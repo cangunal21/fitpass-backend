@@ -244,6 +244,18 @@ export const getVenueReviews = async (req: Request, res: Response) => {
     const venueId = parseInt(req.params.venueId as string)
     const viewerId = (req as any).userId as number | undefined
 
+    // MODERASYON KAPISI: kardeş public uçların hepsinde (getVenueById, getSessions, getDropInSlots)
+    // `isApproved && isActive` şartı var ama YORUM ucunda yoktu → platformdan kaldırılan/askıya
+    // alınan salonun yorumları (ve yorumcuların adları) public'te kalmaya devam ediyordu.
+    // 404: salon "yok" gibi davranır, kardeş uçlarla tutarlı.
+    const vGate = await prisma.venue.findUnique({
+      where: { id: venueId },
+      select: { isApproved: true, isActive: true, isSuspended: true },
+    })
+    if (!vGate || !vGate.isApproved || !vGate.isActive || vGate.isSuspended) {
+      return res.status(404).json({ error: 'Salon bulunamadı.' })
+    }
+
     const where = { venueId, targetType: 'venue' as const }
     // Ortalama/toplam TÜM yorumlardan (aggregate) hesaplanır — liste `take:50` ile sınırlı olduğundan
     // avg'i o dilimden hesaplarsak saklı venue.avgRating ile SAPARDI (ör. 80 yorumda 50'nin ortalaması).
@@ -271,6 +283,19 @@ export const getInstructorReviews = async (req: Request, res: Response) => {
   try {
     const instructorId = parseInt(req.params.instructorId as string)
     const viewerId = (req as any).userId as number | undefined
+
+    // MODERASYON KAPISI (bkz. getVenueReviews): pasif eğitmenin ya da askıya alınmış/onaysız
+    // salona bağlı eğitmenin yorumları public'te kalmaya devam ediyordu.
+    const iGate = await prisma.instructor.findUnique({
+      where: { id: instructorId },
+      select: { isActive: true, venue: { select: { isApproved: true, isActive: true, isSuspended: true } } },
+    })
+    if (!iGate || iGate.isActive === false) {
+      return res.status(404).json({ error: 'Eğitmen bulunamadı.' })
+    }
+    if (iGate.venue && (!iGate.venue.isApproved || !iGate.venue.isActive || iGate.venue.isSuspended)) {
+      return res.status(404).json({ error: 'Eğitmen bulunamadı.' })
+    }
 
     const where = { instructorId, targetType: 'instructor' as const }
     const [reviews, stats] = await Promise.all([

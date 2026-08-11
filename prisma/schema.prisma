@@ -12,7 +12,10 @@ datasource db {
 
 model City {
   id            Int                  @id @default(autoincrement())
-  name          String
+  // TEKİL: ensureGeo her açılışta "önce oku sonra yaz" ile çalışıyor. Sıfır-kesinti deploy'da
+  // eski ve yeni konteyner ~20 sn BİRLİKTE çalıştığı için (overlapSeconds) ikisi de aynı anda
+  // "İstanbul yok" görüp iki kez ekleyebilir. Tekillik bunu DB seviyesinde imkânsız kılar.
+  name          String               @unique
   neighborhoods Neighborhood[]
   venues        Venue[]
   users         User[]
@@ -30,6 +33,9 @@ model Neighborhood {
   users        User[]
   venues       Venue[]
   leaderboards MonthlyLeaderboard[]
+
+  // Aynı ildeki mahalle adı TEKİL — bkz. City.name yorumu (ensureGeo yarışı).
+  @@unique([cityId, name])
 }
 
 // ─────────────────────────────────────────────
@@ -404,6 +410,12 @@ model Class_Session {
 
   @@index([classId])
   @@index([startsAt])
+  // (classId, startsAt) TEKİL — index'i ensureIndexes ham SQL ile yaratıyordu ama şemada
+  // TANIMLI DEĞİLDİ. Bu bir SÜRÜKLENMEDİR: Prisma index'i "fazlalık" görür; `db push`
+  // döneminde onu düşürebilir, migration döneminde ise `migrate dev` her seferinde
+  // "veritabanını sıfırlamam lazım" der. map: mevcut index ADIYLA eşleşir → prod'da yeni
+  // index yaratılmaz, sadece Prisma'ya "bu zaten var" denmiş olur.
+  @@unique([classId, startsAt], map: "class_session_class_startsat_unique")
 }
 
 // ─────────────────────────────────────────────
@@ -702,6 +714,13 @@ model RewardPoint {
   source    String
   bookingId Int?
   createdAt DateTime @default(now())
+
+  // Tabloda HİÇ index yoktu. Kritik olan birincisi: check-in'deki idempotans kontrolü
+  // (`findFirst({ bookingId, source:'attendance' })`) AÇIK BİR TRANSACTION ve User satır
+  // kilidi altında çalışıyor → tam tablo taraması kilidi tuttuğu süreyi tablo büyüdükçe
+  // uzatıyordu. İkincisi kullanıcının puan defteri/toplamı sorguları için.
+  @@index([bookingId, source])
+  @@index([userId, createdAt])
 }
 
 model PasswordResetToken {

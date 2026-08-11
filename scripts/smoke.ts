@@ -986,6 +986,10 @@ async function run() {
     if (item.venueId !== IV || item.venueName !== 'PendVenue') throw new Error('pending salon bilgisi eksik')
 
     // 2) job: hatırlatma gönderir → ratingPromptSent=true + in-app bildirim oluşur
+    // RATING_PROMPT_FORCE: job'a SESSİZ SAAT kapısı eklendi (09:00-22:00 İstanbul) — geç biten
+    // ders + 2 saat gece yarısını aşınca "dersini puanla" push'u atıyordu. Test günün her
+    // saatinde koşabilmeli, o yüzden kapı bilerek atlanıyor (streakJob'daki STREAK_FORCE deseni).
+    process.env.RATING_PROMPT_FORCE = '1'
     await sendRatingPrompts()
     const afterJob = await prisma.booking.findUnique({ where: { id: bkGo.id }, select: { ratingPromptSent: true } })
     if (!afterJob?.ratingPromptSent) throw new Error('job ratingPromptSent işaretlemedi')
@@ -3228,6 +3232,52 @@ async function run() {
     await prisma.class.deleteMany({ where: { id: { in: [KC1, KC2] } } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: KU } }).catch(() => {})
     await prisma.venue.deleteMany({ where: { id: KV } }).catch(() => {})
+  })
+
+  // Tur20 — DENETİM BULGULARI: (a) public yorum uçlarında moderasyon kapısı yoktu →
+  // platformdan kaldırılan salonun yorumları (ve yorumcuların adları) görünmeye devam
+  // ediyordu; (b) rezervasyon yazma uçları komisyon kırılımını müşteriye döndürüyordu
+  // (getMyBookings bunu bilerek ayıklıyor, yazma uçları ayıklamıyordu).
+  await check('Gizlilik: askıya alınan salonun yorumları gizlenir, komisyon müşteriye dönmez', async () => {
+    const MV = 990561, MC = 990561, MS = 990561, MU = 990561
+    await prisma.review.deleteMany({ where: { venueId: MV } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { session: { classId: MC } } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: MS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: MC } }).catch(() => {})
+    await prisma.venue.upsert({ where: { id: MV }, update: { isApproved: true, isActive: true, isSuspended: false }, create: { id: MV, name: 'ModerasyonSalon', email: `mo${MV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: MC }, update: { venueId: MV, isActive: true }, create: { id: MC, venueId: MV, title: 'ModerasyonDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const fut = new Date(Date.now() + 3 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: MS }, update: { classId: MC, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), capacity: 20, status: 'open' }, create: { id: MS, classId: MC, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), capacity: 20, status: 'open' } })
+    await prisma.user.upsert({ where: { id: MU }, update: {}, create: { id: MU, username: `mod_${MU}`, email: `mod_${MU}@x.com`, passwordHash: 'x', fullName: 'Moderasyon', tierId: 1, tierSportCounts: {} } })
+    const tok = jwt.sign({ userId: MU, email: `mod_${MU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+
+    // (b) KOMİSYON SIZINTISI — rezervasyon yanıtı
+    const bk = await http('/api/bookings', { method: 'POST', token: tok, body: { sessionId: MS } })
+    if (bk.status !== 201) throw new Error(`booking: ${bk.status} ${bk.text.slice(0, 120)}`)
+    for (const alan of ['commissionAmount', 'venueCommission', 'venuePayout']) {
+      if (alan in (bk.json?.booking || {})) throw new Error(`createBooking yanıtında komisyon alanı SIZDI: ${alan}`)
+    }
+    // finalAmount müşterinin ÖDEDİĞİ tutar → dönmeli (aşırı ayıklama olmasın)
+    if (typeof bk.json?.booking?.finalAmount !== 'number') throw new Error('finalAmount ayıklanmış — müşteri ödediği tutarı görmeli')
+
+    // (a) MODERASYON KAPISI — önce ONAYLIYKEN yorum ucu 200 dönmeli (kurulum doğrulaması)
+    await prisma.review.create({ data: { reviewerUserId: MU, targetType: 'venue', venueId: MV, rating: 5, comment: 'Gizli kalmasi gereken yorum' } })
+    const acik = await http(`/api/reviews/venue/${MV}`)
+    if (acik.status !== 200) throw new Error(`onaylı salonun yorumları alınamadı: ${acik.status}`)
+    if (!acik.text.includes('Gizli kalmasi gereken yorum')) throw new Error('kurulum: yorum listede yok')
+
+    // Salon ASKIYA ALINIYOR → yorumlar public'te GÖRÜNMEMELİ
+    await prisma.venue.update({ where: { id: MV }, data: { isSuspended: true } })
+    const kapali = await http(`/api/reviews/venue/${MV}`)
+    if (kapali.status !== 404) throw new Error(`askıya alınmış salonun yorumları hâlâ dönüyor: ${kapali.status}`)
+    if (kapali.text.includes('Gizli kalmasi gereken yorum')) throw new Error('askıya alınmış salonun yorum METNİ sızdı')
+
+    await prisma.review.deleteMany({ where: { venueId: MV } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { sessionId: MS } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { id: MS } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: MC } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: MU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: MV } }).catch(() => {})
   })
 
   // Tur20 — ŞEMA GÜVENLİK KAPISI. Ölçüldü: `prisma db push` şemadan kolon silindiğinde

@@ -312,7 +312,10 @@ export const createBooking = async (req: Request, res: Response) => {
 
     // (Referral tamamlama check-in'e taşındı — awardAttendanceOnCheckin. Booking anında değil, ilk ücretli ders GERÇEKLEŞİNCE.)
 
-    res.status(201).json({ message: 'Rezervasyon başarıyla oluşturuldu!', booking, taggedCount: cleanTags.length, pointsEarned: booking.pointsEarned })
+    // getMyBookings ile AYNI politika: komisyon kırılımı (platformun iş modeli verisi)
+    // müşteriye dönmez. Bu uç `booking`i ham yayıyordu → aynı alanlar buradan sızıyordu.
+    const { commissionAmount: _c1, venueCommission: _c2, userCommission: _c3, venuePayout: _c4, ...bookingSafe } = booking as any
+    res.status(201).json({ message: 'Rezervasyon başarıyla oluşturuldu!', booking: bookingSafe, taggedCount: cleanTags.length, pointsEarned: booking.pointsEarned })
   } catch (err) {
     console.error(err)
     res.status(500).json({ error: 'Sunucu hatası.' })
@@ -651,9 +654,11 @@ export const cancelBooking = async (req: Request, res: Response) => {
       console.error('Waitlist notify error:', e)
     }
 
+    // Komisyon kırılımı müşteriye dönmez (getMyBookings ile aynı politika).
+    const { commissionAmount: _x1, venueCommission: _x2, userCommission: _x3, venuePayout: _x4, ...updatedSafe } = (updated || {}) as any
     res.json({
       message: `Rezervasyon iptal edildi. ${refundType === 'full' ? 'Tam iade' : 'Yarım iade'} (₺${refundAmount}) uygulandı.`,
-      booking: updated,
+      booking: updatedSafe,
       refundType,
       refundAmount,
     })
@@ -971,11 +976,13 @@ export const transferBooking = async (req: Request, res: Response) => {
       console.error('Transfer waitlist notify error:', e)
     }
 
+    // Komisyon kırılımı müşteriye dönmez (getMyBookings/createBooking ile aynı politika).
+    const { commissionAmount: _t1, venueCommission: _t2, userCommission: _t3, venuePayout: _t4, ...updatedSafe } = (result.updated || {}) as any
     return res.json({
       message: result.priceRefund > 0
         ? `Rezervasyon transfer edildi. ₺${result.priceRefund} fiyat farkı kredinize iade edildi.`
         : 'Rezervasyon başarıyla transfer edildi.',
-      booking: result.updated,
+      booking: updatedSafe,
       priceRefund: result.priceRefund,
     })
   } catch (err) {
