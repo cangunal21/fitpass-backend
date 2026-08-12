@@ -3,6 +3,7 @@ dotenv.config()
 import { initSentry, Sentry } from './utils/sentry'
 initSentry()
 
+import crypto from 'crypto'
 import express from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
@@ -33,7 +34,6 @@ import favoriteRoutes from './routes/favorites'
 import referralRoutes from './routes/referral'
 import { chat, getChatHistory } from './controllers/chatController'
 import { authMiddleware, optionalAuthMiddleware } from './middlewares/auth'
-import { adminAuthMiddleware } from './middlewares/adminAuth'
 
 // GÜVENLİK: kritik secret'lar YOKSA sunucuyu HİÇ BAŞLATMA — ortamdan BAĞIMSIZ.
 // Eski hali `NODE_ENV === 'production'` tam eşitliğine bağlıydı: NODE_ENV set edilmemişse (ki
@@ -246,20 +246,25 @@ app.get('/health', (req, res) => {
   })
 })
 
-// TEŞHİS: proxy arkasında hangi istemci adresini gördüğümüz. Rate limit anahtarı buna dayandığı
-// için yanlış olması TÜM limitleri sessizce etkisiz bırakır (üretimde tam olarak bu yaşandı:
-// her istek ayrı kovaya düşüyor, ratelimit-remaining hep başlangıç değerinde kalıyordu).
-// adminAuth ile korunur — istemci IP'leri ve proxy zinciri herkese açık olmamalı.
-app.get('/health/net', adminAuthMiddleware, (req, res) => {
+// GEÇİCİ TEŞHİS (bu commit'te gelir, düzeltmeyle birlikte KALDIRILIR).
+// Üretimde ratelimit-remaining her istekte başlangıç değerinde kalıyor: her istek AYRI kovaya
+// düşüyor, yani TÜM rate limit'ler sessizce etkisiz. Anahtar req.ip'den geliyor; doğru düzeltme
+// için proxy zincirinde hangi konumun SABİT ve GERÇEK istemci olduğunu ölçmek gerekiyor.
+// DEĞER SIZDIRMAZ: adresler yerine sha256 ön eki + özel/genel sınıfı döner; iki isteği
+// karşılaştırıp hangi konumun değiştiğini görmek için bu yeterli.
+app.get('/health/net', (req, res) => {
+  const ozelMi = (a: string) => /^(10\.|127\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|::1|fc|fd)/i.test(a.trim())
+  const izle = (a: string) => ({ priv: ozelMi(a), h: crypto.createHash('sha256').update(a.trim()).digest('hex').slice(0, 8) })
+  const xff = String(req.headers['x-forwarded-for'] || '')
   res.json({
-    ip: req.ip,
-    ips: req.ips,
-    socket: req.socket?.remoteAddress || null,
-    trustProxy: app.get('trust proxy fn') ? 'set' : 'none',
-    xff: req.headers['x-forwarded-for'] || null,
-    xRealIp: req.headers['x-real-ip'] || null,
-    envoyExternal: req.headers['x-envoy-external-address'] || null,
-    cfConnecting: req.headers['cf-connecting-ip'] || null,
+    zincir: xff ? xff.split(',').map(izle) : [],
+    secilen: req.ip ? izle(req.ip) : null,
+    soket: req.socket?.remoteAddress ? izle(req.socket.remoteAddress) : null,
+    baslikVar: {
+      xRealIp: !!req.headers['x-real-ip'],
+      envoyExternal: !!req.headers['x-envoy-external-address'],
+      cfConnecting: !!req.headers['cf-connecting-ip'],
+    },
   })
 })
 
