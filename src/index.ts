@@ -280,6 +280,13 @@ if (process.env.SENTRY_DSN) {
   Sentry.setupExpressErrorHandler(app)
 }
 
+// BİLİNMEYEN /api YOLU → JSON 404. Express varsayılanı HTML sayfası döndürüyordu: bir istemci
+// yanlış/eski bir uca gittiğinde `res.json()` patlıyor ve hata "sunucu bozuk" gibi görünüyordu.
+// Yalnız /api altında; kök ve /health kendi yanıtlarını verir.
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: 'Böyle bir uç yok.' })
+})
+
 // Son güvenlik ağı: route'tan sızan hata olursa temiz JSON 500 dön (HTML/çökme yerine)
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

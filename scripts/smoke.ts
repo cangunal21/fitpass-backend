@@ -3493,6 +3493,18 @@ async function run() {
     if (!/db-deploy/.test(rj.deploy?.preDeployCommand || '')) throw new Error('railway.json preDeployCommand şema kapısını çağırmıyor')
   })
 
+  // Bilinmeyen /api yolu JSON dönmeli. Express varsayılanı HTML sayfasıydı → istemcide
+  // res.json() patlıyor, hata "sunucu bozuk" gibi görünüyordu. Üretimde ölçülerek bulundu.
+  await check('API: bilinmeyen uç HTML değil JSON 404 döner', async () => {
+    const r = await http('/api/boyle-bir-uc-yok')
+    if (r.status !== 404) throw new Error(`bilinmeyen uç ${r.status} döndü (404 bekleniyor)`)
+    if (r.text.trim().startsWith('<')) throw new Error('bilinmeyen uç HTML döndürüyor — istemcide JSON ayrıştırma patlar')
+    if (!r.json?.error) throw new Error(`404 gövdesi JSON error taşımıyor: ${r.text.slice(0, 80)}`)
+    // Var olan uçlar etkilenmemeli
+    const saglikli = await http('/api/public/cities')
+    if (saglikli.status !== 200) throw new Error(`404 yakalayıcısı gerçek ucu bozdu: ${saglikli.status}`)
+  })
+
   // Tur20 / #30 — RATE LIMIT PROXY ARKASINDA GERÇEKTEN ÇALIŞIYOR MU?
   // ÜRETİMDE ÖLÇÜLDÜ: hiçbir limit uygulanmıyordu. Railway'in X-Forwarded-For zinciri
   // [gerçek istemci, edge] ve edge adresi HER İSTEKTE DEĞİŞİYOR; `trust proxy: 1` zincirin
