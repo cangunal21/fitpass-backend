@@ -157,7 +157,21 @@ const heavyReadLimiter = rateLimit({
   message: { error: 'Çok fazla istek. Lütfen bir dakika bekleyin.' },
 })
 
+// Yenileme uçları auth'suz ve DB'ye vuruyor. Meşru istemci saatte ~1 yeniler; 30/dk NAT payıyla
+// fazlasıyla yeter. Sınırsız bırakılsaydı (yalnız generalLimiter, 200/dk) döndürme sonrası jetonunu
+// saklayamayan bozuk bir istemci ya da kaba-kuvvet denemesi DB'yi bedavaya çalıştırırdı.
+const refreshLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 30,
+  standardHeaders: true, legacyHeaders: false,
+  keyGenerator: (req: express.Request) => 'ip:' + (req.ip || req.socket?.remoteAddress || 'unknown'),
+  skip: skipRateLimit,
+  message: { error: 'Çok fazla istek. Lütfen bir dakika bekleyin.' },
+})
+
 app.use('/api', generalLimiter)
+app.use('/api/auth/refresh', refreshLimiter)
+app.use('/api/venue/refresh', refreshLimiter)
+app.use('/api/instructor/refresh', refreshLimiter)
 app.use('/api/auth/login', authLimiter)
 app.use('/api/auth/register', authLimiter)
 app.use('/api/auth/forgot-password', authLimiter)

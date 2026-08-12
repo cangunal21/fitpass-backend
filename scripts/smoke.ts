@@ -3315,9 +3315,11 @@ async function run() {
     const me = await http('/api/venue/me', { token: yenile.json.token })
     if (me.status !== 200) throw new Error(`yenilenen token çalışmıyor: ${me.status}`)
 
-    // ASKIYA ALINAN salon YENİLEYEMEMELİ — aksi halde moderasyon kararı 180 gün baypas edilir
+    // ASKIYA ALINAN salon YENİLEYEMEMELİ — aksi halde moderasyon kararı 180 gün baypas edilir.
+    // TAZE jetonla denenir: eski jeton döndürüldüğü için grace penceresinden geçerdi ve
+    // 401'i askıdan mı yarış payından mı aldığımız belirsiz kalırdı.
     await prisma.venue.update({ where: { id: RV }, data: { isSuspended: true } })
-    const askili = await http('/api/venue/refresh', { method: 'POST', body: { refreshToken: login.json.refreshToken } })
+    const askili = await http('/api/venue/refresh', { method: 'POST', body: { refreshToken: yenile.json.refreshToken } })
     if (askili.status !== 401) throw new Error(`askıya alınmış salon yenileme yapabildi: ${askili.status}`)
     await prisma.venue.update({ where: { id: RV }, data: { isSuspended: false } })
 
@@ -3343,6 +3345,104 @@ async function run() {
 
     await prisma.panelRefreshToken.deleteMany({ where: { venueId: RV } }).catch(() => {})
     await prisma.venue.deleteMany({ where: { id: RV } }).catch(() => {})
+  })
+
+  // Tur20 / #30 — DÖNDÜRME (rotation) + REPLAY TESPİTİ. Döndürme olmadan çalınan bir refresh
+  // jetonu 180 gün boyunca sessizce oturum yenilerdi ve kimse fark etmezdi. Artık jeton tek
+  // kullanımlık: eskisi geri gelirse hırsızlık ANLAŞILIR ve hesabın tüm oturumları kapanır.
+  await check('Auth: refresh jetonu her yenilemede DEĞİŞİR, eskisi geri gelirse tüm oturumlar kapanır', async () => {
+    const nodeCrypto = require('crypto')
+    const h = (raw: string) => nodeCrypto.createHash('sha256').update(raw).digest('hex')
+    const RV = 990581
+    const pw = 'DondurParola123!'
+    const hash = await bcrypt.hash(pw, 12)
+    await prisma.panelRefreshToken.deleteMany({ where: { venueId: RV } }).catch(() => {})
+    await prisma.venue.upsert({
+      where: { id: RV },
+      update: { email: `rot${RV}@x.com`, passwordHash: hash, isApproved: true, isActive: true, isSuspended: false, passwordChangedAt: null },
+      create: { id: RV, name: 'RotasyonSalon', email: `rot${RV}@x.com`, passwordHash: hash, address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 },
+    })
+
+    const login = await http('/api/venue/login', { method: 'POST', body: { email: `rot${RV}@x.com`, password: pw } })
+    const rt1 = login.json?.refreshToken
+    if (!rt1) throw new Error('login refreshToken vermedi')
+    const ilkSatir = await prisma.panelRefreshToken.findUnique({ where: { token: h(rt1) }, select: { expiresAt: true } })
+    if (!ilkSatir) throw new Error('login jetonu DB\'de yok')
+
+    // 1) Yenileme YENİ bir refresh jetonu dönmeli (aynısını dönerse çalınan jeton tek kullanımlık olmaz)
+    const y1 = await http('/api/venue/refresh', { method: 'POST', body: { refreshToken: rt1 } })
+    const rt2 = y1.json?.refreshToken
+    if (y1.status !== 200 || !rt2) throw new Error(`yenileme refreshToken dönmedi: ${y1.status} ${y1.text.slice(0, 120)}`)
+    if (rt2 === rt1) throw new Error('refresh jetonu DÖNDÜRÜLMÜYOR — aynısı geri geldi')
+
+    // 2) MUTLAK OTURUM ÖMRÜ: yeni jeton eskinin son-geçerliliğini devralmalı. Devralmasaydı
+    //    sürekli yenilenen bir oturum 180 günlük sınırı hiç görmez, sonsuza dek yaşardı.
+    const yeniSatir = await prisma.panelRefreshToken.findUnique({ where: { token: h(rt2) }, select: { expiresAt: true } })
+    if (!yeniSatir) throw new Error('döndürülen jeton DB\'ye yazılmadı')
+    if (Math.abs(yeniSatir.expiresAt.getTime() - ilkSatir.expiresAt.getTime()) > 2000) {
+      throw new Error('döndürülen jeton son-geçerliliği DEVRALMIYOR — oturum sonsuza kadar uzayabilir')
+    }
+
+    // 3) YARIŞ PAYI: iki sekme aynı anda yenilerse ikisi de eski jetonu gönderir. Bu hırsızlık
+    //    değil; grace penceresi içinde reddedilirse kullanıcılar rastgele dışarı atılır.
+    const yarisma = await http('/api/venue/refresh', { method: 'POST', body: { refreshToken: rt1 } })
+    if (yarisma.status !== 200) throw new Error(`grace penceresi içinde yenileme reddedildi (${yarisma.status}) — eşzamanlı sekmeler dışarı atılır`)
+
+    // 4) REPLAY: grace penceresi GEÇTİKTEN sonra eski jeton geri gelirse jeton çalınmış demektir.
+    //    Zaman beklemek yerine döndürme damgasını geriye alıyoruz.
+    await prisma.panelRefreshToken.update({ where: { token: h(rt1) }, data: { rotatedAt: new Date(Date.now() - 5 * 60_000) } })
+    const replay = await http('/api/venue/refresh', { method: 'POST', body: { refreshToken: rt1 } })
+    if (replay.status !== 401) throw new Error(`replay edilen eski jeton kabul edildi: ${replay.status}`)
+
+    // 5) ...ve tespit O OTURUM ZİNCİRİNİ (family) kapatmalı: yoksa hırsız kendi döndürdüğü
+    //    halef jetonla devam eder, yalnız meşru kullanıcı dışarı atılırdı.
+    const sonrasi = await http('/api/venue/refresh', { method: 'POST', body: { refreshToken: rt2 } })
+    if (sonrasi.status !== 401) throw new Error(`replay sonrası zincirdeki halef jeton hâlâ geçerli (${sonrasi.status}) — hırsız oturumda kalır`)
+
+    // 6) ÇIKIŞ da zinciri kapatmalı: yalnız gönderilen satır iptal edilseydi, döndürme yüzünden
+    //    halef jeton hayatta kalır ve "çıkış yaptım" diyen salonun oturumu açık kalırdı.
+    const login2 = await http('/api/venue/login', { method: 'POST', body: { email: `rot${RV}@x.com`, password: pw } })
+    const a1 = login2.json?.refreshToken
+    const a2 = (await http('/api/venue/refresh', { method: 'POST', body: { refreshToken: a1 } })).json?.refreshToken
+    await http('/api/venue/logout', { method: 'POST', body: { refreshToken: a1 } })
+    const halef = await http('/api/venue/refresh', { method: 'POST', body: { refreshToken: a2 } })
+    if (halef.status !== 401) throw new Error(`çıkıştan sonra zincirdeki halef jeton hâlâ çalışıyor: ${halef.status}`)
+
+    await prisma.panelRefreshToken.deleteMany({ where: { venueId: RV } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: RV } }).catch(() => {})
+  })
+
+  // Aynı koruma KULLANICI realm'inde de olmalı — iki uygulama ikiz.
+  await check('Auth: kullanıcı refresh jetonu da döndürülür ve replay tüm oturumları kapatır', async () => {
+    const nodeCrypto = require('crypto')
+    const h = (raw: string) => nodeCrypto.createHash('sha256').update(raw).digest('hex')
+    const { issueRefreshToken } = require('../src/utils/refreshToken')
+    const uid = 990591
+    await prisma.refreshToken.deleteMany({ where: { userId: uid } }).catch(() => {})
+    await prisma.user.upsert({
+      where: { id: uid },
+      update: { banned: false },
+      create: { id: uid, username: `rot_${uid}`, email: `rot_${uid}@x.com`, passwordHash: 'x', fullName: 'Rot' },
+    })
+    const rt1 = await issueRefreshToken(uid)
+
+    const y1 = await http('/api/auth/refresh', { method: 'POST', body: { refreshToken: rt1 } })
+    if (y1.status !== 200 || !y1.json?.refreshToken) throw new Error(`kullanıcı yenilemesi refreshToken dönmedi: ${y1.status}`)
+    if (y1.json.refreshToken === rt1) throw new Error('kullanıcı refresh jetonu döndürülmüyor')
+
+    await prisma.refreshToken.update({ where: { token: h(rt1) }, data: { rotatedAt: new Date(Date.now() - 5 * 60_000) } })
+    const replay = await http('/api/auth/refresh', { method: 'POST', body: { refreshToken: rt1 } })
+    if (replay.status !== 401) throw new Error(`kullanıcı replay jetonu kabul edildi: ${replay.status}`)
+    const sonrasi = await http('/api/auth/refresh', { method: 'POST', body: { refreshToken: y1.json.refreshToken } })
+    if (sonrasi.status !== 401) throw new Error(`kullanıcı replay sonrası zincirdeki halef jeton geçerli: ${sonrasi.status}`)
+
+    // BAŞKA CİHAZ ETKİLENMEMELİ: replay bir zinciri kapatır, hesabın tamamını değil.
+    const baskaCihaz = await issueRefreshToken(uid)
+    const bc = await http('/api/auth/refresh', { method: 'POST', body: { refreshToken: baskaCihaz } })
+    if (bc.status !== 200) throw new Error(`replay diğer cihazın oturumunu da kapattı: ${bc.status}`)
+
+    await prisma.refreshToken.deleteMany({ where: { userId: uid } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: uid } }).catch(() => {})
   })
 
   // Tur20 — ŞEMA GÜVENLİK KAPISI. Ölçüldü: `prisma db push` şemadan kolon silindiğinde

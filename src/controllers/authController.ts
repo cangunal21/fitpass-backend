@@ -182,9 +182,10 @@ export const login = async (req: Request, res: Response) => {
 export const refreshAccessToken = async (req: Request, res: Response) => {
   try {
     const { refreshToken } = req.body
-    const newToken = await rotateAccessToken(String(refreshToken || ''))
-    if (!newToken) return res.status(401).json({ error: 'Oturum süresi doldu, tekrar giriş yapın.' })
-    return res.json({ token: newToken })
+    const cift = await rotateAccessToken(String(refreshToken || ''))
+    if (!cift) return res.status(401).json({ error: 'Oturum süresi doldu, tekrar giriş yapın.' })
+    // refreshToken da DEĞİŞİR: client yenisini saklamalı (çalınan jeton tek kullanımlık olsun diye).
+    return res.json({ token: cift.token, refreshToken: cift.refreshToken })
   } catch (err) {
     console.error('Refresh error:', err)
     return res.status(500).json({ error: 'Sunucu hatası.' })

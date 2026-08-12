@@ -837,10 +837,18 @@ model PanelRefreshToken {
   instructorId Int?
   expiresAt    DateTime
   revoked      Boolean     @default(false)
+  // Döndürme (rotation) izi: jeton yenileme sırasında iptal edildiyse dolu, çıkış/parola
+  // değişimiyle iptal edildiyse boş kalır. İkisini ayırmak REPLAY tespitinin temelidir.
+  rotatedAt    DateTime?
+  // OTURUM ZİNCİRİ (family): girişte üretilir, her döndürmede DEVRALINIR. Bir cihazın oturumu
+  // = bir aile. Çıkış ve replay tespiti aileyi kapatır — kullanıcının DİĞER cihazları etkilenmez.
+  family       String      @default(uuid())
   createdAt    DateTime    @default(now())
 
   @@index([venueId])
   @@index([instructorId])
+  @@index([rotatedAt])
+  @@index([family])
 }
 
 model RefreshToken {
@@ -850,7 +858,11 @@ model RefreshToken {
   userId    Int
   expiresAt DateTime
   revoked   Boolean  @default(false)
+  rotatedAt DateTime? // bkz. PanelRefreshToken.rotatedAt — replay tespiti
+  family    String   @default(uuid()) // bkz. PanelRefreshToken.family — oturum zinciri
   createdAt DateTime @default(now())
 
   @@index([userId])
+  @@index([rotatedAt])
+  @@index([family])
 }

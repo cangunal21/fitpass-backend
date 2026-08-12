@@ -152,9 +152,10 @@ export const getInstructorMe = async (req: Request, res: Response) => {
 // ACCESS TOKEN YENİLE (eğitmen) — bkz. venueRefresh; aynı gerekçe, aynı davranış.
 export const instructorRefresh = async (req: Request, res: Response) => {
   try {
-    const token = await rotatePanelAccessToken(String(req.body?.refreshToken || ''))
-    if (!token) return res.status(401).json({ error: 'Oturum süresi doldu, lütfen tekrar giriş yapın.' })
-    return res.json({ token })
+    const cift = await rotatePanelAccessToken(String(req.body?.refreshToken || ''))
+    if (!cift) return res.status(401).json({ error: 'Oturum süresi doldu, lütfen tekrar giriş yapın.' })
+    return res.json({ token: cift.token, refreshToken: cift.refreshToken }) // bkz. venueRefresh — jeton döndürülür
+
   } catch (err) {
     console.error('instructorRefresh error:', err)
     return res.status(500).json({ error: 'Sunucu hatası.' })

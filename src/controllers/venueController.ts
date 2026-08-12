@@ -1074,10 +1074,12 @@ export const venueResetPassword = async (req: Request, res: Response) => {
 export const venueRefresh = async (req: Request, res: Response) => {
   try {
     const { refreshToken } = req.body
-    const token = await rotatePanelAccessToken(String(refreshToken || ''))
-    // Geçersiz/iptal/süresi dolmuş VEYA hesap askıya alınmış → 401. Client oturumu kapatır.
-    if (!token) return res.status(401).json({ error: 'Oturum süresi doldu, lütfen tekrar giriş yapın.' })
-    return res.json({ token })
+    const cift = await rotatePanelAccessToken(String(refreshToken || ''))
+    // Geçersiz/iptal/süresi dolmuş VEYA hesap askıya alınmış VEYA replay → 401. Client oturumu kapatır.
+    if (!cift) return res.status(401).json({ error: 'Oturum süresi doldu, lütfen tekrar giriş yapın.' })
+    // refreshToken da DEĞİŞİR (döndürme): client yenisini saklamazsa bir sonraki yenilemede
+    // replay sayılır ve oturumu kapanır — bu kasıtlı, çalınan jetonu tek kullanımlık yapar.
+    return res.json({ token: cift.token, refreshToken: cift.refreshToken })
   } catch (err) {
     console.error('venueRefresh error:', err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
