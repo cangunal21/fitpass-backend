@@ -3493,6 +3493,56 @@ async function run() {
     if (!/db-deploy/.test(rj.deploy?.preDeployCommand || '')) throw new Error('railway.json preDeployCommand şema kapısını çağırmıyor')
   })
 
+  // Tur20 / #30 — RATE LIMIT PROXY ARKASINDA GERÇEKTEN ÇALIŞIYOR MU?
+  // ÜRETİMDE ÖLÇÜLDÜ: hiçbir limit uygulanmıyordu. Railway'in X-Forwarded-For zinciri
+  // [gerçek istemci, edge] ve edge adresi HER İSTEKTE DEĞİŞİYOR; `trust proxy: 1` zincirin
+  // sonunu seçtiği için her istek AYRI kovaya düşüyordu. Yerelde limitler çalıştığı, üretimde
+  // sessizce çalışmadığı için hiçbir test bunu yakalamıyordu — kaba kuvvet koruması KAPALIYDI.
+  // Bu test proxy'yi taklit eder: limit'ler DISABLE_RATE_LIMIT'siz ayrı bir sunucuda ölçülür.
+  await check('Rate limit: proxy arkasında (değişen edge IP) gerçekten uygulanır ve XFF sahteciliğiyle aşılamaz', async () => {
+    const path = require('path')
+    const rlPort = PORT + 9
+    const alt = spawn('npx', ['ts-node', 'src/index.ts'], {
+      // DİKKAT: DISABLE_RATE_LIMIT BİLEREK verilmiyor — limitlerin açık olduğu tek sunucu bu.
+      env: { ...process.env, PORT: String(rlPort), ADMIN_SECRET, CRON_SECRET },
+      cwd: path.join(__dirname, '..'), detached: true, stdio: 'ignore',
+    })
+    const base = `http://localhost:${rlPort}`
+    const dene = async (xff: string) => {
+      const r = await fetch(base + '/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': xff },
+        body: JSON.stringify({ email: 'yok@yok.com', password: 'yanlis' }),
+      })
+      return r.status
+    }
+    try {
+      let hazir = false
+      for (let i = 0; i < 90; i++) {
+        try { const r = await fetch(base + '/health'); if (r.status === 200) { hazir = true; break } } catch { /* henüz açılmadı */ }
+        await new Promise(r => setTimeout(r, 1000))
+      }
+      if (!hazir) throw new Error('limitli sunucu 90sn içinde açılmadı')
+
+      // 1) Aynı istemci, HER İSTEKTE DEĞİŞEN edge adresi → yine de limitlenmeli (asıl hata buydu)
+      let limitlendi = false
+      for (let i = 1; i <= 14; i++) {
+        if ((await dene(`203.0.113.7, 198.51.100.${i}`)) === 429) { limitlendi = true; break }
+      }
+      if (!limitlendi) throw new Error('değişen edge IP\'siyle 14 giriş denemesi hiç limitlenmedi — kaba kuvvet koruması etkisiz')
+
+      // 2) İstemci kendi XFF'ini uydurup zinciri uzatırsa limit AŞILAMAMALI
+      const sahte = await dene(`1.2.3.4, 203.0.113.7, 198.51.100.77`)
+      if (sahte !== 429) throw new Error(`uydurma X-Forwarded-For ile limit aşıldı: ${sahte}`)
+
+      // 3) GERÇEKTEN farklı istemci ise etkilenmemeli (limit toptan/global olmamalı)
+      const baska = await dene(`203.0.113.199, 198.51.100.5`)
+      if (baska === 429) throw new Error('farklı istemci de limitlendi — herkes tek kovayı paylaşıyor')
+    } finally {
+      try { process.kill(-alt.pid!, 'SIGKILL') } catch { /* zaten ölmüş */ }
+    }
+  })
+
   // Tur20 — SIFIR-KESİNTİ DEPLOY. Ölçülmüştü: her Railway deploy'unda ~30sn 502 penceresi vardı
   // (healthcheckPath tanımsız → trafik hazır olmayan konteynere dönüyor; SIGTERM işleyicisi yok →
   // uçan istekler ölüyor). Bu test iki mekanizmayı da doğrular: /health açılış bitmeden 503 der,

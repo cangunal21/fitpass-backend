@@ -3,7 +3,6 @@ dotenv.config()
 import { initSentry, Sentry } from './utils/sentry'
 initSentry()
 
-import crypto from 'crypto'
 import express from 'express'
 import cors from 'cors'
 import helmet from 'helmet'
@@ -49,7 +48,14 @@ if (!process.env.JWT_SECRET || !process.env.ADMIN_SECRET) {
 const app = express()
 const PORT = process.env.PORT || 3001
 
-app.set('trust proxy', 1) // Railway reverse proxy arkasında gerçek IP'yi al
+// PROXY GÜVEN DERİNLİĞİ — rate limit'in kalbi. Railway zinciri geçici bir teşhis ucuyla ÖLÇÜLDÜ:
+//   X-Forwarded-For = [gerçek istemci, Railway edge]  ve edge adresi HER İSTEKTE DEĞİŞİYOR.
+// Değer 1 iken req.ip zincirin SONUNU (değişen edge'i) seçiyordu → her istek ayrı kovaya
+// düşüyor, TÜM rate limit'ler sessizce etkisiz kalıyordu (ratelimit-remaining hep başlangıçta).
+// 2 = sağdan iki hop güvenilir (soket + edge) → req.ip zincirdeki gerçek istemci olur.
+// SAHTECİLİĞE de kapalı: istemci kendi XFF'ini uydurursa zincir [sahte, gerçek, edge] olur ve
+// sağdan ikinci yine GERÇEK istemcidir; uydurulan değer solda kalır, hiç bakılmaz.
+app.set('trust proxy', 2)
 // Güvenlik başlıkları (HSTS, X-Content-Type-Options, X-Frame-Options, ...).
 // CORP=cross-origin: bu kasıtlı bir public API, web/mobil farklı origin'den tüketir.
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }))
@@ -113,7 +119,11 @@ const authLimiter = rateLimit({
   max: 10,                   // 1 dakikada max 10 deneme (login, register, şifre sıfırlama) — IP bazlı (brute-force)
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req: express.Request) => 'ip:' + (req.ip || req.socket?.remoteAddress || 'unknown'),
+  // ipKeyGenerator ŞART: ham IPv6 adresi anahtar yapılırsa, tek bir kullanıcının elindeki /64
+  // bloğunda milyarlarca adres olduğu için her denemede yeni kovaya düşülür ve kaba-kuvvet
+  // limiti tamamen aşılır. Helper IPv6'yı blok bazında normalize eder. (express-rate-limit
+  // bunu ERR_ERL_KEY_GEN_IPV6 ile uyarıyordu; uyarı yalnız log'a düşüyordu.)
+  keyGenerator: (req: express.Request) => 'ip:' + ipKeyGenerator(req.ip || req.socket?.remoteAddress || 'unknown'),
   skip: skipRateLimit,
   message: { error: 'Çok fazla giriş denemesi. Lütfen bir dakika bekleyin.' },
 })
@@ -164,7 +174,7 @@ const heavyReadLimiter = rateLimit({
 const refreshLimiter = rateLimit({
   windowMs: 60 * 1000, max: 30,
   standardHeaders: true, legacyHeaders: false,
-  keyGenerator: (req: express.Request) => 'ip:' + (req.ip || req.socket?.remoteAddress || 'unknown'),
+  keyGenerator: (req: express.Request) => 'ip:' + ipKeyGenerator(req.ip || req.socket?.remoteAddress || 'unknown'), // bkz. authLimiter
   skip: skipRateLimit,
   message: { error: 'Çok fazla istek. Lütfen bir dakika bekleyin.' },
 })
@@ -243,28 +253,6 @@ app.get('/health', (req, res) => {
     ok: true,
     uptime: Math.round(process.uptime()),
     release: process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 7) || null,
-  })
-})
-
-// GEÇİCİ TEŞHİS (bu commit'te gelir, düzeltmeyle birlikte KALDIRILIR).
-// Üretimde ratelimit-remaining her istekte başlangıç değerinde kalıyor: her istek AYRI kovaya
-// düşüyor, yani TÜM rate limit'ler sessizce etkisiz. Anahtar req.ip'den geliyor; doğru düzeltme
-// için proxy zincirinde hangi konumun SABİT ve GERÇEK istemci olduğunu ölçmek gerekiyor.
-// DEĞER SIZDIRMAZ: adresler yerine sha256 ön eki + özel/genel sınıfı döner; iki isteği
-// karşılaştırıp hangi konumun değiştiğini görmek için bu yeterli.
-app.get('/health/net', (req, res) => {
-  const ozelMi = (a: string) => /^(10\.|127\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|::1|fc|fd)/i.test(a.trim())
-  const izle = (a: string) => ({ priv: ozelMi(a), h: crypto.createHash('sha256').update(a.trim()).digest('hex').slice(0, 8) })
-  const xff = String(req.headers['x-forwarded-for'] || '')
-  res.json({
-    zincir: xff ? xff.split(',').map(izle) : [],
-    secilen: req.ip ? izle(req.ip) : null,
-    soket: req.socket?.remoteAddress ? izle(req.socket.remoteAddress) : null,
-    baslikVar: {
-      xRealIp: !!req.headers['x-real-ip'],
-      envoyExternal: !!req.headers['x-envoy-external-address'],
-      cfConnecting: !!req.headers['cf-connecting-ip'],
-    },
   })
 })
 
