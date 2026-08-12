@@ -244,6 +244,8 @@ app.get('/', (req, res) => {
 // kapaniyor: SIGTERM sonrası true. Uç 503 dönünce yönlendirici bu konteynere YENİ istek yollamayı
 // keser; uçmakta olan istekler graceful shutdown içinde tamamlanır.
 let bootTamam = false
+// Kurulamayan tekillik index'leri — /health/ready raporlar (koruma boşluğu sessiz kalmasın).
+let indexHatalari: string[] = []
 let kapaniyor = false
 
 app.get('/health', (req, res) => {
@@ -261,7 +263,11 @@ app.get('/health/ready', async (req, res) => {
   const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('db timeout')), 2000))
   try {
     await Promise.race([prisma.$queryRaw`SELECT 1`, timeout])
-    res.json({ ok: true })
+    // Kurulamayan tekillik index'leri: sunucu çalışıyor ama BİR KORUMA YOK (örn. rozet
+    // çift-veriş engeli). Eskiden yalnız açılış log'una düşüp kayboluyordu; artık izleme
+    // görebilsin diye burada raporlanıyor. Servis ayakta olduğu için 200, ama ok:false değil —
+    // "hazır ama eksik" ayrı bir alanla anlatılıyor ki mevcut izleme kırılmasın.
+    res.json({ ok: true, ...(indexHatalari.length ? { indexUyarisi: indexHatalari } : {}) })
   } catch {
     // Dışarıya ayrıntı verme (altyapı bilgisi sızmasın); log tarafında zaten görünür
     res.status(503).json({ ok: false })
@@ -316,9 +322,15 @@ const server = app.listen(PORT, async () => {
     // DB-seviyesi tekillik index'leri — ÖNCE ve AWAIT'li olmalı: rozet çift-veriş koruması YALNIZCA bu
     // ifade-index'i sayesinde çalışıyor. Beklenmeden başlatılırsa, index kurulmadan önce gelen istek/job
     // rozet yazabilir ve skipDuplicates hiçbir şey engellemez (çift rozet + çift bildirim).
-    await ensureIndexes()
+    indexHatalari = await ensureIndexes()
     // Kanonik rozetleri (sezon şampiyonu) garanti et
     await ensureBadges()
+    // DB CANLILIK PROBU — HAZIR-OLMA KAPISININ ASIL DAYANAĞI. Yukarıdaki açılış işlerinin
+    // hepsi kendi hatalarını yutuyor (ensureIndexes artık liste döndürüyor ama fırlatmıyor),
+    // dolayısıyla DB tamamen erişilemezken bile buraya kadar gelinip "hazır" denebiliyordu:
+    // kapı vardı ama hiçbir şeyi tutmuyordu. Bu tek satır invariant'ı açıkça ifade eder —
+    // veritabanına ulaşamayan bir konteyner trafik ALMAMALI.
+    await prisma.$queryRaw`SELECT 1`
     // BURADAN İTİBAREN TRAFİK ALABİLİR. /health bu bayrağa bakıyor; Railway healthcheck'i de
     // /health'e baktığı için yeni konteyner ancak index'ler kurulduktan sonra trafik alır.
     // Bayrak set EDİLMEZSE (açılış hatası) healthcheck geçmez ve Railway ESKİ sürümü ayakta

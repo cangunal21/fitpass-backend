@@ -1,6 +1,7 @@
 import { Request, Response } from 'express'
 import crypto from 'crypto'
 import prisma from '../utils/prisma'
+import { gorselUrlGecerliMi } from '../utils/sanitize'
 import { translateInstructorBio, translateSpecialty } from '../utils/translate'
 import { clampStr, isValidEmail } from '../utils/validate'
 import { sendInstructorInviteEmail } from '../utils/email'
@@ -10,6 +11,10 @@ export const createInstructor = async (req: Request, res: Response) => {
   try {
     const venueId = (req as any).venueId
     const { fullName, specialty, bio, avatarUrl, phone, email } = req.body
+    // Bkz. utils/sanitize.gorselUrlGecerliMi — saldırgan-kontrollü avatar adresi izleme pikseline döner.
+    if (avatarUrl !== undefined && !gorselUrlGecerliMi(avatarUrl)) {
+      return res.status(400).json({ error: 'Geçersiz profil fotoğrafı adresi.' })
+    }
 
     if (!fullName || !specialty) {
       return res.status(400).json({ error: 'Ad ve uzmanlık alanı zorunludur.' })
@@ -83,6 +88,10 @@ export const updateInstructor = async (req: Request, res: Response) => {
     const venueId = (req as any).venueId
     const instructorId = parseInt(req.params.id as string)
     const { fullName, specialty, bio, avatarUrl, phone, email } = req.body
+    // Bkz. utils/sanitize.gorselUrlGecerliMi — saldırgan-kontrollü avatar adresi izleme pikseline döner.
+    if (avatarUrl !== undefined && !gorselUrlGecerliMi(avatarUrl)) {
+      return res.status(400).json({ error: 'Geçersiz profil fotoğrafı adresi.' })
+    }
 
     const existing = await prisma.instructor.findUnique({ where: { id: instructorId } })
     if (!existing || existing.venueId !== venueId) {
@@ -193,6 +202,17 @@ export const inviteInstructor = async (req: Request, res: Response) => {
     if (dupe) return res.status(409).json({ error: 'Bu e-posta başka bir eğitmene ait.' })
 
     const token = crypto.randomBytes(32).toString('hex')
+    // DAVET MAİLİ SOĞUMASI. Bu uç, salonun yazdığı HERHANGİ bir adrese mail attırabiliyordu ve
+    // hız limiti yoktu: ele geçirilmiş (ya da kötü niyetli) tek bir salon hesabı, seçtiği kurbanın
+    // kutusuna sınırsız "Şipşakspor daveti" gönderebilirdi. Sayaç eğitmen kaydı başına tutulur.
+    const sonSaat = new Date(Date.now() - 3600_000)
+    const yakinDavet = await prisma.instructorPasswordResetToken.count({
+      where: { instructorId, createdAt: { gt: sonSaat } },
+    })
+    if (yakinDavet >= 3) {
+      return res.status(429).json({ error: 'Bu eğitmen için çok fazla davet gönderildi. Lütfen bir saat sonra tekrar deneyin.' })
+    }
+
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000)
     await prisma.$transaction([
       prisma.instructor.update({ where: { id: instructorId }, data: { email: rawEmail, inviteStatus: 'pending' } }),

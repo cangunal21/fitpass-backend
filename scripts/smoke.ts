@@ -1110,9 +1110,9 @@ async function run() {
     const iTok = jwt.sign({ instructorId: II, email: 'portal@x.com', role: 'instructor' }, JWT_SECRET, { expiresIn: '1h' })
 
     // 1) PUT /me — profil düzenle (fullName/bio/specialty/avatar) + finans SIZMAZ
-    const upd = await http('/api/instructor/me', { method: 'PUT', token: iTok, body: { fullName: 'Yeni Hoca Adı', bio: 'Yeni bio', specialty: 'Yoga · Pilates', avatarUrl: 'https://img/x.jpg' } })
+    const upd = await http('/api/instructor/me', { method: 'PUT', token: iTok, body: { fullName: 'Yeni Hoca Adı', bio: 'Yeni bio', specialty: 'Yoga · Pilates', avatarUrl: 'https://res.cloudinary.com/demo/image/upload/x.jpg' } })  // avatar artık doğrulanıyor (izin verilen barındırıcı)
     if (upd.status !== 200) throw new Error(`profil düzenleme başarısız: ${upd.status} ${upd.text.slice(0, 120)}`)
-    if (upd.json?.instructor?.fullName !== 'Yeni Hoca Adı' || upd.json?.instructor?.bio !== 'Yeni bio' || upd.json?.instructor?.avatarUrl !== 'https://img/x.jpg') throw new Error('profil alanları güncellenmedi')
+    if (upd.json?.instructor?.fullName !== 'Yeni Hoca Adı' || upd.json?.instructor?.bio !== 'Yeni bio' || upd.json?.instructor?.avatarUrl !== 'https://res.cloudinary.com/demo/image/upload/x.jpg') throw new Error('profil alanları güncellenmedi')
     if (/venuePayout|finalAmount|passwordHash|iban/i.test(JSON.stringify(upd.json))) throw new Error('profil yanıtı finans/hassas alan sızdırdı')
 
     // 2) POST /classes — kendi salonuna, kendi üzerine ders (venueId DB'den, instructorId zorla)
@@ -3561,6 +3561,101 @@ async function run() {
     if (/db\s+push/.test(pkg.scripts?.start || '')) throw new Error('npm start hâlâ `prisma db push` çalıştırıyor — sessiz kolon silme riski geri geldi')
     const rj = JSON.parse(fs2.readFileSync(path2.join(__dirname, '../railway.json'), 'utf8'))
     if (!/db-deploy/.test(rj.deploy?.preDeployCommand || '')) throw new Error('railway.json preDeployCommand şema kapısını çağırmıyor')
+  })
+
+  // DENETİM BULGUSU (orta): avatarUrl hiç doğrulanmıyordu, yalnız uzunluğu kırpılıyordu.
+  // Bu alan liderlikte, sosyal akışta, profilde ve ADMİN PANELİNDE <img src> olarak yükleniyor →
+  // saldırgan-kontrollü bir adres, görüntüleyen herkesin (admin dahil) IP'sini sızdıran bir
+  // izleme pikseline dönüşüyordu.
+  await check('Profil: avatar adresi doğrulanır (yalnız https + bilinen barındırıcı)', async () => {
+    const uniq = Date.now()
+    const em = `av${uniq}@x.com`
+    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `av${uniq}`, email: em, password: 'AvTest1234', fullName: 'Av Test' } })
+    const tok = reg.json?.token
+    if (!tok) throw new Error(`kayıt token vermedi: ${reg.status}`)
+
+    const kotu = [
+      'https://saldirgan.example/px.gif?u=kurban',   // yabancı host → izleme pikseli
+      'http://res.cloudinary.com/x.png',             // https değil
+      'javascript:alert(1)',                          // şema saldırısı
+    ]
+    for (const u of kotu) {
+      const r = await http('/api/auth/profile', { method: 'PUT', token: tok, body: { avatarUrl: u } })
+      if (r.status !== 400) throw new Error(`geçersiz avatar kabul edildi (${u}): ${r.status}`)
+    }
+    // Meşru adres kabul edilmeli
+    const iyi = await http('/api/auth/profile', { method: 'PUT', token: tok, body: { avatarUrl: 'https://res.cloudinary.com/demo/image/upload/x.png' } })
+    if (iyi.status !== 200) throw new Error(`meşru cloudinary adresi reddedildi: ${iyi.status} ${iyi.text.slice(0, 120)}`)
+
+    const tu = await prisma.user.findUnique({ where: { email: em }, select: { id: true } })
+    if (tu) {
+      await prisma.refreshToken.deleteMany({ where: { userId: tu.id } }).catch(() => {})
+      await prisma.emailVerificationToken.deleteMany({ where: { userId: tu.id } }).catch(() => {})
+      await prisma.user.delete({ where: { id: tu.id } }).catch(() => {})
+    }
+  })
+
+  // DENETİM BULGUSU (orta): şifre sıfırlamada HESAP BAŞINA soğuma yoktu. IP limiti saldırganı
+  // yavaşlatıyor ama KURBANI korumuyordu: tek IP'den dakikada 10 istekle kurbanın kutusuna
+  // saatte 600 mail düşürülebiliyordu.
+  await check('Şifre sıfırlama: hesap başına soğuma (kurbanın kutusu doldurulamaz)', async () => {
+    const uniq = Date.now() + 3
+    const em = `cool${uniq}@x.com`
+    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `cool${uniq}`, email: em, password: 'CoolTest1234', fullName: 'Cool Test' } })
+    if (reg.status !== 201 && reg.status !== 200) throw new Error(`kayıt: ${reg.status}`)
+    const uid = (await prisma.user.findUnique({ where: { email: em }, select: { id: true } }))!.id
+    await prisma.passwordResetToken.deleteMany({ where: { userId: uid } })
+
+    for (let i = 0; i < 6; i++) {
+      const r = await http('/api/auth/forgot-password', { method: 'POST', body: { email: em } })
+      // Yanıt HER ZAMAN nötr olmalı — limite takıldığı dışarıya sızmamalı (enumerasyon).
+      if (r.status !== 200) throw new Error(`forgot-password ${i}. istekte ${r.status} döndü (nötr 200 bekleniyor)`)
+    }
+    const uretilen = await prisma.passwordResetToken.count({ where: { userId: uid } })
+    if (uretilen > 3) throw new Error(`6 istekte ${uretilen} sıfırlama maili/token üretildi — hesap başına soğuma yok`)
+
+    await prisma.passwordResetToken.deleteMany({ where: { userId: uid } }).catch(() => {})
+    await prisma.refreshToken.deleteMany({ where: { userId: uid } }).catch(() => {})
+    await prisma.emailVerificationToken.deleteMany({ where: { userId: uid } }).catch(() => {})
+    await prisma.user.delete({ where: { id: uid } }).catch(() => {})
+  })
+
+  // DENETİM BULGUSU (orta): ders oluştururken sayısal alanlar doğrulanmıyordu. Negatif süre,
+  // seansın endsAt'ini startsAt'ten öne alıyor → check-in penceresi HİÇ açılmıyor ve ders günü
+  // kimse giriş yapamıyor (kurtarma yolu yok).
+  await check('Ders: negatif süre / sıfır kontenjan / geçersiz tarih reddedilir', async () => {
+    const CV = 990621
+    const pw = 'DersDogrula123!'
+    await prisma.venue.upsert({
+      where: { id: CV },
+      update: { email: `dd${CV}@x.com`, passwordHash: await bcrypt.hash(pw, 12), isApproved: true, isActive: true, isSuspended: false, passwordChangedAt: null },
+      create: { id: CV, name: 'DogrulamaSalon', email: `dd${CV}@x.com`, passwordHash: await bcrypt.hash(pw, 12), address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 },
+    })
+    const gir = await http('/api/venue/login', { method: 'POST', body: { email: `dd${CV}@x.com`, password: pw } })
+    const vt = gir.json?.token
+    if (!vt) throw new Error(`salon girişi: ${gir.status}`)
+
+    const kotular = [
+      { ad: 'negatif süre', body: { title: 'X', category: catName, basePrice: '200', duration: '-1000', capacity: '20' } },
+      { ad: 'devasa kontenjan', body: { title: 'X', category: catName, basePrice: '200', duration: '60', capacity: '999999' } },
+      { ad: 'negatif fiyat', body: { title: 'X', category: catName, basePrice: '-50', duration: '60', capacity: '20' } },
+    ]
+    for (const k of kotular) {
+      const r = await http('/api/venue/classes', { method: 'POST', token: vt, body: k.body })
+      if (r.status !== 400) throw new Error(`${k.ad} kabul edildi: ${r.status}`)
+    }
+
+    // Geçerli ders açılabilmeli, ama GEÇERSİZ TARİHLİ seans reddedilmeli
+    const ok = await http('/api/venue/classes', { method: 'POST', token: vt, body: { title: 'Gecerli', category: catName, basePrice: '200', duration: '60', capacity: '20' } })
+    if (ok.status !== 201) throw new Error(`geçerli ders reddedildi: ${ok.status} ${ok.text.slice(0, 120)}`)
+    const cid = ok.json?.class?.id
+    // 'gg/aa/yyyy' TR biçimi → new Date(...) Invalid Date; eskiden geçmiş-tarih kapısı sessizce atlanıyordu
+    const bozuk = await http(`/api/venue/classes/${cid}/sessions`, { method: 'POST', token: vt, body: { date: '15/08/2026', time: '19:00', capacity: 20 } })
+    if (bozuk.status !== 400) throw new Error(`geçersiz tarihli seans kabul edildi: ${bozuk.status}`)
+
+    await prisma.class_Session.deleteMany({ where: { class: { venueId: CV } } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { venueId: CV } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: CV } }).catch(() => {})
   })
 
   // Bilinmeyen /api yolu JSON dönmeli. Express varsayılanı HTML sayfasıydı → istemcide

@@ -11,6 +11,7 @@ import { syncUserBadges } from '../utils/badges'
 import { seasonLabelsFromKey } from '../utils/season'
 import { purgeUserReviews, purgeUserComments } from '../utils/moderation'
 import { invalidate } from '../utils/cache'
+import { gorselUrlGecerliMi } from '../utils/sanitize'
 import { localeFromReq, Locale } from '../utils/locale'
 import { cityIdOfNeighborhood } from '../utils/geo'
 import { notifyFields, notifyPush, NotifyParams } from '../utils/notifyText'
@@ -323,6 +324,18 @@ export const forgotPassword = async (req: Request, res: Response) => {
       return res.json({ message: 'Email gönderildi' })
     }
 
+    // HESAP BAŞINA SOĞUMA. IP limiti (authLimiter 10/dk) saldırganı yavaşlatıyor ama KURBANI
+    // korumuyordu: tek IP'den dakikada 10 istekle kurbanın kutusuna saatte 600 "şifre sıfırlama"
+    // maili düşürülebiliyor, DB'ye o kadar token satırı yazılıyordu. Sayaç HEDEF HESAPTA tutulur,
+    // böylece saldırgan IP/hesap değiştirse de kurban korunur.
+    // 3/saat: gerçekten şifresini unutan biri için fazlasıyla yeterli.
+    const sonSaat = new Date(Date.now() - 3600_000)
+    const yakinIstek = await prisma.passwordResetToken.count({ where: { userId: user.id, createdAt: { gt: sonSaat } } })
+    if (yakinIstek >= 3) {
+      // Aynı nötr yanıt: hesabın var olup olmadığı ya da limite takıldığı DIŞARIYA sızmasın.
+      return res.json({ message: 'Email gönderildi' })
+    }
+
     const token = crypto.randomBytes(32).toString('hex')
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000)
 
@@ -422,7 +435,14 @@ export const updateProfile = async (req: Request, res: Response) => {
     const data: any = {}
     if (fullName !== undefined) data.fullName = clampStr(fullName, 80)
     if (bio !== undefined) data.bio = clampStr(bio, 500)
-    if (avatarUrl !== undefined) data.avatarUrl = clampStr(avatarUrl, 500)
+    if (avatarUrl !== undefined) {
+      // Bkz. utils/sanitize.gorselUrlGecerliMi — saldırgan-kontrollü avatar adresi, görüntüleyen
+      // herkesin (admin dahil) IP'sini saldırgana sızdıran bir izleme pikseli hâline gelir.
+      if (!gorselUrlGecerliMi(avatarUrl)) {
+        return res.status(400).json({ error: 'Geçersiz profil fotoğrafı adresi.' })
+      }
+      data.avatarUrl = clampStr(avatarUrl, 500)
+    }
     if (neighborhoodId !== undefined) {
       // parseInt yerine parseIntSafe: 'abc'/taşma/NaN doğrudan Prisma'ya gidip 500 veriyordu.
       const nb = parseIntSafe(neighborhoodId)

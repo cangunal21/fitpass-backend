@@ -163,7 +163,11 @@ export const venueRegister = async (req: Request, res: Response) => {
         // cityId İSTEMCİDEN ALINMAZ: türetilmiş bir değeri istemcinin dikte etmesi (web 'cityId: 1'
         // gönderiyordu) mahalle-şehir tutarsızlığı üretir. Mahalleden türetilir; ilçe yoksa null.
         cityId: await cityIdOfNeighborhood(parseIntSafe(neighborhoodId)),
-        neighborhoodId: neighborhoodId || null,
+        // AYNI DEĞER İKİ FARKLI YOLDAN GEÇMEMELİ: üst satır temizliyor, bu satır HAM bırakıyordu.
+        // Web/mobil formu '34' gibi STRING gönderdiğinde Prisma'nın Int alanına string gidiyor →
+        // PrismaClientValidationError → catch 500 "Sunucu hatası" döndürüyordu. Salon, düzeltebileceği
+        // "geçersiz ilçe" hatası yerine genel bir sunucu hatası görüp kayıt olamıyordu.
+        neighborhoodId: parseIntSafe(neighborhoodId) || null,
         isApproved: false,
       },
       select: {
@@ -403,6 +407,26 @@ export const createClass = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Tüm zorunlu alanları doldurun.' })
     }
 
+    // SAYISAL ALANLAR DOĞRULANIR. Eskiden doğrudan parseFloat/parseInt edilip yazılıyordu:
+    //  • duration negatif olabiliyordu → seansın endsAt'i startsAt'ten ÖNCE oluyor, check-in
+    //    penceresi hiç açılmıyor ve ders günü kimse giriş yapamıyordu (kurtarma yolu yok).
+    //  • capacity sınırsızdı → bekleme listesi süpürgesi boş kapasite kadar dönüyordu (ayrıca
+    //    jobs/waitlistJob.ts'te de sınırlandı) ve salon "20" yerine "200000" yazınca aşırı satış.
+    //  • basePrice negatif olabiliyordu → gelir raporu ve komisyon hesabı eksiye düşüyordu.
+    // NaN kontrolü şart: parseInt('abc') NaN döner ve Prisma'ya NaN gitmesi 500 üretir.
+    const fiyat = parseFloat(String(basePrice))
+    const sure = parseInt(String(duration), 10)
+    const kont = parseInt(String(capacity), 10)
+    if (!Number.isFinite(fiyat) || fiyat < 0 || fiyat > 1_000_000) {
+      return res.status(400).json({ error: 'Geçerli bir fiyat girin.' })
+    }
+    if (!Number.isInteger(sure) || sure < 5 || sure > 1440) {
+      return res.status(400).json({ error: 'Ders süresi 5–1440 dakika arasında olmalı.' })
+    }
+    if (!Number.isInteger(kont) || kont < 1 || kont > 1000) {
+      return res.status(400).json({ error: 'Kontenjan 1–1000 arasında olmalı.' })
+    }
+
     // SAHİPLİK: instructorId gövdeden geliyor — YALNIZ bu salona ait bir hoca bağlanabilir. Aksi halde
     // salon A, rakip salon B'nin hocasını dersine iliştirir (B'nin puanı kirlenir, B kendi portalında
     // A'nın dersini görüp seans ekleyebilir). Her diğer hoca mutasyonu venueId eşitliği kontrol ediyor.
@@ -435,10 +459,10 @@ export const createClass = async (req: Request, res: Response) => {
         description: safeDesc,
         category,
         sportCategoryId: sportCat?.id ?? null,
-        basePrice: parseFloat(basePrice),
-        duration: parseInt(duration),
-        durationMinutes: parseInt(duration),
-        capacity: parseInt(capacity),
+        basePrice: fiyat,
+        duration: sure,
+        durationMinutes: sure,
+        capacity: kont,
         venueId,
         instructorId: safeInstructorId,
         isActive: true,
@@ -527,6 +551,12 @@ export const createSession = async (req: Request, res: Response) => {
     }
 
     const startsAt = new Date(`${date}T${time}:00+03:00`) // TR (UTC+3) duvar-saati — sunucu TZ'inden bağımsız doğru an
+    // GEÇERSİZ TARİH KONTROLÜ ÖNCE. `new Date('15/08/2026T19:00:00+03:00')` (TR arayüzünden
+    // yapışan gün/ay/yıl biçimi) Invalid Date üretir; Invalid Date ile yapılan HER karşılaştırma
+    // false döner → aşağıdaki "geçmiş tarih" kapısı SESSİZCE atlanır ve DB'ye çöp tarih yazılır.
+    if (isNaN(startsAt.getTime())) {
+      return res.status(400).json({ error: 'Geçersiz tarih veya saat. Biçim: YYYY-AA-GG ve SS:DD.' })
+    }
     if (startsAt <= new Date()) {
       return res.status(400).json({ error: 'Geçmiş tarihli seans eklenemez. Lütfen gelecekteki bir tarih ve saat seçin.' })
     }
@@ -684,6 +714,12 @@ export const createDropInSlot = async (req: Request, res: Response) => {
     }
 
     const startsAt = new Date(`${date}T${time}:00+03:00`) // TR (UTC+3) duvar-saati — sunucu TZ'inden bağımsız doğru an
+    // GEÇERSİZ TARİH KONTROLÜ ÖNCE. `new Date('15/08/2026T19:00:00+03:00')` (TR arayüzünden
+    // yapışan gün/ay/yıl biçimi) Invalid Date üretir; Invalid Date ile yapılan HER karşılaştırma
+    // false döner → aşağıdaki "geçmiş tarih" kapısı SESSİZCE atlanır ve DB'ye çöp tarih yazılır.
+    if (isNaN(startsAt.getTime())) {
+      return res.status(400).json({ error: 'Geçersiz tarih veya saat. Biçim: YYYY-AA-GG ve SS:DD.' })
+    }
     if (startsAt <= new Date()) {
       return res.status(400).json({ error: 'Geçmiş tarihli slot eklenemez.' })
     }
@@ -875,6 +911,12 @@ export const updateSession = async (req: Request, res: Response) => {
     }
 
     const startsAt = new Date(`${date}T${time}:00+03:00`) // TR (UTC+3) duvar-saati — sunucu TZ'inden bağımsız doğru an
+    // GEÇERSİZ TARİH KONTROLÜ ÖNCE. `new Date('15/08/2026T19:00:00+03:00')` (TR arayüzünden
+    // yapışan gün/ay/yıl biçimi) Invalid Date üretir; Invalid Date ile yapılan HER karşılaştırma
+    // false döner → aşağıdaki "geçmiş tarih" kapısı SESSİZCE atlanır ve DB'ye çöp tarih yazılır.
+    if (isNaN(startsAt.getTime())) {
+      return res.status(400).json({ error: 'Geçersiz tarih veya saat. Biçim: YYYY-AA-GG ve SS:DD.' })
+    }
     if (startsAt <= new Date()) {
       return res.status(400).json({ error: 'Geçmiş tarihli seans eklenemez.' })
     }

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
+import { gorselUrlGecerliMi } from '../utils/sanitize'
 import { clampStr, parseIntSafe } from '../utils/validate'
 import { translateClassTitle, translateSpecialty, translateInstructorBio } from '../utils/translate'
 import { awardAttendanceOnCheckin } from './bookingController'
@@ -16,6 +17,10 @@ export const updateInstructorMe = async (req: Request, res: Response) => {
   try {
     const instructorId = (req as any).instructorId
     const { fullName, specialty, bio, avatarUrl } = req.body
+    // Bkz. utils/sanitize.gorselUrlGecerliMi — saldırgan-kontrollü avatar adresi izleme pikseline döner.
+    if (avatarUrl !== undefined && !gorselUrlGecerliMi(avatarUrl)) {
+      return res.status(400).json({ error: 'Geçersiz profil fotoğrafı adresi.' })
+    }
 
     const existing = await prisma.instructor.findUnique({ where: { id: instructorId } })
     if (!existing) return res.status(404).json({ error: 'Eğitmen bulunamadı.' })

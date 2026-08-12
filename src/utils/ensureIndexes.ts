@@ -2,7 +2,15 @@ import prisma from './prisma'
 
 // Şema @unique'in prod `db push` veri-kaybı uyarısına takılmadan DB-seviyesi tekillik sağlamak için
 // idempotent partial unique index'ler. Boot'ta bir kez çalışır (IF NOT EXISTS → tekrar zararsız).
-export async function ensureIndexes() {
+//
+// BAŞARISIZLIKLAR ARTIK GERİ DÖNÜYOR. Her blok kendi hatasını yutuyordu ve yalnız console'a
+// yazıyordu: bir tekillik index'i (örn. rozet çift-veriş koruması) kurulamadığında sunucu
+// "açılış işleri tamamlandı" deyip trafiğe açılıyor, koruma AYLARCA yok olabiliyordu. Yutmayı
+// sürdürüyoruz — kurulamayan bir index yüzünden servisi komple kapatmak doğru değil, sebebi
+// çoğu zaman temizlenemeyen ESKİ VERİ — ama artık kim başarısız oldu, çağıran biliyor ve
+// /health/ready bunu raporluyor.
+export async function ensureIndexes(): Promise<string[]> {
+  const basarisiz: string[] = []
   try {
     // Eğitmen e-postası (login kimliği) tekil olmalı; NULL'lara izin (davet edilmemiş hocalar).
     // E-postalar uygulama düzeyinde küçük harfle saklanır → düz (email) kolonu üzerinde index yeter.
@@ -18,6 +26,7 @@ export async function ensureIndexes() {
     )
   } catch (e) {
     console.error('ensureIndexes (instructor_email) hata (yok sayıldı):', e)
+    basarisiz.push('instructor_email_unique')
   }
 
   try {
@@ -38,6 +47,7 @@ export async function ensureIndexes() {
     )
   } catch (e) {
     console.error('ensureIndexes (report tekilliği) hata (yok sayıldı):', e)
+    basarisiz.push('report_open_pair_unique')
   }
 
   try {
@@ -64,6 +74,7 @@ export async function ensureIndexes() {
     )
   } catch (e) {
     console.error('ensureIndexes (class_session tekilliği) hata (yok sayıldı):', e)
+    basarisiz.push('class_session_class_startsat_unique')
   }
 
   try {
@@ -98,6 +109,7 @@ export async function ensureIndexes() {
     )
   } catch (e) {
     console.error('ensureIndexes (sportCategory dedupe) hata (yok sayıldı):', e)
+    basarisiz.push('sportcategory_name_lower_unique')
   }
 
   try {
@@ -110,6 +122,7 @@ export async function ensureIndexes() {
     )
   } catch (e) {
     console.error('ensureIndexes (user_username_lower) hata (yok sayıldı):', e)
+    basarisiz.push('user_username_lower_unique')
   }
 
   try {
@@ -134,5 +147,11 @@ export async function ensureIndexes() {
     `)
   } catch (e) {
     console.error('ensureIndexes (userbadge_award) hata (yok sayıldı):', e)
+    basarisiz.push('userbadge_award_unique')
   }
+
+  if (basarisiz.length) {
+    console.error('❌ KURULAMAYAN TEKİLLİK INDEX\'LERİ (koruma YOK):', basarisiz.join(', '))
+  }
+  return basarisiz
 }

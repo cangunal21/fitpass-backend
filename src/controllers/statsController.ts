@@ -175,14 +175,19 @@ export const getVenueRevenue = async (req: Request, res: Response) => {
     }
 
     // Ders bazlı gelir
-    const classMap: Record<string, { title: string; sessions: number; bookings: number; revenue: number }> = {}
+    // Map KULLANILIYOR, düz nesne DEĞİL: anahtar SALONUN YAZDIĞI ders başlığı. Düz nesnede
+    // başlığı `__proto__` olan bir ders, `classMap[title]` üzerinden Object.prototype'a yazar —
+    // hem o dersin cirosu raporda kaybolur hem de süreç genelinde prototip kirlenmesi olur.
+    // Map anahtarları prototip zinciriyle ilişkisizdir, bu sınıf hata kökten kapanır.
+    const classMap = new Map<string, { title: string; sessions: number; bookings: number; revenue: number }>()
     bookings.forEach(b => {
       const title = b.session?.class?.title || 'Bilinmiyor'
-      if (!classMap[title]) classMap[title] = { title, sessions: 0, bookings: 0, revenue: 0 }
-      classMap[title].bookings++
-      classMap[title].revenue += b.finalAmount
+      let k = classMap.get(title)
+      if (!k) { k = { title, sessions: 0, bookings: 0, revenue: 0 }; classMap.set(title, k) }
+      k.bookings++
+      k.revenue += b.finalAmount
     })
-    const byClass = Object.values(classMap).sort((a, b) => b.revenue - a.revenue)
+    const byClass = [...classMap.values()].sort((a, b) => b.revenue - a.revenue)
 
     return res.json({
       summary: {

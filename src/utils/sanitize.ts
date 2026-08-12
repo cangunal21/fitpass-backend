@@ -32,3 +32,31 @@ export function stripInstructorSensitive<T extends Record<string, any>>(inst: T 
   for (const k of INSTRUCTOR_SENSITIVE_FIELDS) delete i[k]
   return i
 }
+
+/**
+ * AVATAR / GÖRSEL URL DOĞRULAMA.
+ *
+ * avatarUrl istemciden geliyordu ve yalnızca uzunluğu kırpılıyordu; içeriği hiç denetlenmiyordu.
+ * Bu alan liderlik tablosunda, sosyal akışta, takipçi listelerinde, profil sayfasında ve ADMİN
+ * PANELİNDE <img src> olarak yükleniyor. Saldırgan-kontrollü bir adres koymak:
+ *   • görüntüleyen HERKESİN IP'sini ve User-Agent'ını saldırganın sunucusuna gönderir
+ *     (admin dahil — admin panelinde de aynı avatar render ediliyor),
+ *   • `javascript:` / `data:` şemalarıyla istemciye göre script çalıştırma yüzeyi açar.
+ *
+ * Kural: yalnız https ve yalnız BİLİNEN barındırıcılar. Boş/eksik değer serbest (avatar isteğe
+ * bağlı). Reddetmek yerine `null` döndürmüyoruz — çağıran 400 dönebilsin diye ayrımı koruyoruz.
+ */
+const IZINLI_GORSEL_HOSTLARI = [
+  'res.cloudinary.com',   // uygulamanın kendi yüklemeleri
+  'ui-avatars.com',       // baş harf avatarı üreteci (getInitialsAvatar)
+  'lh3.googleusercontent.com', // Google ile giriş geldiğinde profil fotoğrafı
+]
+
+export function gorselUrlGecerliMi(url: unknown): boolean {
+  if (url === null || url === undefined || url === '') return true // avatar zorunlu değil
+  if (typeof url !== 'string') return false
+  let u: URL
+  try { u = new URL(url) } catch { return false }
+  if (u.protocol !== 'https:') return false // http/javascript:/data: reddedilir
+  return IZINLI_GORSEL_HOSTLARI.some(h => u.hostname === h || u.hostname.endsWith('.' + h))
+}
