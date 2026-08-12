@@ -176,5 +176,8 @@ export async function revokePanelRefreshToken(refreshToken: string): Promise<voi
  */
 export async function revokeAllPanelRefreshTokens(realm: PanelRealm): Promise<void> {
   const sahip = 'venueId' in realm ? { venueId: realm.venueId } : { instructorId: realm.instructorId }
-  await prisma.panelRefreshToken.updateMany({ where: sahip, data: { revoked: true } }).catch(() => {})
+  // rotatedAt DA sıfırlanır: döndürülmüş satırlar revoked=true olmasına rağmen yarış payı
+  // (grace) penceresinde kabul edilmeye devam ederdi → parola değişimine rağmen saldırgan
+  // elindeki bir önceki jetonla taze zincir üretebilirdi. (Çıkış yolu bunu zaten yapıyordu.)
+  await prisma.panelRefreshToken.updateMany({ where: sahip, data: { revoked: true, rotatedAt: null } }).catch(() => {})
 }

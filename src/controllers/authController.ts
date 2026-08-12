@@ -387,7 +387,13 @@ export const resetPassword = async (req: Request, res: Response) => {
       })
       if (claim.count === 0) return false // token bu arada başka bir istekçe tüketildi
       await tx.user.update({ where: { id: resetToken.userId }, data: { passwordHash } })
-      await tx.refreshToken.updateMany({ where: { userId: resetToken.userId, revoked: false }, data: { revoked: true } })
+      // TÜM satırlar + rotatedAt: null. `revoked: false` filtresi DÖNDÜRÜLMÜŞ satırları atlıyordu:
+      // onlar revoked=true ama rotatedAt dolu olduğu için yarış payı (grace) penceresinde HÂLÂ
+      // kabul ediliyor ve taze bir zincir üretebiliyorlardı. Yani jetonu ele geçiren saldırgan,
+      // parola sıfırlandıktan sonra elindeki bir önceki jetonla geri girebiliyordu — parola
+      // sıfırlama, ele geçirilmiş hesabın ÇÖZÜMÜ olduğu için bu boşluk onu işlevsiz kılıyordu.
+      // rotatedAt sıfırlanınca satır "çıkışta iptal edildi" sınıfına düşer ve sessizce reddedilir.
+      await tx.refreshToken.updateMany({ where: { userId: resetToken.userId }, data: { revoked: true, rotatedAt: null } })
       return true
     })
     if (!ok) return res.status(400).json({ error: 'Geçersiz veya süresi dolmuş token' })
@@ -395,7 +401,7 @@ export const resetPassword = async (req: Request, res: Response) => {
     // Süpürge transaction'ı commit ettikten SONRA doğmuş olabilecek oturumları da kapat:
     // eşzamanlı bir giriş, tx görünürlüğü dışında token yazmış olabilir. İkinci süpürge
     // ucuz ve idempotent; parola değişiminden sonra hiçbir eski oturum ayakta kalmamalı.
-    await prisma.refreshToken.updateMany({ where: { userId: resetToken.userId, revoked: false }, data: { revoked: true } })
+    await prisma.refreshToken.updateMany({ where: { userId: resetToken.userId }, data: { revoked: true, rotatedAt: null } })
 
     return res.json({ message: 'Şifre güncellendi' })
   } catch (error) {
@@ -590,10 +596,10 @@ export const changePassword = async (req: Request & { userId?: number }, res: Re
     // best-effort DEĞİL: başarısızsa 500 dönmeli, "başarılı" DENMEMELİ.
     await prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id: req.userId }, data: { passwordHash: newHash } })
-      await tx.refreshToken.updateMany({ where: { userId: req.userId, revoked: false }, data: { revoked: true } })
+      await tx.refreshToken.updateMany({ where: { userId: req.userId }, data: { revoked: true, rotatedAt: null } }) // bkz. resetPassword — grace penceresi kapatılır
     })
     // Commit sonrası araya girmiş olabilecek oturumları da kapat (idempotent güvenlik ağı).
-    await prisma.refreshToken.updateMany({ where: { userId: req.userId, revoked: false }, data: { revoked: true } })
+    await prisma.refreshToken.updateMany({ where: { userId: req.userId }, data: { revoked: true, rotatedAt: null } })
 
     return res.json({ message: 'Şifre başarıyla değiştirildi.' })
   } catch (error) {

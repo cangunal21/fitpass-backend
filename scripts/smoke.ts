@@ -3412,6 +3412,47 @@ async function run() {
     await prisma.venue.deleteMany({ where: { id: RV } }).catch(() => {})
   })
 
+  // DENETİM BULGUSU (yüksek): parola sıfırlama/değiştirme, YARIŞ PAYI penceresindeki
+  // döndürülmüş jetonu öldürmüyordu. `where: { revoked: false }` filtresi döndürülmüş satırları
+  // atlıyor, `data`da rotatedAt sıfırlanmıyordu → saldırgan elindeki BİR ÖNCEKİ jetonla,
+  // parola sıfırlandıktan sonra bile taze bir zincir üretebiliyordu. Parola sıfırlama ele
+  // geçirilmiş hesabın ÇÖZÜMÜ olduğu için bu boşluk onu tamamen işlevsiz kılıyordu.
+  await check('Auth: parola değişimi YARIŞ PAYI içindeki döndürülmüş jetonu da öldürür', async () => {
+    const nodeCrypto = require('crypto')
+    const h = (raw: string) => nodeCrypto.createHash('sha256').update(raw).digest('hex')
+    const RV = 990611
+    const pw = 'GraceParola123!'
+    const hash = await bcrypt.hash(pw, 12)
+    await prisma.panelRefreshToken.deleteMany({ where: { venueId: RV } }).catch(() => {})
+    await prisma.venue.upsert({
+      where: { id: RV },
+      update: { email: `gr${RV}@x.com`, passwordHash: hash, isApproved: true, isActive: true, isSuspended: false, passwordChangedAt: null },
+      create: { id: RV, name: 'GraceSalon', email: `gr${RV}@x.com`, passwordHash: hash, address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 },
+    })
+
+    // Saldırgan R0'ı ele geçirdi ve bir kez kullandı → R0 döndürüldü ama grace penceresi AÇIK.
+    const login = await http('/api/venue/login', { method: 'POST', body: { email: `gr${RV}@x.com`, password: pw } })
+    const r0 = login.json?.refreshToken
+    const y = await http('/api/venue/refresh', { method: 'POST', body: { refreshToken: r0 } })
+    if (y.status !== 200) throw new Error(`kurulum: ilk yenileme ${y.status}`)
+    const r0Satir = await prisma.panelRefreshToken.findUnique({ where: { token: h(r0) }, select: { revoked: true, rotatedAt: true } })
+    if (!r0Satir?.revoked || !r0Satir.rotatedAt) throw new Error('kurulum: R0 döndürülmüş görünmüyor')
+
+    // Kurban parolasını değiştirir (hesabı kurtarma hamlesi).
+    const login2 = await http('/api/venue/login', { method: 'POST', body: { email: `gr${RV}@x.com`, password: pw } })
+    const chg = await http('/api/venue/change-password', { method: 'PUT', token: login2.json.token, body: { currentPassword: pw, newPassword: 'YeniGrace123!' } })
+    if (chg.status !== 200) throw new Error(`parola değişmedi: ${chg.status} ${chg.text.slice(0, 120)}`)
+
+    // Saldırgan grace penceresi içinde R0'ı TEKRAR dener — girmemeli.
+    const geriDon = await http('/api/venue/refresh', { method: 'POST', body: { refreshToken: r0 } })
+    if (geriDon.status !== 401) {
+      throw new Error(`parola değişiminden sonra grace içindeki eski jeton yeniden zincir açtı: ${geriDon.status} — parola sıfırlama işlevsiz`)
+    }
+
+    await prisma.panelRefreshToken.deleteMany({ where: { venueId: RV } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: RV } }).catch(() => {})
+  })
+
   // Aynı koruma KULLANICI realm'inde de olmalı — iki uygulama ikiz.
   await check('Auth: kullanıcı refresh jetonu da döndürülür ve replay tüm oturumları kapatır', async () => {
     const nodeCrypto = require('crypto')
