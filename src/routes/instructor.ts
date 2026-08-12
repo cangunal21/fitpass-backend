@@ -20,6 +20,7 @@ import {
   getMyInstructorClasses,
   checkInInstructorBooking,
 } from '../controllers/instructorPortalController'
+import { getUploadSignature } from '../controllers/uploadController'
 import { instructorAuthMiddleware } from '../middlewares/instructorAuth'
 
 const router = Router()
@@ -44,5 +45,7 @@ router.get('/classes', instructorAuthMiddleware, getMyInstructorClasses)
 router.post('/classes', instructorAuthMiddleware, createInstructorClass)
 router.post('/classes/:classId/sessions', instructorAuthMiddleware, createInstructorSession)
 router.post('/checkin', instructorAuthMiddleware, checkInInstructorBooking)
+// Görsel yükleme imzası (bkz. controllers/uploadController.ts)
+router.post('/upload-signature', instructorAuthMiddleware, getUploadSignature)
 
 export default router

@@ -11,6 +11,7 @@ import {
   updateVenueImages, venueRefresh, venueLogout} from '../controllers/venueController'
 import { createInstructor, getVenueInstructors, updateInstructor, deleteInstructor, inviteInstructor } from '../controllers/instructorController'
 import { submitSubMerchant, refreshSubMerchantStatus } from '../controllers/submerchantController'
+import { getUploadSignature } from '../controllers/uploadController'
 import { venueAuthMiddleware, venueApprovedMiddleware, venueVerifiedMiddleware } from '../middlewares/venueAuth'
 import { createCoupon, getVenueCoupons, deleteCoupon } from '../controllers/couponController'
 import { getVenueStats, getVenueRevenue } from '../controllers/statsController'
@@ -63,5 +64,8 @@ router.get('/coupons', venueAuthMiddleware, getVenueCoupons)
 router.get('/reviews', venueAuthMiddleware, getMyVenueReviews)
 router.post('/coupons', venueAuthMiddleware, venueApprovedMiddleware, createCoupon)
 router.delete('/coupons/:id', venueAuthMiddleware, deleteCoupon)
+
+// Görsel yükleme imzası (bkz. controllers/uploadController.ts)
+router.post('/upload-signature', venueAuthMiddleware, getUploadSignature)
 
 export default router

@@ -62,6 +62,10 @@ const JWT_SECRET = process.env.JWT_SECRET || ''
 if (!JWT_SECRET) { console.error('JWT_SECRET set edilmeli (.env veya ortam).'); process.exit(1) }
 const ADMIN_SECRET = process.env.ADMIN_SECRET || 'fitpass-admin-2024'
 const CRON_SECRET = process.env.CRON_SECRET || 'cron-secret-2024'
+// Görsel yükleme imzası testleri için SAHTE Cloudinary yapılandırması. Gerçek gizli anahtar
+// yalnız üretimde (Railway) duruyor; imzanın doğru üretilip üretilmediğini sınamak için
+// gerçek hesaba ihtiyaç yok — imza tamamen yerel bir hesaplama.
+const TEST_CLOUDINARY_URL = 'cloudinary://123456789012345:test-api-secret-xyz@testcloud'
 
 // Çakışmayı önlemek için yüksek ID aralığı
 const V = 990001, C = 990001, S = 990001, U = 990001
@@ -2046,10 +2050,15 @@ async function run() {
     await prisma.class.upsert({ where: { id: TC }, update: {}, create: { id: TC, venueId: TV, title: 'TzDers2', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     await prisma.class_Session.deleteMany({ where: { classId: TC } })
     const tok = jwt.sign({ venueId: TV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
-    const rr = await http(`/api/venue/classes/${TC}/sessions/recurring`, { method: 'POST', token: tok, body: { time: '20:30', capacity: 10, weekDays: [3], weeks: 1 } })
+    // GÜN SABİT DEĞİL, YARIN. Eskiden Çarşamba (3) sabitti ve `weeks: 1` ile birlikte test
+    // ÇARŞAMBA GÜNLERİ 20:30'DAN SONRA KOŞUNCA DÜŞÜYORDU: o haftanın çarşambası geçmiş oluyor,
+    // hiç seans üretilmiyordu. Hatanın kendisi de bunu itiraf ediyordu ("geçmiş olabilir") —
+    // yani takvimin gününe göre kırmızı yanan bir test. Yarının günü her zaman gelecekte.
+    const yarininGunu = trWd(new Date(Date.now() + 86400000))
+    const rr = await http(`/api/venue/classes/${TC}/sessions/recurring`, { method: 'POST', token: tok, body: { time: '20:30', capacity: 10, weekDays: [yarininGunu], weeks: 1 } })
     if (rr.status !== 201) throw new Error(`tekrarlayan: ${rr.status}`)
     const rec = await prisma.class_Session.findFirst({ where: { classId: TC }, orderBy: { startsAt: 'asc' }, select: { startsAt: true } })
-    if (!rec) throw new Error('tekrarlayan seans oluşmadı (bu haftaki Çarşamba geçmiş olabilir)')
+    if (!rec) throw new Error(`tekrarlayan seans oluşmadı (istenen gün: ${yarininGunu})`)
     // Aynı günü tek-seans ucundan da ekle → iki yol AYNI anı vermeli (eskiden 3 saat fark vardı).
     // (classId, startsAt) artık DB'de TEKİL olduğu için önce tekrarlayan seansı silip aynı anı
     // ikinci yoldan üretiyoruz; karşılaştırma aynı, çakışma yok.
@@ -3603,6 +3612,59 @@ async function run() {
     if (!/db-deploy/.test(rj.deploy?.preDeployCommand || '')) throw new Error('railway.json preDeployCommand şema kapısını çağırmıyor')
   })
 
+  // DENETİM BULGUSU: Cloudinary'ye İMZASIZ yükleme yapılıyordu. Gereken tek şey `upload_preset`
+  // adıydı ve o ad hesap adıyla birlikte JavaScript paketinin içindeydi → sayfa kaynağını açan
+  // herkes, kimlik doğrulaması OLMADAN hesaba dosya yükleyebiliyordu. İstek sunucumuza hiç
+  // uğramadığı için rate limit'lerin hiçbiri devreye girmiyordu (kota tüketimi + marka adresi
+  // altında istenmeyen içerik). Artık yükleme, sunucunun ürettiği imzayla yapılıyor.
+  await check('Yükleme: imza YALNIZ girişli hesaba verilir ve klasörü SUNUCU belirler', async () => {
+    // 1) ANONİM istek imza ALAMAZ — asıl kapanan açık bu.
+    for (const yol of ['/api/auth/upload-signature', '/api/venue/upload-signature', '/api/instructor/upload-signature']) {
+      const r = await http(yol, { method: 'POST' })
+      if (r.status !== 401) throw new Error(`${yol}: anonim istek ${r.status} aldı (401 bekleniyor)`)
+    }
+
+    // 2) Girişli kullanıcı imza alır ve gerekli alanların HEPSİ döner
+    const UU = 990641
+    await testPrisma.user.upsert({
+      where: { id: UU },
+      update: {},
+      create: { id: UU, username: `up_${UU}`, email: `up_${UU}@x.com`, passwordHash: 'x', fullName: 'Up' },
+    })
+    const uTok = jwt.sign({ userId: UU, email: `up_${UU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const imza = await http('/api/auth/upload-signature', { method: 'POST', token: uTok })
+    if (imza.status !== 200) throw new Error(`girişli kullanıcı imza alamadı: ${imza.status} ${imza.text.slice(0, 140)}`)
+    for (const alan of ['signature', 'timestamp', 'folder', 'apiKey', 'cloudName']) {
+      if (!imza.json?.[alan]) throw new Error(`imza yanıtında '${alan}' yok — istemci yükleme yapamaz`)
+    }
+
+    // 3) GİZLİ ANAHTAR ASLA DÖNMEZ. Dönseydi, kapatmaya çalıştığımız açığın aynısını
+    //    (üstelik daha kolayını) açmış olurduk.
+    const govde = imza.text.toLowerCase()
+    if (govde.includes('api_secret') || govde.includes('secret') || govde.includes('cloudinary://')) {
+      throw new Error('imza yanıtı gizli anahtar/bağlantı dizesi sızdırıyor')
+    }
+
+    // 4) KLASÖR HESABA BAĞLI ve istemci seçemez: kullanıcı klasörü kendi id'sini taşımalı.
+    if (imza.json.folder !== `sipsakspor/users/${UU}`) {
+      throw new Error(`klasör hesaba bağlı değil: ${imza.json.folder} (sipsakspor/users/${UU} bekleniyor)`)
+    }
+
+    // 5) İmza deterministik ve Cloudinary'nin kuralına uygun üretilmeli: aynı (timestamp, folder)
+    //    girdisiyle SDK'nın hesabı birebir tutmalı. Tutmazsa Cloudinary yüklemeyi reddeder ve
+    //    bu ancak canlıda fark edilirdi.
+    const { v2: cl } = require('cloudinary')
+    const beklenen = cl.utils.api_sign_request(
+      { timestamp: imza.json.timestamp, folder: imza.json.folder },
+      'test-api-secret-xyz',
+    )
+    if (imza.json.signature !== beklenen) {
+      throw new Error('üretilen imza Cloudinary sözleşmesine uymuyor — canlıda tüm yüklemeler reddedilir')
+    }
+
+    await prisma.user.deleteMany({ where: { id: UU } }).catch(() => {})
+  })
+
   // KAYIT AKIŞI — 6 HANELİ E-POSTA DOĞRULAMA KODU (kullanıcı kararı, 12 Ağu 2026).
   // Eskiden `isEmailVerified` tutuluyor ama HİÇBİR uç sormuyordu: biri BAŞKASININ e-postasıyla
   // kayıt olup rezervasyon yapabiliyor, salonlara puan/yorum yazabiliyor, liderliğe çıkabiliyordu.
@@ -3815,7 +3877,7 @@ async function run() {
     const rlPort = PORT + 9
     const alt = spawn('npx', ['ts-node', 'src/index.ts'], {
       // DİKKAT: DISABLE_RATE_LIMIT BİLEREK verilmiyor — limitlerin açık olduğu tek sunucu bu.
-      env: { ...process.env, PORT: String(rlPort), ADMIN_SECRET, CRON_SECRET },
+      env: { ...process.env, PORT: String(rlPort), ADMIN_SECRET, CRON_SECRET, CLOUDINARY_URL: process.env.CLOUDINARY_URL || TEST_CLOUDINARY_URL },
       cwd: path.join(__dirname, '..'), detached: true, stdio: 'ignore',
     })
     const base = `http://localhost:${rlPort}`
@@ -3862,7 +3924,7 @@ async function run() {
     const path = require('path')
     const altPort = PORT + 7
     const alt = spawn('npx', ['ts-node', 'src/index.ts'], {
-      env: { ...process.env, PORT: String(altPort), DISABLE_RATE_LIMIT: 'true', ADMIN_SECRET, CRON_SECRET },
+      env: { ...process.env, PORT: String(altPort), DISABLE_RATE_LIMIT: 'true', ADMIN_SECRET, CRON_SECRET, CLOUDINARY_URL: process.env.CLOUDINARY_URL || TEST_CLOUDINARY_URL },
       cwd: path.join(__dirname, '..'), detached: true, stdio: 'ignore',
     })
     const altBase = `http://localhost:${altPort}`
@@ -4389,7 +4451,7 @@ async function main() {
   try {
     let serverLog = ''
     server = spawn('npx', ['ts-node', 'src/index.ts'], {
-      env: { ...process.env, PORT: String(PORT), DISABLE_RATE_LIMIT: 'true', ADMIN_SECRET, CRON_SECRET },
+      env: { ...process.env, PORT: String(PORT), DISABLE_RATE_LIMIT: 'true', ADMIN_SECRET, CRON_SECRET, CLOUDINARY_URL: process.env.CLOUDINARY_URL || TEST_CLOUDINARY_URL },
       detached: true,
     })
     server.stdout?.on('data', d => { serverLog += d })
