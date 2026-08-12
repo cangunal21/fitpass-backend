@@ -33,6 +33,7 @@ import favoriteRoutes from './routes/favorites'
 import referralRoutes from './routes/referral'
 import { chat, getChatHistory } from './controllers/chatController'
 import { authMiddleware, optionalAuthMiddleware } from './middlewares/auth'
+import { adminAuthMiddleware } from './middlewares/adminAuth'
 
 // GÜVENLİK: kritik secret'lar YOKSA sunucuyu HİÇ BAŞLATMA — ortamdan BAĞIMSIZ.
 // Eski hali `NODE_ENV === 'production'` tam eşitliğine bağlıydı: NODE_ENV set edilmemişse (ki
@@ -242,6 +243,23 @@ app.get('/health', (req, res) => {
     ok: true,
     uptime: Math.round(process.uptime()),
     release: process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 7) || null,
+  })
+})
+
+// TEŞHİS: proxy arkasında hangi istemci adresini gördüğümüz. Rate limit anahtarı buna dayandığı
+// için yanlış olması TÜM limitleri sessizce etkisiz bırakır (üretimde tam olarak bu yaşandı:
+// her istek ayrı kovaya düşüyor, ratelimit-remaining hep başlangıç değerinde kalıyordu).
+// adminAuth ile korunur — istemci IP'leri ve proxy zinciri herkese açık olmamalı.
+app.get('/health/net', adminAuthMiddleware, (req, res) => {
+  res.json({
+    ip: req.ip,
+    ips: req.ips,
+    socket: req.socket?.remoteAddress || null,
+    trustProxy: app.get('trust proxy fn') ? 'set' : 'none',
+    xff: req.headers['x-forwarded-for'] || null,
+    xRealIp: req.headers['x-real-ip'] || null,
+    envoyExternal: req.headers['x-envoy-external-address'] || null,
+    cfConnecting: req.headers['cf-connecting-ip'] || null,
   })
 })
 
