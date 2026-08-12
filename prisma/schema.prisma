@@ -141,6 +141,11 @@ model User {
   passwordHash           String
   fullName               String
   isEmailVerified        Boolean       @default(false)
+  // Parola değişimi damgası. Refresh jetonları iptal ediliyor ama ZATEN DAĞITILMIŞ access
+  // token'lar (1 saat) JWT olduğu için iptal edilemiyordu: parola değiştikten sonra çalınmış
+  // bir jeton bir saat daha tam yetkiyle çalışıyordu. Salon/eğitmen realm'lerinde bu kapı
+  // vardı, kullanıcı realm'inde yoktu. (Bkz. middlewares/auth.ts)
+  passwordChangedAt      DateTime?
   avatarUrl              String?
   bio                    String?
   neighborhood           Neighborhood? @relation(fields: [neighborhoodId], references: [id])

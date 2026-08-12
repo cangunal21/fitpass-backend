@@ -274,6 +274,19 @@ export const createBooking = async (req: Request, res: Response) => {
           })
           if (!taggedUser) continue
 
+          // BİLDİRİM BOMBASI KAPISI. Etiketleme, ALICININ İZNİ OLMADAN ona e-posta + push +
+          // bildirim gönderebilen tek uçtu: saldırgan taze bir hesapla farklı seanslara
+          // rezervasyon yapıp her seferinde 9 kişiyi etiketleyerek seçtiği kurbanın kutusunu
+          // doldurabiliyordu. Sayaç ALICI tarafında tutulur (gönderen hesap değiştirse de işler).
+          const dun = new Date(Date.now() - 24 * 3600_000)
+          const [ayniKisiden, toplam] = await Promise.all([
+            prisma.notification.count({ where: { userId: taggedUser.id, type: 'group_invite', relatedUserId: userId, createdAt: { gt: dun } } }),
+            prisma.notification.count({ where: { userId: taggedUser.id, type: 'group_invite', createdAt: { gt: dun } } }),
+          ])
+          // 3/gün aynı kişiden: gerçek arkadaş grubunda bile bir günde bu kadar davet olmaz.
+          // 15/gün toplam: çok hesaplı saldırıyı da kapatır, meşru kullanımın çok üstünde.
+          if (ayniKisiden >= 3 || toplam >= 15) continue
+
           const tLoc = (taggedUser.locale || 'tr') as Locale
           const bookerName = booker?.fullName || notifyText(tLoc, 'anonymous_user')
 

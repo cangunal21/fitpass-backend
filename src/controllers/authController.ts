@@ -386,7 +386,9 @@ export const resetPassword = async (req: Request, res: Response) => {
         data: { used: true },
       })
       if (claim.count === 0) return false // token bu arada başka bir istekçe tüketildi
-      await tx.user.update({ where: { id: resetToken.userId }, data: { passwordHash } })
+      // passwordChangedAt: DAĞITILMIŞ access token'ları da geçersiz kılar (middlewares/auth.ts).
+      // Refresh iptali tek başına yetmiyordu; çalınmış JWT bir saat daha çalışıyordu.
+      await tx.user.update({ where: { id: resetToken.userId }, data: { passwordHash, passwordChangedAt: new Date() } })
       // TÜM satırlar + rotatedAt: null. `revoked: false` filtresi DÖNDÜRÜLMÜŞ satırları atlıyordu:
       // onlar revoked=true ama rotatedAt dolu olduğu için yarış payı (grace) penceresinde HÂLÂ
       // kabul ediliyor ve taze bir zincir üretebiliyorlardı. Yani jetonu ele geçiren saldırgan,
@@ -402,6 +404,7 @@ export const resetPassword = async (req: Request, res: Response) => {
     // eşzamanlı bir giriş, tx görünürlüğü dışında token yazmış olabilir. İkinci süpürge
     // ucuz ve idempotent; parola değişiminden sonra hiçbir eski oturum ayakta kalmamalı.
     await prisma.refreshToken.updateMany({ where: { userId: resetToken.userId }, data: { revoked: true, rotatedAt: null } })
+    invalidate(`authstate:${resetToken.userId}`) // 60sn cache → parola damgası ANINDA etki etsin
 
     return res.json({ message: 'Şifre güncellendi' })
   } catch (error) {
@@ -595,11 +598,12 @@ export const changePassword = async (req: Request & { userId?: number }, res: Re
     // cihaz oturumları (180 gün geçerli refresh token) açık kalıyordu. Süpürge güvenlik işlemidir,
     // best-effort DEĞİL: başarısızsa 500 dönmeli, "başarılı" DENMEMELİ.
     await prisma.$transaction(async (tx) => {
-      await tx.user.update({ where: { id: req.userId }, data: { passwordHash: newHash } })
+      await tx.user.update({ where: { id: req.userId }, data: { passwordHash: newHash, passwordChangedAt: new Date() } }) // bkz. resetPassword
       await tx.refreshToken.updateMany({ where: { userId: req.userId }, data: { revoked: true, rotatedAt: null } }) // bkz. resetPassword — grace penceresi kapatılır
     })
     // Commit sonrası araya girmiş olabilecek oturumları da kapat (idempotent güvenlik ağı).
     await prisma.refreshToken.updateMany({ where: { userId: req.userId }, data: { revoked: true, rotatedAt: null } })
+    invalidate(`authstate:${req.userId}`) // bkz. resetPassword
 
     return res.json({ message: 'Şifre başarıyla değiştirildi.' })
   } catch (error) {

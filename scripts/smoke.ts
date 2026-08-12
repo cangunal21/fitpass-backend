@@ -3412,6 +3412,35 @@ async function run() {
     await prisma.venue.deleteMany({ where: { id: RV } }).catch(() => {})
   })
 
+  // DENETİM BULGUSU (orta): kullanıcı realm'inde parola-değişimi damgası YOKTU. Refresh
+  // jetonları iptal ediliyordu ama DAĞITILMIŞ access token JWT olduğu için iptal edilemiyordu:
+  // kurban parolasını değiştirip "değiştirildi" mesajını gördükten sonra bile, çalınmış jeton
+  // BİR SAAT daha tam yetkiyle çalışıyordu (salon/eğitmen'de bu kapı zaten vardı).
+  await check('Auth: kullanıcı parola değişimi DAĞITILMIŞ access token\'ı da geçersiz kılar', async () => {
+    const uniq = Date.now()
+    const em = `pwgate${uniq}@x.com`
+    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `pwgate${uniq}`, email: em, password: 'PwGate1234', fullName: 'Pw Gate' } })
+    const calinan = reg.json?.token
+    if (!calinan) throw new Error(`kayıt token vermedi: ${reg.status}`)
+    // Çalınan jeton şu an çalışıyor
+    if ((await http('/api/auth/me', { token: calinan })).status !== 200) throw new Error('kurulum: taze token /me\'de çalışmadı')
+
+    // Kurban parolasını değiştirir
+    const chg = await http('/api/auth/change-password', { method: 'PUT', token: calinan, body: { currentPassword: 'PwGate1234', newPassword: 'YeniPwGate1234' } })
+    if (chg.status !== 200) throw new Error(`parola değişmedi: ${chg.status} ${chg.text.slice(0, 140)}`)
+
+    // Aynı (çalınmış) jeton ARTIK ÇALIŞMAMALI
+    const sonra = await http('/api/auth/me', { token: calinan })
+    if (sonra.status !== 401) throw new Error(`parola değişiminden sonra eski access token hâlâ çalışıyor: ${sonra.status}`)
+
+    const tu = await prisma.user.findUnique({ where: { email: em }, select: { id: true } })
+    if (tu) {
+      await prisma.refreshToken.deleteMany({ where: { userId: tu.id } }).catch(() => {})
+      await prisma.emailVerificationToken.deleteMany({ where: { userId: tu.id } }).catch(() => {})
+      await prisma.user.delete({ where: { id: tu.id } }).catch(() => {})
+    }
+  })
+
   // DENETİM BULGUSU (yüksek): parola sıfırlama/değiştirme, YARIŞ PAYI penceresindeki
   // döndürülmüş jetonu öldürmüyordu. `where: { revoked: false }` filtresi döndürülmüş satırları
   // atlıyor, `data`da rotatedAt sıfırlanmıyordu → saldırgan elindeki BİR ÖNCEKİ jetonla,

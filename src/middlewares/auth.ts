@@ -13,12 +13,16 @@ export interface AuthRequest extends Request {
 // 'ok' geçerli, 'banned' askıda, 'missing' hesap silinmiş/yok. authMiddleware + optionalAuth ortak.
 // locale de burada taşınır → dil senkronu için AYRI bir sorgu açılmaz.
 type UserAuthState = 'ok' | 'banned' | 'missing'
-type AuthSnapshot = { state: UserAuthState; locale: Locale | null }
+type AuthSnapshot = { state: UserAuthState; locale: Locale | null; pwAt: number | null }
 async function userAuthSnapshot(userId: number): Promise<AuthSnapshot> {
   return cached(`authstate:${userId}`, 60000, async () => {
-    const u = await prisma.user.findUnique({ where: { id: userId }, select: { banned: true, locale: true } })
-    if (!u) return { state: 'missing' as UserAuthState, locale: null }
-    return { state: (u.banned ? 'banned' : 'ok') as UserAuthState, locale: (u.locale as Locale) || 'tr' }
+    const u = await prisma.user.findUnique({ where: { id: userId }, select: { banned: true, locale: true, passwordChangedAt: true } })
+    if (!u) return { state: 'missing' as UserAuthState, locale: null, pwAt: null }
+    return {
+      state: (u.banned ? 'banned' : 'ok') as UserAuthState,
+      locale: (u.locale as Locale) || 'tr',
+      pwAt: u.passwordChangedAt ? Math.floor(u.passwordChangedAt.getTime() / 1000) : null,
+    }
   })
 }
 
@@ -50,7 +54,8 @@ export const optionalAuthMiddleware = async (req: Request, res: Response, next: 
         // SİLİNEN KULLANICI: hesap silindiyse (JWT ~1sa hâlâ geçerli olabilir) state 'missing' döner →
         // viewer kimliği düşürülür (silinmiş id ile "giriş yapmış" muamelesi görmesin).
         const snap = await userAuthSnapshot(decoded.userId)
-        if (snap.state === 'ok') (req as any).userId = decoded.userId
+        const pwEski = !!(snap.pwAt && typeof decoded.iat === 'number' && decoded.iat < snap.pwAt)
+        if (snap.state === 'ok' && !pwEski) (req as any).userId = decoded.userId
       }
     } catch {}
   }
@@ -82,6 +87,14 @@ export const authMiddleware = async (req: AuthRequest, res: Response, next: Next
     const snap = await userAuthSnapshot(decoded.userId)
     if (snap.state === 'banned') return res.status(403).json({ error: 'Hesabınız askıya alınmıştır.' })
     if (snap.state === 'missing') return res.status(401).json({ error: 'Geçersiz token.' })
+    // PAROLA DEĞİŞİMİ ESKİ ACCESS TOKEN'LARI DA İPTAL EDER. Refresh jetonları zaten iptal
+    // ediliyordu ama DAĞITILMIŞ access token JWT olduğu için iptal edilemiyordu: kurban
+    // parolasını değiştirip "değiştirildi" mesajını gördükten sonra bile, çalınmış jeton
+    // BİR SAAT daha tam yetkiyle çalışıyordu. Salon/eğitmen realm'lerinde bu kapı vardı.
+    // Kesin küçüktür: parola değişimiyle aynı saniyede alınan taze token geçerli kalsın.
+    if (snap.pwAt && typeof decoded.iat === 'number' && decoded.iat < snap.pwAt) {
+      return res.status(401).json({ error: 'Şifreniz değiştirildi, lütfen tekrar giriş yapın.' })
+    }
     // Dil değiştiyse kaydet (dirty-check'li; yazma yalnız gerçek değişimde) — bildirimler güncel dille gitsin.
     syncLocale(decoded.userId, snap, req).catch(() => {})
     req.userId = decoded.userId

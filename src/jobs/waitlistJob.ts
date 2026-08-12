@@ -19,6 +19,7 @@ import { notifyFirstWaitlistUser } from '../controllers/waitlistController'
  */
 
 /** Bildirim önceliği penceresi — waitlistController'daki INTERVAL '30 minutes' ile AYNI olmalı. */
+const TUR_TAVANI = 50 // tek seansta bir turda en çok bu kadar bildirim (mutlak emniyet freni)
 const PENCERE_DK = 30
 
 export async function sweepWaitlist(): Promise<number> {
@@ -45,8 +46,8 @@ export async function sweepWaitlist(): Promise<number> {
 
     const sessionIds = [...new Set(adaylar.map(a => a.sessionId))]
 
-    // Kapasiteler ve doluluklar — TEK sorguda (seans başına ayrı sorgu atma).
-    const [seanslar, doluluklar] = await Promise.all([
+    // Kapasiteler, doluluklar ve BEKLEYEN SAYILARI — TEK turda (seans başına ayrı sorgu atma).
+    const [seanslar, doluluklar, bekleyenler] = await Promise.all([
       prisma.class_Session.findMany({
         where: { id: { in: sessionIds } },
         select: { id: true, capacity: true },
@@ -56,9 +57,21 @@ export async function sweepWaitlist(): Promise<number> {
         where: { sessionId: { in: sessionIds }, status: { in: ['confirmed', 'pending'] } },
         _sum: { groupSize: true },
       }),
+      // Kaç kişiye haber verilebileceğinin ÜST SINIRI: gerçekten bekleyen kişi sayısı.
+      prisma.waitlist.groupBy({
+        by: ['sessionId'],
+        where: {
+          sessionId: { in: sessionIds },
+          OR: [{ status: 'waiting' }, { status: 'notified', notifiedAt: { lt: pencereBaslangic } }],
+          user: { banned: false },
+        },
+        _count: { _all: true },
+      }),
     ])
     const doluMap = new Map<number, number>()
     for (const d of doluluklar) if (d.sessionId != null) doluMap.set(d.sessionId, d._sum.groupSize || 0)
+    const bekleyenMap = new Map<number, number>()
+    for (const b of bekleyenler) if (b.sessionId != null) bekleyenMap.set(b.sessionId, b._count._all || 0)
 
     let bildirim = 0
     for (const s of seanslar) {
@@ -67,8 +80,14 @@ export async function sweepWaitlist(): Promise<number> {
       if (bos <= 0) continue
       // Boş yer kadar kişiye haber ver (2 yer açıldıysa 2 kişi). notifyFirstWaitlistUser her
       // çağrıda FOR UPDATE SKIP LOCKED ile SIRADAKİ uygun bekleyeni sahiplenir; uygun kimse
-      // kalmadıysa sessizce döner, o yüzden fazladan çağrı zararsız.
-      for (let i = 0; i < bos; i++) {
+      // kalmadıysa sessizce döner.
+      //
+      // DÖNGÜ BEKLEYEN SAYISIYLA SINIRLI: eskiden yalnız BOŞ KAPASİTEye bağlıydı. Kapasitesi
+      // çok büyük bir seans (yazım hatası ya da kötü niyetli bir salon) bu döngüyü yüz binlerce
+      // kez döndürüp DB havuzunu tüketebiliyor ve süpürgeyi kilitleyebiliyordu — oysa haber
+      // verilecek kişi zaten bir avuç. TUR_TAVANI ayrıca mutlak bir emniyet freni.
+      const hedef = Math.min(bos, bekleyenMap.get(s.id) || 0, TUR_TAVANI)
+      for (let i = 0; i < hedef; i++) {
         await notifyFirstWaitlistUser(s.id)
         bildirim++
       }

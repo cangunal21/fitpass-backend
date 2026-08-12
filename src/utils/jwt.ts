@@ -24,6 +24,9 @@ export const generateToken = (payload: { userId?: number; venueId?: number; inst
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '1h' })
 }
 
+// iat TİPTE: parola değişimi kapıları (auth.ts, venueAuth.ts, instructorAuth.ts) "bu jeton
+// paroladan ÖNCE mi basıldı" karşılaştırmasını iat üzerinden yapıyor. jsonwebtoken her jetona
+// iat koyar; tipte olmaması çağıranları `as any` kullanmaya itiyordu.
 export const verifyToken = (token: string) => {
-  return jwt.verify(token, JWT_SECRET) as { userId?: number; venueId?: number; instructorId?: number; email: string; role?: string }
+  return jwt.verify(token, JWT_SECRET) as { userId?: number; venueId?: number; instructorId?: number; email: string; role?: string; iat?: number; exp?: number }
 }
