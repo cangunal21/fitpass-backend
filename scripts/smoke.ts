@@ -3612,6 +3612,105 @@ async function run() {
     if (!/db-deploy/.test(rj.deploy?.preDeployCommand || '')) throw new Error('railway.json preDeployCommand şema kapısını çağırmıyor')
   })
 
+  // YAŞANMIŞ OLAY: CLOUDINARY_URL'e şablon değeri (<api_key> gibi köşeli parantezli metin)
+  // girilince cloudinary SDK modül yüklenirken `TypeError: Invalid URL` fırlatıyor, bu import
+  // zinciri index.ts'e kadar gittiği için SUNUCU HİÇ AÇILMIYORDU: üretimde deploy "failed"
+  // oldu ve rezervasyondan girişe kadar HER ŞEY tek bir yanlış ortam değişkeni yüzünden
+  // ayakta kalamayacaktı. Görsel yükleme isteğe bağlı bir özellik — yapılandırması bozuk diye
+  // platformun tamamı düşmemeli.
+  await check('Yükleme: BOZUK Cloudinary yapılandırması sunucuyu düşürmez, yalnız o uç kapanır', async () => {
+    const path = require('path')
+    const bozukPort = PORT + 11
+    const alt = spawn('npx', ['ts-node', 'src/index.ts'], {
+      env: {
+        ...process.env,
+        PORT: String(bozukPort),
+        DISABLE_RATE_LIMIT: 'true',
+        ADMIN_SECRET,
+        CRON_SECRET,
+        // Tam olarak üretimde yaşanan değer: Cloudinary'nin ŞABLONU, gerçek değerlerle
+        // değiştirilmeden yapıştırılmış hâli.
+        CLOUDINARY_URL: 'cloudinary://<your_api_key>:<your_api_secret>@<cloud_name>',
+      },
+      cwd: path.join(__dirname, '..'), detached: true, stdio: 'ignore',
+    })
+    const base = `http://localhost:${bozukPort}`
+    try {
+      let hazir = false
+      for (let i = 0; i < 90; i++) {
+        try { const r = await fetch(base + '/health'); if (r.status === 200) { hazir = true; break } } catch { /* henüz açılmadı */ }
+        await new Promise(r => setTimeout(r, 1000))
+      }
+      if (!hazir) throw new Error('bozuk Cloudinary yapılandırmasıyla SUNUCU AÇILMADI — tek bir ortam değişkeni tüm platformu düşürüyor')
+
+      // Diğer uçlar normal çalışmalı
+      const kamu = await fetch(base + '/api/public/cities')
+      if (kamu.status !== 200) throw new Error(`bozuk yapılandırmada public uç da bozuldu: ${kamu.status}`)
+
+      // Yükleme ucu ise 503 demeli (sessizce imzasız akışa DÜŞMEMELİ)
+      const UU = 990651
+      await testPrisma.user.upsert({
+        where: { id: UU }, update: {},
+        create: { id: UU, username: `bz_${UU}`, email: `bz_${UU}@x.com`, passwordHash: 'x', fullName: 'Bz' },
+      })
+      const uTok = jwt.sign({ userId: UU, email: `bz_${UU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+      const r = await fetch(base + '/api/auth/upload-signature', { method: 'POST', headers: { Authorization: `Bearer ${uTok}` } })
+      if (r.status !== 503) throw new Error(`bozuk yapılandırmada yükleme ucu ${r.status} döndü (503 bekleniyor)`)
+      await prisma.user.deleteMany({ where: { id: UU } }).catch(() => {})
+    } finally {
+      try { process.kill(-alt.pid!, 'SIGKILL') } catch { /* zaten ölmüş */ }
+    }
+  })
+
+  // YAŞANMIŞ OLAY: CLOUDINARY_URL'e Cloudinary'nin ŞABLONU (köşeli parantezli yer tutucular)
+  // girilince cloudinary SDK modül yüklenirken `TypeError: Invalid URL` fırlatıyor; bu import
+  // zinciri index.ts'e kadar gittiği için SUNUCU HİÇ AÇILMIYORDU. Üretimde deploy "failed"
+  // oldu ve rezervasyondan girişe kadar HER ŞEY tek bir yanlış ortam değişkeni yüzünden
+  // ayakta kalamayacaktı (canlıyı kurtaran tek şey healthcheck'in eski sürümü tutmasıydı).
+  // Görsel yükleme İSTEĞE BAĞLI bir özellik — yapılandırması bozuk diye platform düşmemeli.
+  await check('Yükleme: BOZUK Cloudinary yapılandırması sunucuyu DÜŞÜRMEZ, yalnız o uç kapanır', async () => {
+    const path = require('path')
+    const bozukPort = PORT + 11
+    const alt = spawn('npx', ['ts-node', 'src/index.ts'], {
+      env: {
+        ...process.env,
+        PORT: String(bozukPort),
+        DISABLE_RATE_LIMIT: 'true',
+        ADMIN_SECRET,
+        CRON_SECRET,
+        // Tam olarak üretimde yaşanan değer: şablon, gerçek değerlerle değiştirilmeden yapıştırılmış.
+        CLOUDINARY_URL: 'cloudinary://<your_api_key>:<your_api_secret>@<cloud_name>',
+      },
+      cwd: path.join(__dirname, '..'), detached: true, stdio: 'ignore',
+    })
+    const base = `http://localhost:${bozukPort}`
+    try {
+      let hazir = false
+      for (let i = 0; i < 90; i++) {
+        try { const r = await fetch(base + '/health'); if (r.status === 200) { hazir = true; break } } catch { /* henüz açılmadı */ }
+        await new Promise(r => setTimeout(r, 1000))
+      }
+      if (!hazir) throw new Error('bozuk Cloudinary yapılandırmasıyla SUNUCU AÇILMADI — tek bir ortam değişkeni tüm platformu düşürüyor')
+
+      // Alakasız uçlar normal çalışmalı
+      const kamu = await fetch(base + '/api/public/cities')
+      if (kamu.status !== 200) throw new Error(`bozuk yapılandırmada public uç da bozuldu: ${kamu.status}`)
+
+      // Yükleme ucu 503 demeli — sessizce imzasız akışa DÜŞMEMELİ
+      const UU = 990651
+      await testPrisma.user.upsert({
+        where: { id: UU }, update: {},
+        create: { id: UU, username: `bz_${UU}`, email: `bz_${UU}@x.com`, passwordHash: 'x', fullName: 'Bz' },
+      })
+      const uTok = jwt.sign({ userId: UU, email: `bz_${UU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+      const r = await fetch(base + '/api/auth/upload-signature', { method: 'POST', headers: { Authorization: `Bearer ${uTok}` } })
+      if (r.status !== 503) throw new Error(`bozuk yapılandırmada yükleme ucu ${r.status} döndü (503 bekleniyor)`)
+      await prisma.user.deleteMany({ where: { id: UU } }).catch(() => {})
+    } finally {
+      try { process.kill(-alt.pid!, 'SIGKILL') } catch { /* zaten ölmüş */ }
+    }
+  })
+
   // DENETİM BULGUSU: Cloudinary'ye İMZASIZ yükleme yapılıyordu. Gereken tek şey `upload_preset`
   // adıydı ve o ad hesap adıyla birlikte JavaScript paketinin içindeydi → sayfa kaynağını açan
   // herkes, kimlik doğrulaması OLMADAN hesaba dosya yükleyebiliyordu. İstek sunucumuza hiç

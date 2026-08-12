@@ -271,7 +271,17 @@ app.get('/health/ready', async (req, res) => {
     // çift-veriş engeli). Eskiden yalnız açılış log'una düşüp kayboluyordu; artık izleme
     // görebilsin diye burada raporlanıyor. Servis ayakta olduğu için 200, ama ok:false değil —
     // "hazır ama eksik" ayrı bir alanla anlatılıyor ki mevcut izleme kırılmasın.
-    res.json({ ok: true, ...(indexHatalari.length ? { indexUyarisi: indexHatalari } : {}) })
+    // Görsel yükleme yapılandırılmış mı? Yalnız EVET/HAYIR — anahtar ya da hesap adı DÖNMEZ.
+    // Neden burada: yapılandırma bozuk/eksikse yükleme sessizce ölür ve bu ancak bir kullanıcı
+    // fotoğraf yüklemeye çalışınca fark edilir. Ortam değişkeni bir kez yanlış girildi ve
+    // saatler kaybettirdi; artık dışarıdan tek istekle doğrulanabiliyor.
+    const yuklemeHazir = /^cloudinary:\/\/[^:@/<>\s]+:[^@/<>\s]+@[^/<>\s]+$/.test((process.env.CLOUDINARY_URL || '').trim())
+      || !!(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET)
+    res.json({
+      ok: true,
+      uploads: yuklemeHazir ? 'ok' : 'yapilandirilmamis',
+      ...(indexHatalari.length ? { indexUyarisi: indexHatalari } : {}),
+    })
   } catch {
     // Dışarıya ayrıntı verme (altyapı bilgisi sızmasın); log tarafında zaten görünür
     res.status(503).json({ ok: false })
