@@ -12,6 +12,7 @@ import { trAddDays, trDate, trInstant, trTime, trWeekday, trYmd } from '../utils
 import { reversiblePoints } from '../utils/tier'
 import { cityIdOfNeighborhood } from '../utils/geo'
 import { invalidate } from '../utils/cache'
+import { issuePanelRefreshToken, revokeAllPanelRefreshTokens, rotatePanelAccessToken, revokePanelRefreshToken } from '../utils/panelRefreshToken'
 import { notifyFields, notifyPush } from '../utils/notifyText'
 import { Locale } from '../utils/locale'
 const money = (x: number) => Math.round(x * 100) / 100 // bookingController ile aynı 2-ondalık yuvarlama
@@ -251,8 +252,11 @@ export const venueLogin = async (req: Request, res: Response) => {
     }
 
     const token = generateToken({ venueId: venue.id, email: venue.email ?? cleanEmail, role: 'venue' })
+    // Access token artık 1 saat (eskiden 7 gün) → oturumun kesintisiz sürmesi için refresh jetonu.
+    const refreshToken = await issuePanelRefreshToken({ venueId: venue.id })
 
     return res.json({
+      refreshToken,
       message: 'Giriş başarılı!',
       token,
       venue: {
@@ -377,6 +381,9 @@ export const changeVenuePassword = async (req: Request, res: Response) => {
     // eski JWT'leri iptal edecek başka kanca yok. Damga atılmazsa ele geçirilmiş oturum, parola
     // değiştirilse bile 7 gün boyunca IBAN/TCKN okumaya ve ders silmeye devam ederdi.
     await prisma.venue.update({ where: { id: venueId }, data: { passwordHash: newHash, passwordChangedAt: new Date() } })
+    // Access token'ı passwordChangedAt damgası geçersiz kılıyor; refresh jetonu da iptal
+    // edilmezse saldırgan onunla 180 gün boyunca yeni access token üretmeye devam ederdi.
+    await revokeAllPanelRefreshTokens({ venueId })
     invalidate(`venueState:${venueId}`) // 60sn cache → iptal ANINDA etki etsin
 
     return res.json({ message: 'Şifre başarıyla değiştirildi.' })
@@ -1053,10 +1060,38 @@ export const venueResetPassword = async (req: Request, res: Response) => {
       return true
     })
     if (!ok) return res.status(400).json({ error: 'Geçersiz veya süresi dolmuş link.' })
+    await revokeAllPanelRefreshTokens({ venueId: resetToken.venueId })
     invalidate(`venueState:${resetToken.venueId}`) // eski token'lar ANINDA geçersiz olsun
     return res.json({ message: 'Şifre güncellendi.' })
   } catch (err) {
     console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// ACCESS TOKEN YENİLE (salon) — kullanıcı realm'indeki /api/auth/refresh'in aynısı.
+// Access token 1 saat; client 401 alınca bunu çağırıp sessizce yeniler, salon çıkış görmez.
+export const venueRefresh = async (req: Request, res: Response) => {
+  try {
+    const { refreshToken } = req.body
+    const token = await rotatePanelAccessToken(String(refreshToken || ''))
+    // Geçersiz/iptal/süresi dolmuş VEYA hesap askıya alınmış → 401. Client oturumu kapatır.
+    if (!token) return res.status(401).json({ error: 'Oturum süresi doldu, lütfen tekrar giriş yapın.' })
+    return res.json({ token })
+  } catch (err) {
+    console.error('venueRefresh error:', err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// ÇIKIŞ (salon) — refresh jetonunu iptal et. Yapılmazsa jeton 180 gün geçerli kalır ve
+// çıkış yalnızca "istemcide token silme" tiyatrosu olur.
+export const venueLogout = async (req: Request, res: Response) => {
+  try {
+    await revokePanelRefreshToken(String(req.body?.refreshToken || ''))
+    return res.json({ message: 'Çıkış yapıldı.' })
+  } catch (err) {
+    console.error('venueLogout error:', err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }

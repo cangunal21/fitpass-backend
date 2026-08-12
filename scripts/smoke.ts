@@ -1425,14 +1425,19 @@ async function run() {
     await prisma.user.deleteMany({ where: { id: U2 } }).catch(() => {})
   })
 
-  await check('Token ömrü: kullanıcı 1s (kısa+refresh), venue 7g (uzun)', async () => {
+  // NOT (#30, Tur20): bu test eskiden "venue 7g (UZUN)" bekliyordu. O beklenti bir tercih
+  // değil, bir EKSİKLİKTİ: panel realm'lerinde refresh mekanizması yoktu, kısaltmak salonu
+  // saat başı dışarı atmak demekti. Refresh eklendiği için (utils/panelRefreshToken.ts) artık
+  // ÜÇ realm de 1 saat. Salon paneli IBAN/TCKN/KYC taşıdığı için bu en değerli sertleştirmeydi.
+  await check('Token ömrü: kullanıcı/salon/eğitmen HEPSİ 1 saat (refresh ile yenilenir)', async () => {
     const dec = (t: string) => JSON.parse(Buffer.from(t.split('.')[1], 'base64').toString())
-    const uTok = generateToken({ userId: 1, email: 'x@x.com' })
-    const vTok = generateToken({ venueId: 1, email: 'x@x.com', role: 'venue' })
-    const uLife = dec(uTok).exp - dec(uTok).iat
-    const vLife = dec(vTok).exp - dec(vTok).iat
-    if (uLife !== 3600) throw new Error(`kullanıcı token ömrü ${uLife}s (3600=1s bekleniyor)`)
-    if (vLife !== 604800) throw new Error(`venue token ömrü ${vLife}s (604800=7g bekleniyor)`)
+    const omur = (t: string) => dec(t).exp - dec(t).iat
+    const uLife = omur(generateToken({ userId: 1, email: 'x@x.com' }))
+    const vLife = omur(generateToken({ venueId: 1, email: 'x@x.com', role: 'venue' }))
+    const iLife = omur(generateToken({ instructorId: 1, email: 'x@x.com', role: 'instructor' }))
+    if (uLife !== 3600) throw new Error(`kullanıcı token ömrü ${uLife}s (3600 bekleniyor)`)
+    if (vLife !== 3600) throw new Error(`salon token ömrü ${vLife}s (3600 bekleniyor) — 7 güne dönmüş olabilir`)
+    if (iLife !== 3600) throw new Error(`eğitmen token ömrü ${iLife}s (3600 bekleniyor)`)
   })
 
   await check('Görsel: sadece geçerli http(s) URL kabul, kötü/bozuk girdi temizlenir', async () => {
@@ -3278,6 +3283,66 @@ async function run() {
     await prisma.class.deleteMany({ where: { id: MC } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: MU } }).catch(() => {})
     await prisma.venue.deleteMany({ where: { id: MV } }).catch(() => {})
+  })
+
+  // Tur20 / #30 — LANSMAN SERTLEŞTİRMESİ: salon ve eğitmen access token'ı 7 GÜNDÜ ve panel
+  // realm'lerinde refresh mekanizması YOKTU. Salon paneli IBAN/vergi no/TCKN/KYC ve gelir
+  // raporu taşıdığı için çalınan bir token'ın 7 gün geçerli kalması en büyük açıklardan
+  // biriydi. Artık üç realm de 1 saat + refresh.
+  await check('Auth: salon/eğitmen token\'ı 1 SAAT ve refresh ile sessizce yenilenir', async () => {
+    const RV = 990571
+    const pw = 'PanelParola123!'
+    const hash = await bcrypt.hash(pw, 12)
+    await prisma.panelRefreshToken.deleteMany({ where: { venueId: RV } }).catch(() => {})
+    await prisma.venue.upsert({
+      where: { id: RV },
+      update: { email: `pr${RV}@x.com`, passwordHash: hash, isApproved: true, isActive: true, isSuspended: false, passwordChangedAt: null },
+      create: { id: RV, name: 'RefreshSalon', email: `pr${RV}@x.com`, passwordHash: hash, address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 },
+    })
+
+    const login = await http('/api/venue/login', { method: 'POST', body: { email: `pr${RV}@x.com`, password: pw } })
+    if (login.status !== 200) throw new Error(`giriş: ${login.status} ${login.text.slice(0, 120)}`)
+    if (!login.json?.refreshToken) throw new Error('login refreshToken DÖNDÜRMÜYOR — panel oturumu 1 saatte kopar')
+
+    // ACCESS TOKEN 1 SAAT olmalı (7 gün DEĞİL)
+    const payload = JSON.parse(Buffer.from(String(login.json.token).split('.')[1], 'base64').toString())
+    const omurSaat = (payload.exp - payload.iat) / 3600
+    if (omurSaat > 2) throw new Error(`access token ömrü ${omurSaat} saat — kısa olmalı (çalınırsa o kadar geçerli)`)
+
+    // REFRESH çalışmalı ve YENİ access token vermeli
+    const yenile = await http('/api/venue/refresh', { method: 'POST', body: { refreshToken: login.json.refreshToken } })
+    if (yenile.status !== 200 || !yenile.json?.token) throw new Error(`refresh başarısız: ${yenile.status} ${yenile.text.slice(0, 120)}`)
+    const me = await http('/api/venue/me', { token: yenile.json.token })
+    if (me.status !== 200) throw new Error(`yenilenen token çalışmıyor: ${me.status}`)
+
+    // ASKIYA ALINAN salon YENİLEYEMEMELİ — aksi halde moderasyon kararı 180 gün baypas edilir
+    await prisma.venue.update({ where: { id: RV }, data: { isSuspended: true } })
+    const askili = await http('/api/venue/refresh', { method: 'POST', body: { refreshToken: login.json.refreshToken } })
+    if (askili.status !== 401) throw new Error(`askıya alınmış salon yenileme yapabildi: ${askili.status}`)
+    await prisma.venue.update({ where: { id: RV }, data: { isSuspended: false } })
+
+    // PAROLA DEĞİŞİMİ refresh jetonunu da iptal etmeli (access token zaten passwordChangedAt ile ölüyor;
+    // jeton iptal edilmezse saldırgan onunla 180 gün yeni access token üretmeye devam ederdi)
+    const login2 = await http('/api/venue/login', { method: 'POST', body: { email: `pr${RV}@x.com`, password: pw } })
+    const rt2 = login2.json.refreshToken
+    const chg = await http('/api/venue/change-password', { method: 'PUT', token: login2.json.token, body: { currentPassword: pw, newPassword: 'YeniPanel123!' } })
+    if (chg.status !== 200) throw new Error(`parola değişmedi: ${chg.status} ${chg.text.slice(0, 120)}`)
+    const olu = await http('/api/venue/refresh', { method: 'POST', body: { refreshToken: rt2 } })
+    if (olu.status !== 401) throw new Error(`parola değişiminden SONRA eski refresh jetonu hâlâ çalışıyor: ${olu.status}`)
+
+    // ÇIKIŞ jetonu iptal etmeli (aksi halde "çıkış" yalnız istemcide token silme tiyatrosu olur)
+    const login3 = await http('/api/venue/login', { method: 'POST', body: { email: `pr${RV}@x.com`, password: 'YeniPanel123!' } })
+    const rt3 = login3.json.refreshToken
+    await http('/api/venue/logout', { method: 'POST', body: { refreshToken: rt3 } })
+    const cikisSonrasi = await http('/api/venue/refresh', { method: 'POST', body: { refreshToken: rt3 } })
+    if (cikisSonrasi.status !== 401) throw new Error(`çıkıştan sonra refresh jetonu hâlâ geçerli: ${cikisSonrasi.status}`)
+
+    // DB'de HAM jeton saklanmamalı (sızan yedek işe yaramasın)
+    const satirlar = await prisma.panelRefreshToken.findMany({ where: { venueId: RV }, select: { token: true } })
+    if (satirlar.some(r => r.token === rt3 || r.token === rt2)) throw new Error('refresh jetonu DB\'de HAM saklanıyor — sızan yedek doğrudan kullanılabilir')
+
+    await prisma.panelRefreshToken.deleteMany({ where: { venueId: RV } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: RV } }).catch(() => {})
   })
 
   // Tur20 — ŞEMA GÜVENLİK KAPISI. Ölçüldü: `prisma db push` şemadan kolon silindiğinde

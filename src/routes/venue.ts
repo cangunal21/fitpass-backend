@@ -8,8 +8,7 @@ import {
   createSession, createRecurringSessions, updateSession, deleteSession,
   getVenueBookings,
   createDropInSlot, getVenueDropInSlots, deleteDropInSlot,
-  updateVenueImages
-} from '../controllers/venueController'
+  updateVenueImages, venueRefresh, venueLogout} from '../controllers/venueController'
 import { createInstructor, getVenueInstructors, updateInstructor, deleteInstructor, inviteInstructor } from '../controllers/instructorController'
 import { submitSubMerchant, refreshSubMerchantStatus } from '../controllers/submerchantController'
 import { venueAuthMiddleware, venueApprovedMiddleware, venueVerifiedMiddleware } from '../middlewares/venueAuth'
@@ -21,6 +20,10 @@ registerNumericParams(router)
 
 router.post('/register', venueRegister)
 router.post('/login', venueLogin)
+// Refresh: access token 1 saat olduğu için client sessizce yeniler. authLimiter'a TAKILMAZ —
+// meşru bir salon saatte bir yeniler ama aynı IP'deki birden çok panel limiti tüketebilirdi.
+router.post('/refresh', venueRefresh)
+router.post('/logout', venueLogout)
 router.post('/forgot-password', venueForgotPassword)
 router.post('/reset-password', venueResetPassword)
 router.get('/me', venueAuthMiddleware, getVenueMe)

@@ -5,6 +5,8 @@ import {
   instructorForgotPassword,
   instructorSetPassword,
   getInstructorMe,
+  instructorRefresh,
+  instructorLogout,
 } from '../controllers/instructorAuthController'
 import {
   getMyInstructorReviews,
@@ -27,6 +29,9 @@ registerNumericParams(router)
 router.post('/login', instructorLogin)
 router.post('/forgot-password', instructorForgotPassword)
 router.post('/set-password', instructorSetPassword) // davet + reset aynı uç
+// Access token 1 saat → client sessizce yeniler; çıkışta jeton iptal edilir.
+router.post('/refresh', instructorRefresh)
+router.post('/logout', instructorLogout)
 
 // Korumalı (instructorAuth). Profil düzenleme + kendi dersleri + kendi öğrencisini check-in.
 // GÜVENLİK: hepsi req.instructorId'ye scoped; FİNANS (gelir/komisyon/payout) DÖNMEZ.

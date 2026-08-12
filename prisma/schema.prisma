@@ -261,6 +261,7 @@ model Venue {
   // geçirilmiş oturum, parola sıfırlansa bile 7 gün tam yetkiyle çalışmaya devam ediyordu.
   // venueAuthMiddleware token'ın iat'ini bu değerle karşılaştırıp eskileri reddeder.
   passwordChangedAt    DateTime?
+  panelRefreshTokens   PanelRefreshToken[]
   website              String?
   coverImageUrl        String?
   images               Json          @default("[]")
@@ -331,6 +332,7 @@ model Instructor {
   email        String? // eğitmen girişi + davet e-postası
   passwordHash String? // eğitmen kendi şifresini belirleyince (davet/reset) dolar
   passwordChangedAt DateTime? // bkz. Venue.passwordChangedAt — eski JWT'leri iptal eder
+  panelRefreshTokens PanelRefreshToken[]
   inviteStatus String   @default("none") // none | pending (davet gönderildi) | active (giriş kurdu)
   avgRating    Float    @default(0)
   totalReviews Int      @default(0)
@@ -821,6 +823,26 @@ model ChatMessage {
 
 // Uzun ömürlü yenileme jetonu — access token (kısa ömür) süresi dolunca
 // sessizce yenisini almak için. Kullanıcı hiç "tekrar giriş yap" görmez.
+// SALON/EĞİTMEN yenileme jetonu. Kullanıcı realm'inde RefreshToken vardı ama panel
+// realm'lerinde YOKTU: bu yüzden salon/eğitmen access token'ı 7 GÜN yaşıyordu (kısaltmak
+// saat başı çıkış demek olurdu). Salon paneli IBAN/vergi no/TCKN/KYC ve gelir raporu
+// taşıdığı için çalınan bir token'ın 7 gün geçerli kalması en büyük açıklardan biriydi.
+// Tek tabloda iki realm: FK'lardan tam biri dolu olur.
+model PanelRefreshToken {
+  id           Int         @id @default(autoincrement())
+  token        String      @unique
+  venue        Venue?      @relation(fields: [venueId], references: [id])
+  venueId      Int?
+  instructor   Instructor? @relation(fields: [instructorId], references: [id])
+  instructorId Int?
+  expiresAt    DateTime
+  revoked      Boolean     @default(false)
+  createdAt    DateTime    @default(now())
+
+  @@index([venueId])
+  @@index([instructorId])
+}
+
 model RefreshToken {
   id        Int      @id @default(autoincrement())
   token     String   @unique

@@ -13,15 +13,15 @@ if (!JWT_SECRET) {
   throw new Error('FATAL: JWT_SECRET set edilmeli. Gömülü varsayılan YOK (public repo). .env dosyanıza ekleyin.')
 }
 
-// Kullanıcı access token'ı KISA (1 saat): client 401'de refresh token ile sessizce yeniler,
-// böylece çıkış / şifre değişimi / token sızması penceresi 7 gün yerine ~1 saat olur
-// (JWT stateless — iptal edilemez, tek koruma kısa ömür). Venue (salon) token'ı UZUN (7 gün)
-// çünkü salon panelinde henüz refresh mekanizması yok; kısaltmak salonları saat başı atardı.
+// TÜM realm'lerde access token KISA (1 saat): client 401'de refresh token ile sessizce yeniler.
+// JWT stateless'tır — tek tek iptal edilemez, tek gerçek koruma kısa ömürdür.
+//
+// SALON/EĞİTMEN eskiden 7 GÜNDÜ çünkü panel realm'lerinde refresh mekanizması yoktu (kısaltmak
+// onları saat başı dışarı atardı). Salon paneli IBAN, vergi no, TCKN, KYC belgeleri ve gelir
+// raporu taşıdığı için çalınan bir token'ın 7 gün geçerli kalması en büyük açıklardan biriydi.
+// utils/panelRefreshToken.ts ile refresh eklendi → artık üç realm de 1 saat.
 export const generateToken = (payload: { userId?: number; venueId?: number; instructorId?: number; email: string; role?: string }) => {
-  // Salon ve eğitmen panellerinde refresh mekanizması yok → 7 gün (aksi halde saat başı atılırlar).
-  // Kullanıcı access token'ı kısa (1 saat) çünkü client refresh ile sessizce yeniler.
-  const expiresIn = payload.venueId || payload.instructorId ? '7d' : '1h'
-  return jwt.sign(payload, JWT_SECRET, { expiresIn })
+  return jwt.sign(payload, JWT_SECRET, { expiresIn: '1h' })
 }
 
 export const verifyToken = (token: string) => {

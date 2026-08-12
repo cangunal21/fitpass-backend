@@ -6,6 +6,7 @@ import { generateToken } from '../utils/jwt'
 import { isValidEmail, MIN_PASSWORD } from '../utils/validate'
 import { sendInstructorPasswordResetEmail } from '../utils/email'
 import { invalidate } from '../utils/cache'
+import { issuePanelRefreshToken, revokeAllPanelRefreshTokens, rotatePanelAccessToken, revokePanelRefreshToken } from '../utils/panelRefreshToken'
 
 // Eğitmen (instructor) auth realm — venue realm'inin aynası. GÜVENLİK: token payload'ı SADECE
 // {instructorId, email, role:'instructor'} taşır; venueId ASLA eklenmez → salon finans/check-in
@@ -44,7 +45,10 @@ export const instructorLogin = async (req: Request, res: Response) => {
       return res.status(403).json({ error: 'Bağlı olduğunuz salon şu anda aktif değil.' })
     }
     const token = generateToken({ instructorId: instructor.id, email: instructor.email || '', role: 'instructor' })
+    // Access token artık 1 saat (eskiden 7 gün) → oturum kesintisiz sürsün diye refresh jetonu.
+    const refreshToken = await issuePanelRefreshToken({ instructorId: instructor.id })
     return res.json({
+      refreshToken,
       message: 'Giriş başarılı!',
       token,
       instructor: {
@@ -115,6 +119,7 @@ export const instructorSetPassword = async (req: Request, res: Response) => {
       return true
     })
     if (!ok) return res.status(400).json({ error: 'Geçersiz veya süresi dolmuş link.' })
+    await revokeAllPanelRefreshTokens({ instructorId: resetToken.instructorId })
     invalidate(`instructorActive:${resetToken.instructorId}`) // eski token'lar ANINDA geçersiz olsun
     return res.json({ message: 'Şifre belirlendi. Artık giriş yapabilirsiniz.' })
   } catch (err) {
@@ -140,6 +145,29 @@ export const getInstructorMe = async (req: Request, res: Response) => {
     return res.json({ instructor })
   } catch (err) {
     console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// ACCESS TOKEN YENİLE (eğitmen) — bkz. venueRefresh; aynı gerekçe, aynı davranış.
+export const instructorRefresh = async (req: Request, res: Response) => {
+  try {
+    const token = await rotatePanelAccessToken(String(req.body?.refreshToken || ''))
+    if (!token) return res.status(401).json({ error: 'Oturum süresi doldu, lütfen tekrar giriş yapın.' })
+    return res.json({ token })
+  } catch (err) {
+    console.error('instructorRefresh error:', err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// ÇIKIŞ (eğitmen) — refresh jetonunu iptal et.
+export const instructorLogout = async (req: Request, res: Response) => {
+  try {
+    await revokePanelRefreshToken(String(req.body?.refreshToken || ''))
+    return res.json({ message: 'Çıkış yapıldı.' })
+  } catch (err) {
+    console.error('instructorLogout error:', err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
