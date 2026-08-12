@@ -639,8 +639,14 @@ const resolveFeedActivity = async (feedKey: string): Promise<{ ownerId: number; 
   const dash = feedKey.indexOf('-')
   if (dash < 0) return null
   const prefix = feedKey.slice(0, dash)
-  const id = parseInt(feedKey.slice(dash + 1), 10)
+  const hamId = feedKey.slice(dash + 1)
+  const id = parseInt(hamId, 10)
   if (!id || Number.isNaN(id)) return null
+  // KANONİK BİÇİM ŞART. parseInt gevşektir: 'b-007', 'b-7abc', 'b-7 ' hepsi 7'ye çözülür.
+  // feedKey aynı zamanda ActivityLike/ActivityComment satırlarının TEKİLLİK ANAHTARI olduğu için,
+  // farklı yazımlar aynı aktiviteye SINIRSIZ beğeni/yorum satırı açıyordu: unique kısıtı ve
+  // "Zaten beğendiniz" kapısı ikisi de etkisiz kalıyor, sayaçlar şişiyordu.
+  if (String(id) !== hamId) return null
   // banned kontrolü: banlı sahibin aktivitesi feed'den zaten eleniyor ama feedKey enumerasyonuyla
   // like/comment edilip banlı sahibe bildirim/push gidebiliyordu → banlı sahibe null dön (etkileşim 404).
   if (prefix === 'b') {

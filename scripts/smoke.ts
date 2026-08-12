@@ -3563,6 +3563,34 @@ async function run() {
     if (!/db-deploy/.test(rj.deploy?.preDeployCommand || '')) throw new Error('railway.json preDeployCommand şema kapısını çağırmıyor')
   })
 
+  // DENETİM BULGUSU (düşük ama hassas): admin onay/askı uçları salonun TÜM finans-KYC satırını
+  // geri döndürüyordu (IBAN, TCKN, vergi no, KYC belgeleri, iyzico anahtarı). Arayüz bunları
+  // kullanmıyor; en hassas veri, ihtiyaç duyulmayan bir yerde (tarayıcı belleği, DevTools ağ
+  // geçmişi, aradaki günlükler) durmamalı.
+  await check('Admin: salon onay/askı yanıtı IBAN/TCKN/KYC DÖNDÜRMEZ', async () => {
+    const AV = 990631
+    await prisma.venue.upsert({
+      where: { id: AV },
+      update: { iban: 'TR330006100519786457841326', identityNumber: '12345678901', taxNumber: '1234567890' },
+      create: {
+        id: AV, name: 'AdminPIISalon', email: `apii${AV}@x.com`, passwordHash: 'x', address: 'A',
+        isApproved: false, isActive: true, neighborhoodId: V, cityId: 1,
+        iban: 'TR330006100519786457841326', identityNumber: '12345678901', taxNumber: '1234567890',
+      },
+    })
+    const yasak = ['iban', 'identityNumber', 'taxNumber', 'kycDocs', 'iyzicoSubMerchantKey', 'passwordHash']
+    for (const [ad, yol, govde] of [
+      ['onay', `/api/admin/venues/${AV}/approve`, { approve: true }],
+      ['askı', `/api/admin/venues/${AV}/suspend`, { suspend: true }],
+    ] as const) {
+      const r = await http(yol, { method: 'PUT', admin: true, body: govde })
+      if (r.status !== 200) throw new Error(`${ad}: ${r.status} ${r.text.slice(0, 140)}`)
+      const sizan = yasak.filter(k => r.json?.venue && k in r.json.venue)
+      if (sizan.length) throw new Error(`${ad} yanıtı hassas alan döndürüyor: ${sizan.join(', ')}`)
+    }
+    await prisma.venue.deleteMany({ where: { id: AV } }).catch(() => {})
+  })
+
   // DENETİM BULGUSU (orta): avatarUrl hiç doğrulanmıyordu, yalnız uzunluğu kırpılıyordu.
   // Bu alan liderlikte, sosyal akışta, profilde ve ADMİN PANELİNDE <img src> olarak yükleniyor →
   // saldırgan-kontrollü bir adres, görüntüleyen herkesin (admin dahil) IP'sini sızdıran bir

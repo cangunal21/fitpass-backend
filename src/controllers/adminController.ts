@@ -78,7 +78,12 @@ export const approveVenue = async (req: Request, res: Response) => {
       }
     }
 
-    const { passwordHash, ...safeVenue } = venue
+    // FİNANS-KYC ALANLARI YANITTAN ÇIKARILIR. Arayüz bunları kullanmıyor ama yanıt gövdesi
+    // IBAN, TCKN, vergi no, KYC belge adresleri ve iyzico anahtarını taşıyordu: admin'in
+    // tarayıcı belleğine, DevTools ağ geçmişine ve aradaki her günlüğe düşüyordu. En hassas
+    // veri, ihtiyaç duyulmayan bir yerde durmamalı.
+    const { passwordHash, iban, identityNumber, taxNumber, kycDocs, iyzicoSubMerchantKey, ...safeVenue } =
+      venue as typeof venue & { iban?: unknown; identityNumber?: unknown; taxNumber?: unknown; kycDocs?: unknown; iyzicoSubMerchantKey?: unknown }
     return res.json({ message: approve ? 'Salon onaylandı.' : 'Salon reddedildi.', venue: safeVenue })
   } catch (err) {
     if (handlePrismaErr(err, res)) return
@@ -142,7 +147,9 @@ export const suspendVenue = async (req: Request, res: Response) => {
       data: { isSuspended: suspend, isActive: !suspend },
     })
     invalidate(`venueState:${venueId}`) // venueAuthMiddleware 60sn cache'ini hemen düşür → askıya alma anında etki eder
-    const { passwordHash, ...safeVenue } = venue
+    // bkz. onay ucu — finans/KYC alanları yanıtta dönmez
+    const { passwordHash, iban, identityNumber, taxNumber, kycDocs, iyzicoSubMerchantKey, ...safeVenue } =
+      venue as typeof venue & { iban?: unknown; identityNumber?: unknown; taxNumber?: unknown; kycDocs?: unknown; iyzicoSubMerchantKey?: unknown }
     return res.json({ message: suspend ? 'Salon donduruldu.' : 'Salon aktif edildi.', venue: safeVenue })
   } catch (err) {
     if (handlePrismaErr(err, res)) return
