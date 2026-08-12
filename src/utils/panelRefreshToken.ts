@@ -31,10 +31,17 @@ const REFRESH_DAYS = 180
  * gönderir — bu hırsızlık değil, yarıştır. Döndürmenin üstünden GRACE_MS geçmediyse replay
  * alarmı çalmaz, taze bir çift verilir. Aksi halde kullanıcılar rastgele dışarı atılırdı.
  *
+ * GRACE NEDEN 1 DAKİKA DEĞİL 5: asıl tehlike eşzamanlı sekme değil, KAYIP YANIT. Mobil ağda
+ * istemci yenileme isteğini gönderir, sunucu jetonu döndürüp yanıtı yollar ama yanıt yolda
+ * kaybolur (tünel, kapsama, uygulamanın arka plana atılması). İstemcinin elinde hâlâ ESKİ
+ * jeton kalır ve tekrar denediğinde replay sanılıp oturumu kapanır. 1 dakika bu tekrarı
+ * çoğu zaman kaçırıyordu. 5 dakika "hemen tekrar dene" durumunu kapsar; hırsızlık senaryosu
+ * ise pratikte saatler/günler sonra gerçekleştiği için tespit gücü korunur.
+ *
  * MUTLAK OTURUM ÖMRÜ: yeni jeton eskinin expiresAt'ini DEVRALIR. Yoksa sonsuz yenilenen
  * bir oturum 180 günlük sınırı hiç görmezdi.
  */
-const GRACE_MS = 60_000
+const GRACE_MS = 5 * 60_000
 const DETECTION_WINDOW_MS = 48 * 3600_000 // döndürülmüş satırlar bu kadar süre replay kanıtı olarak durur
 
 export type PanelPair = { token: string; refreshToken: string }

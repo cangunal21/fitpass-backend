@@ -3390,7 +3390,7 @@ async function run() {
 
     // 4) REPLAY: grace penceresi GEÇTİKTEN sonra eski jeton geri gelirse jeton çalınmış demektir.
     //    Zaman beklemek yerine döndürme damgasını geriye alıyoruz.
-    await prisma.panelRefreshToken.update({ where: { token: h(rt1) }, data: { rotatedAt: new Date(Date.now() - 5 * 60_000) } })
+    await prisma.panelRefreshToken.update({ where: { token: h(rt1) }, data: { rotatedAt: new Date(Date.now() - 60 * 60_000) } }) // 1 saat önce = grace penceresinin (5dk) çok dışında
     const replay = await http('/api/venue/refresh', { method: 'POST', body: { refreshToken: rt1 } })
     if (replay.status !== 401) throw new Error(`replay edilen eski jeton kabul edildi: ${replay.status}`)
 
@@ -3430,7 +3430,7 @@ async function run() {
     if (y1.status !== 200 || !y1.json?.refreshToken) throw new Error(`kullanıcı yenilemesi refreshToken dönmedi: ${y1.status}`)
     if (y1.json.refreshToken === rt1) throw new Error('kullanıcı refresh jetonu döndürülmüyor')
 
-    await prisma.refreshToken.update({ where: { token: h(rt1) }, data: { rotatedAt: new Date(Date.now() - 5 * 60_000) } })
+    await prisma.refreshToken.update({ where: { token: h(rt1) }, data: { rotatedAt: new Date(Date.now() - 60 * 60_000) } }) // 1 saat önce = grace penceresinin (5dk) çok dışında
     const replay = await http('/api/auth/refresh', { method: 'POST', body: { refreshToken: rt1 } })
     if (replay.status !== 401) throw new Error(`kullanıcı replay jetonu kabul edildi: ${replay.status}`)
     const sonrasi = await http('/api/auth/refresh', { method: 'POST', body: { refreshToken: y1.json.refreshToken } })

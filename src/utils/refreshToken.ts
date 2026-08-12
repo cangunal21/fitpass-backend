@@ -6,7 +6,7 @@ import { generateToken } from './jwt'
 // yenisini almak için. Kullanıcı hiç "tekrar giriş yap" görmez.
 const REFRESH_DAYS = 180
 // Döndürme parametreleri — gerekçe ve tasarım notları utils/panelRefreshToken.ts'te (ikiz uygulama).
-const GRACE_MS = 60_000
+const GRACE_MS = 5 * 60_000
 const DETECTION_WINDOW_MS = 48 * 3600_000
 
 export type TokenPair = { token: string; refreshToken: string }
