@@ -198,6 +198,10 @@ app.use('/api/public/complaint', authLimiter)
 app.use('/api/public/validate-coupon', couponLimiter)
 app.use('/api/social/report', authLimiter)
 app.use('/api/auth/resend-verification', authLimiter) // self-servis doğrulama-maili seli engeli
+// Kod deneme uçları: 6 hane = 1.000.000 olasılık. Kod başına 5 deneme sınırı var (utils/
+// verificationCode.ts) ama IP başına da sınır olmalı — saldırgan sürekli yeni kod isteyip
+// deneyerek toplam tahmin hakkını büyütemesin.
+app.use('/api/auth/verify-code', authLimiter)
 app.use('/api/social/follow', socialWriteLimiter)     // takip bildirim bombası engeli
 app.use('/api/social/unfollow', socialWriteLimiter)
 app.use('/api/social/feed', feedLimiter)              // yorum/beğeni spam + feed okuma

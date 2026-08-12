@@ -956,23 +956,23 @@ export const sendGroupInviteEmail = async (
   })
 }
 
-export const sendEmailVerificationEmail = async (to: string, fullName: string, token: string, locale?: Locale) => {
-  const verifyUrl = `${SITE_URL}/email-dogrula?token=${token}`
+export const sendEmailVerificationEmail = async (to: string, fullName: string, kod: string, locale?: Locale) => {
+  // LİNK DEĞİL KOD gönderiyoruz: mobilde link tıklamak uygulamadan çıkıp geri dönmeyi
+  // gerektiriyor ve akış orada kopuyor. Kod, kayıt ekranını hiç terk etmeden girilir.
+  // Kodun ömrü utils/verificationCode.ts'te tanımlı (15 dk) — metindeki süre oradan gelir.
   const loc = L(locale)
   const T = tt(loc, {
     tr: {
-      subject: 'Şipşakspor — Email Adresinizi Doğrulayın',
-      heading: 'Email Doğrulama',
-      body1: `Merhaba ${esc(fullName)}! Hesabınızı aktifleştirmek için aşağıdaki butona tıklayın.`,
-      cta: 'Emailimi Doğrula →',
-      warning: '⚠️ Bu link 24 saat geçerlidir. Eğer bu talebi sen yapmadıysan bu emaili görmezden gelebilirsin.',
+      subject: `Şipşakspor doğrulama kodun: ${kod}`,
+      heading: 'Doğrulama Kodun',
+      body1: `Merhaba ${esc(fullName)}! Kaydını tamamlamak için aşağıdaki kodu uygulamaya gir.`,
+      warning: '⚠️ Bu kod 15 dakika geçerlidir. Bu talebi sen yapmadıysan bu e-postayı yok sayabilirsin — hesabın açılmaz.',
     },
     en: {
-      subject: 'Şipşakspor — Verify Your Email Address',
-      heading: 'Email Verification',
-      body1: `Hi ${esc(fullName)}! Tap the button below to activate your account.`,
-      cta: 'Verify My Email →',
-      warning: "⚠️ This link is valid for 24 hours. If you didn't request this, you can safely ignore this email.",
+      subject: `Your Şipşakspor verification code: ${kod}`,
+      heading: 'Your Verification Code',
+      body1: `Hi ${esc(fullName)}! Enter the code below in the app to finish signing up.`,
+      warning: "⚠️ This code is valid for 15 minutes. If you didn't request this, you can ignore this email — the account stays inactive.",
     },
   })
   await resend.emails.send({
@@ -985,7 +985,9 @@ export const sendEmailVerificationEmail = async (to: string, fullName: string, t
         ${T.body1}
       </p>
       <div style="text-align: center; margin-bottom: 24px;">
-        <a href="${verifyUrl}" style="display: inline-block; padding: 14px 32px; background: ${BRAND_COLOR}; color: #fff; border-radius: 14px; text-decoration: none; font-size: 15px; font-weight: 700;">${T.cta}</a>
+        <div style="display: inline-block; padding: 18px 34px; background: #F5F3FF; border: 2px solid ${BRAND_COLOR}; border-radius: 16px;">
+          <span style="font-size: 34px; font-weight: 800; color: ${BRAND_COLOR}; letter-spacing: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;">${esc(kod)}</span>
+        </div>
       </div>
       <div style="background: #FEF2F2; border-radius: 12px; padding: 14px;">
         <p style="font-size: 13px; color: #DC2626; margin: 0;">${T.warning}</p>

@@ -2,12 +2,15 @@ import { registerNumericParams } from '../middlewares/numericParams'
 import { Router } from 'express'
 import { createReview, getPendingRatings, getVenueReviews, getInstructorReviews, replyToReview, deleteReviewReply } from '../controllers/reviewController'
 import { authMiddleware, optionalAuthMiddleware } from '../middlewares/auth'
+// E-POSTA DOĞRULAMA KAPISI: yalnız BAŞKASINI ETKİLEYEN / KAYNAK TÜKETEN yazma uçlarında.
+// Okuma, iptal, profil ve "kod tekrar gönder" bilerek AÇIK — bkz. middlewares/requireVerified.ts
+import { requireVerifiedEmail } from '../middlewares/requireVerified'
 import { venueAuthMiddleware } from '../middlewares/venueAuth'
 
 const router = Router()
 registerNumericParams(router)
 
-router.post('/', authMiddleware, createReview)
+router.post('/', authMiddleware, requireVerifiedEmail, createReview)
 // Puanlanmayı bekleyen dersler (mobil puanlama modalı bunu çeker). Statik path → dinamiklerden önce.
 router.get('/pending', authMiddleware, getPendingRatings)
 // optionalAuth: private salon/hoca yanıtını yalnız yorumu yazan kullanıcıya gösterebilmek için

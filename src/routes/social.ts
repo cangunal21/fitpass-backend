@@ -9,10 +9,13 @@ import {
 } from '../controllers/socialController'
 import { reportUser } from '../controllers/reportController'
 import { authMiddleware, optionalAuthMiddleware } from '../middlewares/auth'
+// E-POSTA DOĞRULAMA KAPISI: yalnız BAŞKASINI ETKİLEYEN / KAYNAK TÜKETEN yazma uçlarında.
+// Okuma, iptal, profil ve "kod tekrar gönder" bilerek AÇIK — bkz. middlewares/requireVerified.ts
+import { requireVerifiedEmail } from '../middlewares/requireVerified'
 
 const router = Router()
 registerNumericParams(router)
-router.post('/follow/:username', authMiddleware, followUser)
+router.post('/follow/:username', authMiddleware, requireVerifiedEmail, followUser)
 router.delete('/unfollow/:username', authMiddleware, unfollowUser)
 router.get('/follow-requests', authMiddleware, getFollowRequests)
 router.post('/follow-requests/:username/accept', authMiddleware, acceptFollowRequest)
@@ -26,11 +29,11 @@ router.get('/leaderboard/streaks', getStreakLeaderboard)
 router.get('/my-calendar', authMiddleware, getMyCalendar)
 router.get('/suggestions', authMiddleware, getSuggestions)
 router.get('/feed', authMiddleware, getFeed)
-router.post('/feed/:feedKey/like', authMiddleware, likeActivity)
+router.post('/feed/:feedKey/like', authMiddleware, requireVerifiedEmail, likeActivity)
 router.delete('/feed/:feedKey/like', authMiddleware, unlikeActivity)
 router.get('/feed/:feedKey/comments', optionalAuthMiddleware, getActivityComments)
-router.post('/feed/:feedKey/comments', authMiddleware, addActivityComment)
+router.post('/feed/:feedKey/comments', authMiddleware, requireVerifiedEmail, addActivityComment)
 router.get('/notifications', authMiddleware, getNotifications)
 router.put('/notifications/read', authMiddleware, markNotificationsRead)
-router.post('/report', authMiddleware, reportUser)
+router.post('/report', authMiddleware, requireVerifiedEmail, reportUser)
 export default router

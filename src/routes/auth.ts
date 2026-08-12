@@ -1,6 +1,6 @@
 import { registerNumericParams } from '../middlewares/numericParams'
 import { Router } from 'express'
-import { register, login, getMe, changePassword, forgotPassword, resetPassword, updatePrivacy, updateProfile, updateNotificationSettings, verifyEmail, resendVerification, registerPushToken, deleteAccount, refreshAccessToken, logout } from '../controllers/authController'
+import { register, login, getMe, changePassword, forgotPassword, resetPassword, updatePrivacy, updateProfile, updateNotificationSettings, verifyEmail, verifyEmailCode, resendVerification, registerPushToken, deleteAccount, refreshAccessToken, logout } from '../controllers/authController'
 import { authMiddleware } from '../middlewares/auth'
 
 const router = Router()
@@ -17,7 +17,10 @@ router.post('/reset-password', resetPassword)
 router.put('/privacy', authMiddleware, updatePrivacy)
 router.put('/profile', authMiddleware, updateProfile)
 router.put('/notifications', authMiddleware, updateNotificationSettings)
-router.post('/verify-email', verifyEmail)
+router.post('/verify-email', verifyEmail) // eski link akışı (yolda kalmış e-postalar için)
+// KAYIT AKIŞININ İKİNCİ ADIMI — 6 haneli kod. authMiddleware'li: kullanıcı kendi hesabını
+// doğruluyor, e-posta gövdede taşınmıyor (enumerasyon yüzeyi yok).
+router.post('/verify-code', authMiddleware, verifyEmailCode)
 router.post('/resend-verification', authMiddleware, resendVerification)
 router.post('/push-token', authMiddleware, registerPushToken)
 router.delete('/account', authMiddleware, deleteAccount)

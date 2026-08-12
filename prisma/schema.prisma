@@ -127,10 +127,22 @@ model EmailVerificationToken {
   id        Int      @id @default(autoincrement())
   userId    Int
   token     String   @unique
+  // 6 HANELİ DOĞRULAMA KODU (SHA-256). Kayıt akışı artık e-postadaki linke değil, kullanıcının
+  // yazdığı koda dayanıyor: mobilde link tıklamak uygulamadan çıkıp geri dönmeyi gerektiriyor,
+  // kod ise ekranı hiç terk etmeden girilebiliyor. `token` alanı eski link akışı ve satır
+  // tekilliği için duruyor.
+  // NOT: 6 hanelik bir kodun hash'i, sızan bir yedeğe karşı gerçek koruma DEĞİLDİR (uzay çok
+  // küçük). Asıl koruma KISA ÖMÜR (15 dk) ve DENEME SINIRI (attempts). Hash yine de duruyor ki
+  // canlı kod, günlüklere/yedeklere düz metin düşmesin.
+  code      String?
+  // Yanlış deneme sayacı: 6 hane = 1.000.000 olasılık; sınırsız deneme kaba kuvvete açıktır.
+  attempts  Int      @default(0)
   expiresAt DateTime
   used      Boolean  @default(false)
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId, used])
 }
 
 model User {

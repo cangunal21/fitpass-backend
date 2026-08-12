@@ -12,6 +12,7 @@ import { seasonLabelsFromKey } from '../utils/season'
 import { purgeUserReviews, purgeUserComments } from '../utils/moderation'
 import { invalidate } from '../utils/cache'
 import { gorselUrlGecerliMi } from '../utils/sanitize'
+import { dogrulamaKoduUret, dogrulamaKoduDogrula, KOD_OMRU_DK } from '../utils/verificationCode'
 import { localeFromReq, Locale } from '../utils/locale'
 import { cityIdOfNeighborhood } from '../utils/geo'
 import { notifyFields, notifyPush, NotifyParams } from '../utils/notifyText'
@@ -89,13 +90,12 @@ export const register = async (req: Request, res: Response) => {
 
     const token = generateToken({ userId: user.id, email: user.email })
 
-    // Email doğrulama tokeni oluştur ve gönder
-    const verifyToken = crypto.randomBytes(32).toString('hex')
-    const verifyExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000)
-    await prisma.emailVerificationToken.create({
-      data: { userId: user.id, token: verifyToken, expiresAt: verifyExpiresAt }
-    })
-    sendEmailVerificationEmail(user.email, user.fullName, verifyToken, localeFromReq(req)).catch(err => console.error('Verify mail gönderilemedi:', err))
+    // DOĞRULAMA KODU (link değil — bkz. utils/verificationCode.ts). Kayıt tamamlanmış sayılmaz:
+    // kullanıcı kodu girene kadar hesap DOĞRULANMAMIŞ kalır ve yazma uçları kapalıdır
+    // (middlewares/requireVerified.ts). Böylece başkasının e-postasıyla kayıt olan biri
+    // o hesapla hiçbir şey yapamaz.
+    const kod = await dogrulamaKoduUret(user.id)
+    sendEmailVerificationEmail(user.email, user.fullName, kod, localeFromReq(req)).catch(err => console.error('Verify mail gönderilemedi:', err))
 
     // Referral kodu varsa uygula
     if (referralCode) {
@@ -104,11 +104,13 @@ export const register = async (req: Request, res: Response) => {
 
     const refreshToken = await issueRefreshToken(user.id)
     return res.status(201).json({
-      message: 'Kayıt başarılı! Email adresinize doğrulama linki gönderildi.',
+      message: `Kayıt alındı! E-posta adresine 6 haneli doğrulama kodu gönderdik (${KOD_OMRU_DK} dakika geçerli).`,
       token,
       refreshToken,
       user,
       emailVerificationSent: true,
+      // İstemci bu bayrağa bakıp kod ekranını açar. Kod girilmeden yazma uçları 403 döner.
+      requiresEmailVerification: true,
     })
   } catch (error: any) {
     if (error?.code === 'P2002') {
@@ -171,7 +173,11 @@ export const login = async (req: Request, res: Response) => {
         // döndürüyor, parametre hiç gitmiyor ve sunucu mesafeye göre sıralamayı SESSİZCE
         // atlayıp normal sıralama uyguluyordu: özellik hiç çalışmıyordu.
         neighborhoodId: user.neighborhoodId ?? null,
-      }
+        // Doğrulanmamış hesap girişte kod ekranına yönlendirilmeli: kayıt yarım kaldıysa
+        // kullanıcı sebebini anlamadan rezervasyon uçlarından 403 alırdı.
+        isEmailVerified: user.isEmailVerified,
+      },
+      requiresEmailVerification: !user.isEmailVerified,
     })
   } catch (error) {
     console.error('Login error:', error)
@@ -661,6 +667,40 @@ export const verifyEmail = async (req: Request, res: Response) => {
   }
 }
 
+// E-POSTA DOĞRULAMA — 6 HANELİ KOD (kayıt akışının ikinci adımı)
+export const verifyEmailCode = async (req: Request & { userId?: number }, res: Response) => {
+  try {
+    const { code } = req.body
+    const kullanici = await prisma.user.findUnique({ where: { id: req.userId }, select: { isEmailVerified: true } })
+    if (!kullanici) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
+    // Zaten doğrulanmışsa BAŞARI dön: istemci tekrar gönderirse (çift tık, ağ tekrarı) hata
+    // ekranı görmesin — sonuç aynı, kullanıcı doğrulanmış durumda.
+    if (kullanici.isEmailVerified) return res.json({ message: 'E-posta zaten doğrulanmış.', verified: true })
+
+    const sonuc = await dogrulamaKoduDogrula(req.userId!, code)
+    if (sonuc === 'ok') {
+      invalidate(`authstate:${req.userId}`)
+      // KAPI CACHE'İNİ DE DÜŞÜR. requireVerifiedEmail durumu 60 sn cache'liyor ve kullanıcı kodu
+      // girmeden ÖNCE zaten bir kez reddedilmiş olduğu için cache'te "doğrulanmamış" yazıyor.
+      // Düşürülmezse kullanıcı kodu doğru girdiği hâlde bir dakika boyunca rezervasyon yapamaz —
+      // hem de huninin en kritik anında. (Bu, testin yakaladığı gerçek bir hataydı.)
+      invalidate(`emailverified:${req.userId}`)
+      return res.json({ message: 'E-posta doğrulandı!', verified: true })
+    }
+    const mesaj = {
+      gecersiz: 'Kod hatalı. Lütfen e-postandaki 6 haneli kodu kontrol et.',
+      suresi_doldu: 'Kodun süresi doldu. Yeni kod iste.',
+      deneme_bitti: 'Çok fazla hatalı deneme yapıldı. Yeni kod iste.',
+    }[sonuc]
+    // 400: istemci kodu düzeltebilir. Hangi hata olduğu SÖYLENİR — bu bir enumerasyon yüzeyi
+    // değil (kullanıcı zaten kendi hesabında, jetonla kimliği doğrulanmış durumda).
+    return res.status(400).json({ error: mesaj, reason: sonuc })
+  } catch (error) {
+    console.error('VerifyEmailCode error:', error)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
 // EMAIL DOĞRULAMA YENİDEN GÖNDER
 export const resendVerification = async (req: Request & { userId?: number }, res: Response) => {
   try {
@@ -673,12 +713,10 @@ export const resendVerification = async (req: Request & { userId?: number }, res
     const recent = await prisma.emailVerificationToken.findFirst({ where: { userId: req.userId!, createdAt: { gt: new Date(Date.now() - 2 * 60 * 1000) } }, select: { id: true } })
     if (recent) return res.json({ message: 'Doğrulama emaili yakın zamanda gönderildi. Birkaç dakika sonra tekrar deneyin.' })
 
-    const verifyToken = crypto.randomBytes(32).toString('hex')
-    const verifyExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000)
-    await prisma.emailVerificationToken.create({ data: { userId: req.userId!, token: verifyToken, expiresAt: verifyExpiresAt } })
-    sendEmailVerificationEmail(user.email, user.fullName, verifyToken, localeFromReq(req)).catch(err => console.error('Verify mail gönderilemedi:', err))
+    const kod = await dogrulamaKoduUret(req.userId!)
+    sendEmailVerificationEmail(user.email, user.fullName, kod, localeFromReq(req)).catch(err => console.error('Verify mail gönderilemedi:', err))
 
-    return res.json({ message: 'Doğrulama emaili tekrar gönderildi.' })
+    return res.json({ message: 'Yeni doğrulama kodu gönderildi.' })
   } catch (error) {
     console.error('ResendVerification error:', error)
     return res.status(500).json({ error: 'Sunucu hatası.' })
