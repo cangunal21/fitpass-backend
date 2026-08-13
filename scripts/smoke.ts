@@ -3474,9 +3474,27 @@ async function run() {
     // Çalınan jeton şu an çalışıyor
     if ((await http('/api/auth/me', { token: calinan })).status !== 200) throw new Error('kurulum: taze token /me\'de çalışmadı')
 
+    // BİR SANİYE BEKLE — bu bir gecikme hilesi değil, kapının SÖZLEŞMESİ.
+    // JWT'nin `iat` alanı SANİYE çözünürlüğünde ve kapı "kesin küçüktür" karşılaştırması
+    // yapıyor: parola değişimiyle AYNI saniyede basılmış taze bir jeton geçerli kalsın diye
+    // (kullanıcı kendi parolasını değiştirince kendi cihazından atılmamalı). Dolayısıyla
+    // kayıt ile parola değişimi aynı saniyeye düşerse jeton MEŞRU olarak geçerli kalır.
+    // Beklemeden yazılan test, saniye sınırının araya düşüp düşmemesine göre rastgele
+    // kırmızı yanıyordu: yerelde geçti, CI'da düştü.
+    await new Promise(r => setTimeout(r, 1100))
+
     // Kurban parolasını değiştirir
     const chg = await http('/api/auth/change-password', { method: 'PUT', token: calinan, body: { currentPassword: 'PwGate1234', newPassword: 'YeniPwGate1234' } })
     if (chg.status !== 200) throw new Error(`parola değişmedi: ${chg.status} ${chg.text.slice(0, 140)}`)
+
+    // Ön koşul gerçekten sağlandı mı? Sağlanmadıysa aşağıdaki iddia YANLIŞ ŞEYİ ölçer;
+    // hatanın "kapı çalışmıyor" değil "kurulum tutmadı" olduğu anlaşılsın.
+    const damga = await prisma.user.findUnique({ where: { email: em }, select: { passwordChangedAt: true } })
+    const iat = JSON.parse(Buffer.from(String(calinan).split('.')[1], 'base64').toString()).iat as number
+    if (!damga?.passwordChangedAt) throw new Error('kurulum: passwordChangedAt yazılmadı')
+    if (Math.floor(damga.passwordChangedAt.getTime() / 1000) <= iat) {
+      throw new Error('kurulum: parola damgası jetonun iat\'inden sonraya düşmedi (saniye sınırı geçilmemiş)')
+    }
 
     // Aynı (çalınmış) jeton ARTIK ÇALIŞMAMALI
     const sonra = await http('/api/auth/me', { token: calinan })
