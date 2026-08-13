@@ -4022,7 +4022,14 @@ async function run() {
   await check('Deploy: /health hazır-olma sinyali verir ve SIGTERM\'de temiz kapanır', async () => {
     const path = require('path')
     const altPort = PORT + 7
-    const alt = spawn('npx', ['ts-node', 'src/index.ts'], {
+    // SARMALAYICISIZ SPAWN. Eskiden `npx ts-node ...` ile açılıyordu; o durumda `alt` npx'in
+    // KENDİSİ oluyor, sunucu onun ÇOCUĞU oluyordu. Aşağıda çıkış kodunu okuduğumuz süreç de
+    // npx'ti: npx'in SIGTERM işleyicisi olmadığı için sinyalle ölüyor ve exit olayı
+    // `code=null, signal='SIGTERM'` veriyordu. Yerelde tesadüfen 0 dönüyordu, GitHub
+    // runner'ında null → test 11 Ağustos'tan beri CI'da kırmızıydı ve YANLIŞ ŞEYİ ölçüyordu.
+    // node'u doğrudan çağırınca alt.pid GERÇEKTEN sunucu olur; çıkış kodu 0, düzgün
+    // kapandığının gerçek kanıtıdır.
+    const alt = spawn(process.execPath, ['-r', 'ts-node/register', 'src/index.ts'], {
       env: { ...process.env, PORT: String(altPort), DISABLE_RATE_LIMIT: 'true', ADMIN_SECRET, CRON_SECRET, CLOUDINARY_URL: process.env.CLOUDINARY_URL || TEST_CLOUDINARY_URL },
       cwd: path.join(__dirname, '..'), detached: true, stdio: 'ignore',
     })
@@ -4038,8 +4045,9 @@ async function run() {
       }
       if (!hazir) throw new Error('alt sunucu 90sn içinde sağlıklı olmadı')
 
-      // 2) SIGTERM → drenaj penceresinde /health 503 + shutting_down demeli
-      process.kill(-alt.pid!, 'SIGTERM')
+      // 2) SIGTERM → drenaj penceresinde /health 503 + shutting_down demeli.
+      // Sinyal GRUBA değil, doğrudan sürece: artık sarmalayıcı yok, hedef zaten sunucunun kendisi.
+      process.kill(alt.pid!, 'SIGTERM')
       let gordu503 = false
       for (let i = 0; i < 25; i++) {
         const h = await hGet()

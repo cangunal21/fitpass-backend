@@ -79,9 +79,14 @@ async function seed() {
   // Kullanıcılar (hepsi puan kazanan bir tier'da)
   for (let i = 0; i < NUSERS; i++) {
     const id = B + 100 + i
+    // isEmailVerified ŞART: rezervasyon/bekleme listesi uçları e-posta doğrulama kapısının
+    // arkasında (middlewares/requireVerified.ts). Bu suite kapıyı değil EŞZAMANLILIĞI test
+    // ediyor. Yerelde gözden kaçmıştı çünkü eski satırlar migration'la muaf tutulmuştu;
+    // CI'ın TAZE veritabanında her rezervasyon 403 alıp 9 test birden düşüyordu — "yerelde
+    // geçer, CI'da düşer" tuzağının ta kendisi.
     await prisma.user.upsert({
-      where: { id }, update: { tierId, rewardPoints: 0 },
-      create: { id, username: `stress_${id}`, email: `stress_${id}@x.com`, passwordHash: 'x', fullName: `Stress ${i}`, tierId, rewardPoints: 0 },
+      where: { id }, update: { tierId, rewardPoints: 0, isEmailVerified: true },
+      create: { id, username: `stress_${id}`, email: `stress_${id}@x.com`, passwordHash: 'x', fullName: `Stress ${i}`, tierId, rewardPoints: 0, isEmailVerified: true },
     })
     await prisma.rewardPoint.deleteMany({ where: { userId: id } }).catch(() => {})
     users.push({ id, token: jwt.sign({ userId: id, email: `stress_${id}@x.com` }, JWT_SECRET, { expiresIn: '1h' }) })
