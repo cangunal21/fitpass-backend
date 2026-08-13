@@ -14,6 +14,14 @@ import { translateClassTitle, translateInstructorBio, translateSpecialty } from 
  * Bu iş sistemi KENDİ KENDİNİ ONARIR hâle getiriyor: eksik kalanları periyodik olarak toplayıp
  * yeniden deniyor. Geçici bir Groq arızası artık kalıcı bir kusura dönüşmüyor.
  *
+ * `scripts/backfill-title-en.ts` İLE İLİŞKİSİ — ikisi de gerekli, işleri farklı:
+ *   • BU İŞ: sürekli ve otomatik, tur başına birkaç kayıt. Normal işleyişte biriken tek tük
+ *     eksiği kimse uğraşmadan kapatır. Yalnız titleEn değil bioEn/specialtyEn'i de kapsar.
+ *   • SCRIPT: operatörün elle çalıştırdığı TEK SEFERLİK toplu doldurma; kuru çalışma (--dry),
+ *     hedef veritabanını ekrana basma ve satır satır rapor sunar. Binlerce eksik kayıt varsa
+ *     (örneğin alan sonradan eklendiğinde) bu işin 30 dakikalık turlarını beklemek anlamsız.
+ * Kısacası: gündelik onarım burada, toplu göç script'te.
+ *
  * TASARIM:
  *  • TUR BAŞINA KÜÇÜK PARTİ. Groq'un hız sınırı var ve bu iş acil değil; her turda birkaç kayıt
  *    yeter. Kuyruk normalde zaten sıfıra yakın olur.

@@ -277,7 +277,8 @@ async function run() {
     const culprits = cases.map((c, i) => ({ c, s: res[i].status })).filter(x => x.s >= 500).map(x => `${x.c.label}→${x.s}`)
     if (culprits.length) lines.push(`     ↳ 5xx dönenler: ${culprits.join(' | ')}`)
     // Bozuk JSON gövde (body-parser hatası 5xx değil 400 olmalı)
-    let rawStatus = 0
+    // Başlangıç değeri okunmuyordu: iki dal da (try ve catch) atama yapıyor.
+    let rawStatus: number
     try {
       const r = await fetch(BASE + '/api/bookings', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${u.token}` }, body: '{bozuk json' })
       rawStatus = r.status

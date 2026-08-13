@@ -14,6 +14,11 @@
  *
  * GÜVENLİ: yalnız titleEn'i BOŞ olan satırlara yazar (idempotent, tekrar çalıştırılabilir);
  * başlıkları asla değiştirmez. Çeviri başarısız olursa o dersi ATLAR (bir sonraki koşuda denenir).
+ *
+ * NOT (13 Ağu 2026): gündelik onarım artık `src/jobs/translationJob.ts` işinde — sunucu 30
+ * dakikada bir eksikleri kendi kapatıyor (titleEn + bioEn + specialtyEn). Bu script TOPLU
+ * göç için duruyor: binlerce eksik kayıt varsa işin küçük turlarını beklemek anlamsız, ve
+ * burada kuru çalışma + satır satır rapor var. İkisi çakışmaz (ikisi de yalnız BOŞ alana yazar).
  */
 import 'dotenv/config'
 import prisma from '../src/utils/prisma'

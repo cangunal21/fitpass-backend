@@ -19,7 +19,8 @@
     "typecheck:ci": "tsc -p tsconfig.ci.json",
     "backfill:titleen": "ts-node scripts/backfill-title-en.ts",
     "db:deploy": "node scripts/db-deploy.cjs",
-    "db:migrate": "npx prisma migrate dev"
+    "db:migrate": "npx prisma migrate dev",
+    "lint": "eslint ."
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
@@ -53,5 +54,10 @@
     "resend": "^6.12.4",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.8.1",
+    "typescript-eslint": "^8.67.0"
   }
 }

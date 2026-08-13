@@ -57,7 +57,12 @@ export const optionalAuthMiddleware = async (req: Request, res: Response, next: 
         const pwEski = !!(snap.pwAt && typeof decoded.iat === 'number' && decoded.iat < snap.pwAt)
         if (snap.state === 'ok' && !pwEski) (req as any).userId = decoded.userId
       }
-    } catch {}
+    } catch {
+      // BİLEREK YUTULUYOR — burası OPSİYONEL kimlik doğrulama. Geçersiz/süresi dolmuş/bozuk
+      // jeton bir HATA değil, "bu istek anonim" demektir: req.userId set edilmez ve akış
+      // giriş yapılmamış kullanıcı gibi devam eder. Hata fırlatmak, herkese açık sayfaları
+      // eski bir jeton yüzünden çökertirdi. (Zorunlu kimlik için authMiddleware var, o 401 döner.)
+    }
   }
   next()
 }
