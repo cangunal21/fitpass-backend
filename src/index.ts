@@ -14,6 +14,7 @@ import { sendStreakNudges } from './jobs/streakJob'
 import { sendRatingPrompts } from './jobs/ratingPromptJob'
 import { sweepWaitlist } from './jobs/waitlistJob'
 import { reconcileAttendancePoints } from './jobs/attendanceJob'
+import { fillMissingTranslations } from './jobs/translationJob'
 import { ensureTiers } from './utils/ensureTiers'
 import { ensureGeo } from './utils/ensureGeo'
 import { ensureBadges } from './utils/ensureBadges'
@@ -376,6 +377,13 @@ const server = app.listen(PORT, async () => {
   // puanı hiç almaz ve kimse fark etmez. Bu job kredilenmemiş check-in'leri tamamlar.
   reconcileAttendancePoints()
   setInterval(reconcileAttendancePoints, 15 * 60 * 1000)
+
+  // EKSİK ÇEVİRİLER — bkz. jobs/translationJob.ts. İngilizce alanlar yalnız kayıt oluşturulurken
+  // bir kez üretiliyor ve Groq 6 saniyede yanıt vermezse (ya da kota dolmuşsa) alan KALICI olarak
+  // boş kalıyordu; İngilizce arayüzde Türkçe metin görünüyordu. 30 dk: acil değil, Groq'un hız
+  // sınırını da zorlamıyor.
+  fillMissingTranslations()
+  setInterval(fillMissingTranslations, 30 * 60 * 1000)
 })
 
 // ─────────────────────────────────────────────────────────────────────────────

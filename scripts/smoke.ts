@@ -19,6 +19,7 @@ import { sendRatingPrompts } from '../src/jobs/ratingPromptJob'
 import { sendRemindersJob } from '../src/jobs/reminderJob'
 import { sweepWaitlist } from '../src/jobs/waitlistJob'
 import { reconcileAttendancePoints } from '../src/jobs/attendanceJob'
+import { fillMissingTranslations } from '../src/jobs/translationJob'
 import prisma from '../src/utils/prisma'
 
 /**
@@ -3678,6 +3679,62 @@ async function run() {
     } finally {
       try { process.kill(-alt.pid!, 'SIGKILL') } catch { /* zaten ölmüş */ }
     }
+  })
+
+  // İngilizce alanlar YALNIZ kayıt oluşturulurken bir kez üretiliyor ve translate.ts 6 saniyede
+  // yanıt alamazsa null dönüyor (bilerek — kozmetik bir çeviri için ders eklemeyi bloke etmemek
+  // için). Bedeli: o tek denemede Groq yavaşladıysa ya da kota dolduysa alan KALICI olarak boş
+  // kalıyor, bir daha denenmiyordu → İngilizce arayüzde Türkçe ders adı. Artık periyodik iş
+  // eksikleri topluyor; bu test onun gerçekten doldurduğunu ve başarısızlıkta veriyi
+  // BOZMADIĞINI doğrular.
+  await check('Çeviri: eksik İngilizce alanlar periyodik işle tamamlanır (geçici Groq arızası kalıcı kusura dönüşmez)', async () => {
+    const CV = 990661, CC = 990661
+    await prisma.venue.upsert({
+      where: { id: CV }, update: { isApproved: true, isActive: true },
+      create: { id: CV, name: 'CeviriSalon', email: `cv${CV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 },
+    })
+    await prisma.class.deleteMany({ where: { id: CC } }).catch(() => {})
+    await prisma.class.create({
+      data: { id: CC, venueId: CV, title: 'Güç Yogası', titleEn: null, category: catName, basePrice: 100, durationMinutes: 60, capacity: 10, isActive: true },
+    })
+
+    // Groq'a ÇIKMADAN sınıyoruz: modülün dışa verdiği fonksiyon geçici olarak değiştiriliyor
+    // (tsconfig commonjs → çağrı anında özellik erişimi, bu yüzden yama çalışır). Testin ağa
+    // bağlı olması onu kırılgan ve yavaş yapardı.
+    const cev = require('../src/utils/translate')
+    const orjTitle = cev.translateClassTitle
+    const orjAnahtar = process.env.GROQ_API_KEY
+    process.env.GROQ_API_KEY = 'test-anahtari'
+    try {
+      // 1) ARIZA HÂLİ: çeviri null dönerse alan boş KALMALI ama hiçbir şey bozulmamalı
+      cev.translateClassTitle = async () => null
+      await fillMissingTranslations()
+      const arizali = await prisma.class.findUnique({ where: { id: CC }, select: { titleEn: true, title: true } })
+      if (arizali?.titleEn) throw new Error('çeviri başarısızken alan yine de yazıldı')
+      if (arizali?.title !== 'Güç Yogası') throw new Error('çeviri başarısızken Türkçe başlık bozuldu')
+
+      // 2) DÜZELME: sonraki turda çeviri gelirse alan DOLMALI (kendi kendini onarma)
+      cev.translateClassTitle = async () => 'Power Yoga'
+      await fillMissingTranslations()
+      const duzelen = await prisma.class.findUnique({ where: { id: CC }, select: { titleEn: true } })
+      if (duzelen?.titleEn !== 'Power Yoga') {
+        throw new Error(`eksik çeviri tamamlanmadı: ${duzelen?.titleEn} — geçici Groq arızası kalıcı kusur olarak kalır`)
+      }
+
+      // 3) TEKRAR KOŞUNCA dokunmamalı (dolu alanı boşuna yeniden çevirip kota yakmasın)
+      let cagrildi = 0
+      cev.translateClassTitle = async () => { cagrildi++; return 'Baska Bir Sey' }
+      await fillMissingTranslations()
+      const sonra = await prisma.class.findUnique({ where: { id: CC }, select: { titleEn: true } })
+      if (sonra?.titleEn !== 'Power Yoga') throw new Error('dolu alan yeniden çevrildi — boşuna kota harcanıyor')
+    } finally {
+      cev.translateClassTitle = orjTitle
+      if (orjAnahtar === undefined) delete process.env.GROQ_API_KEY
+      else process.env.GROQ_API_KEY = orjAnahtar
+    }
+
+    await prisma.class.deleteMany({ where: { id: CC } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: CV } }).catch(() => {})
   })
 
   // YAŞANMIŞ OLAY: CLOUDINARY_URL'e Cloudinary'nin ŞABLONU (köşeli parantezli yer tutucular)
