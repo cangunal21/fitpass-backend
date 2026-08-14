@@ -344,7 +344,10 @@ export const getMyBookings = async (req: Request, res: Response) => {
       where: { userId },
       include: {
         session: {
-          include: { class: { include: { venue: true } } },
+          // instructor: puanlama formu hocayı ADIYLA göstersin diye (yalnız id + ad; hocanın
+          // e-posta/telefon gibi alanları MÜŞTERİYE dönmemeli). Eskiden yoktu ve web'deki
+          // puanlama modalı hoca bölümünü hiç açamıyordu.
+          include: { class: { include: { venue: true, instructor: { select: { id: true, fullName: true } } } } },
         },
         dropInSlot: {
           include: { venue: true },

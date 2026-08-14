@@ -3933,6 +3933,60 @@ async function run() {
     await prisma.venue.deleteMany({ where: { id: AV } }).catch(() => {})
   })
 
+  // WEB/MOBİL PARİTE BULGUSU (yüksek): web'de profil > "Yorum Yap" modalı YALNIZ salonu
+  // puanlıyordu. Backend bir rezervasyonu TEK KEZ puanlatıyor ve hoca satırı SADECE aynı
+  // istekte yaratılıyor → profilden puan veren web kullanıcısının HOCA PUANI o rezervasyon
+  // için bir daha ASLA verilemiyordu (sessiz veri kaybı). Mobil aynı işi tek paylaşılan
+  // bileşenle doğru yapıyordu. Bu test SÖZLEŞMEYİ kilitler: hoca bilgisi istemciye ULAŞMALI,
+  // yoksa hiçbir istemci hoca bölümünü gösteremez.
+  await check('Rezervasyon listesi: hoca bilgisi (id + ad) taşınır — puanlama formu hocayı gösterebilsin', async () => {
+    const IV = 990671, IC = 990671, II = 990671, IU = 990671, IS = 990671
+    await prisma.venue.upsert({
+      where: { id: IV }, update: { isApproved: true, isActive: true },
+      create: { id: IV, name: 'HocaSalon', email: `hs${IV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 },
+    })
+    await prisma.instructor.upsert({
+      where: { id: II }, update: { fullName: 'Ayşe Hoca', venueId: IV },
+      create: { id: II, venueId: IV, fullName: 'Ayşe Hoca', isActive: true },
+    })
+    await prisma.class.upsert({
+      where: { id: IC }, update: { instructorId: II },
+      create: { id: IC, venueId: IV, instructorId: II, title: 'HocaliDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 10, isActive: true },
+    })
+    const bas = new Date(Date.now() + 2 * 86400000)
+    await prisma.class_Session.deleteMany({ where: { classId: IC } })
+    await prisma.class_Session.create({ data: { id: IS, classId: IC, startsAt: bas, endsAt: new Date(bas.getTime() + 3600000), capacity: 10, status: 'open' } })
+    await testPrisma.user.upsert({
+      where: { id: IU }, update: {},
+      create: { id: IU, username: `hc_${IU}`, email: `hc_${IU}@x.com`, passwordHash: 'x', fullName: 'Hoca Test' },
+    })
+    await prisma.booking.deleteMany({ where: { userId: IU } })
+    const uTok = jwt.sign({ userId: IU, email: `hc_${IU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const bk = await http('/api/bookings', { method: 'POST', token: uTok, body: { sessionId: IS } })
+    if (bk.status !== 201) throw new Error(`kurulum rezervasyonu: ${bk.status} ${bk.text.slice(0, 120)}`)
+
+    const liste = await http('/api/bookings/my', { token: uTok })
+    if (liste.status !== 200) throw new Error(`liste: ${liste.status}`)
+    const kayit = (liste.json?.bookings || []).find((b: any) => b.sessionId === IS)
+    if (!kayit) throw new Error('rezervasyon listede yok')
+    const cls = kayit.session?.class
+    if (cls?.instructorId !== II) throw new Error(`instructorId taşınmıyor: ${cls?.instructorId}`)
+    if (cls?.instructor?.fullName !== 'Ayşe Hoca') {
+      throw new Error(`hoca ADI taşınmıyor (${JSON.stringify(cls?.instructor)}) — puanlama formu hocayı gösteremez`)
+    }
+    // Hocanın HASSAS alanları müşteriye DÖNMEMELİ (yalnız id + ad seçildi)
+    for (const yasak of ['email', 'phone', 'passwordHash']) {
+      if (cls?.instructor && yasak in cls.instructor) throw new Error(`hoca ${yasak} müşteriye sızıyor`)
+    }
+
+    await prisma.booking.deleteMany({ where: { userId: IU } }).catch(() => {})
+    await prisma.class_Session.deleteMany({ where: { classId: IC } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: IC } }).catch(() => {})
+    await prisma.instructor.deleteMany({ where: { id: II } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: IV } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: IU } }).catch(() => {})
+  })
+
   // DENETİM BULGUSU (orta): avatarUrl hiç doğrulanmıyordu, yalnız uzunluğu kırpılıyordu.
   // Bu alan liderlikte, sosyal akışta, profilde ve ADMİN PANELİNDE <img src> olarak yükleniyor →
   // saldırgan-kontrollü bir adres, görüntüleyen herkesin (admin dahil) IP'sini sızdıran bir
