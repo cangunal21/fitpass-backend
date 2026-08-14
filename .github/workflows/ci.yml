@@ -43,6 +43,12 @@ jobs:
       - name: prisma şeması geçerli mi
         run: npx prisma validate
 
+      # API SÖZLEŞMESİ DAMGASI: src/types/api.ts üç repoda da BİREBİR aynı olmalı. Damga
+      # içeriğin hash'i olduğu için, damgaları eşit olan iki dosya kanıtlanabilir şekilde aynıdır.
+      # Bir repoda değişip diğerlerinde değişmezse uyuşmazlık yine derleyiciden kaçardı.
+      - name: API sözleşmesi damgası (backend ↔ web ↔ mobil)
+        run: npm run types:check
+
       # ÜÇ REPO ARASINDA SÜREÇ PARİTESİ (13 Ağu 2026): web'de lint vardı, mobilde ve
       # backend'de YOKTU. Üstelik kodda `// eslint-disable-next-line ...` yorumları duruyordu —
       # birileri lint olduğunu varsayıp susturucu yazmış ama koşan bir lint hiç olmamış.

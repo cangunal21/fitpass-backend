@@ -20,7 +20,8 @@
     "backfill:titleen": "ts-node scripts/backfill-title-en.ts",
     "db:deploy": "node scripts/db-deploy.cjs",
     "db:migrate": "npx prisma migrate dev",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "types:check": "node scripts/tip-damgasi.cjs"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

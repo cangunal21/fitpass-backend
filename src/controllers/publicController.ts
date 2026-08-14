@@ -9,9 +9,12 @@ import { seasonLabelsFromKey } from '../utils/season'
 import { stripVenueSensitive, stripInstructorSensitive } from '../utils/sanitize'
 import { trInstant, trAddDays } from '../utils/trFormat'
 import { getOccupancyMap, getOccupancy, spotsLeftOf } from '../utils/occupancy'
+// API SÖZLEŞMESİ — üç repoda birebir aynı dosya. Yanıt tipini imzaya yazmak, sunucunun
+// gerçekten o şekli döndürdüğünü tsc'ye DOĞRULATIR (alan silinir/tipi değişirse build kırılır).
+import type { SessionListResponse, SessionDetailResponse, ForYouResponse, ApiError } from '../types/api'
 
 // GET /api/public/sessions
-export const getSessions = async (req: Request, res: Response) => {
+export const getSessions = async (req: Request, res: Response<SessionListResponse | ApiError>) => {
   try {
     const { category, date, dateFrom, dateTo, venueId, neighborhoodId, cityId, search, sort, userNeighborhoodId, page, limit } = req.query
     const pageNum = Math.max(1, parseIntSafe(page) || 1)
@@ -187,7 +190,7 @@ export const getSessions = async (req: Request, res: Response) => {
 }
 
 // GET /api/public/for-you — kullanıcının tercihlerine göre kişiselleştirilmiş seanslar
-export const getForYouSessions = async (req: Request, res: Response) => {
+export const getForYouSessions = async (req: Request, res: Response<ForYouResponse | ApiError>) => {
   try {
     const userId = (req as any).userId
     if (!userId) return res.json({ sessions: [] })
@@ -262,7 +265,7 @@ export const getForYouSessions = async (req: Request, res: Response) => {
 }
 
 // GET /api/public/sessions/:id
-export const getSessionById = async (req: Request, res: Response) => {
+export const getSessionById = async (req: Request, res: Response<SessionDetailResponse | ApiError>) => {
   try {
     const id = parseInt(req.params.id as string)
     if (isNaN(id)) return res.status(404).json({ error: 'Seans bulunamadı.' })

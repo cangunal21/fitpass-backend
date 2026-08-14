@@ -12,7 +12,13 @@ export const VENUE_SENSITIVE_FIELDS = [
   'subMerchantRejection', 'kycDocs',
 ] as const
 
-export function stripVenueSensitive<T extends Record<string, any>>(venue: T): Partial<T> {
+// DÖNÜŞ TİPİ `Omit`, `Partial` DEĞİL: fonksiyon yalnızca listedeki kolonları siler, geri
+// kalanları OLDUĞU GİBİ bırakır. `Partial<T>` demek "her alan kaybolmuş olabilir" demekti ve
+// bu YALAN, üstelik zararlıydı: zorunlu alanlar isteğe bağlıya dönüşünce API sözleşmesi
+// (src/types/api.ts) üretici tarafında DOĞRULANAMIYORDU — tsc "bu alan gelmeyebilir" sanıyordu.
+export function stripVenueSensitive<T extends Record<string, any>>(
+  venue: T,
+): Omit<T, (typeof VENUE_SENSITIVE_FIELDS)[number]> {
   const v: any = { ...venue }
   for (const k of VENUE_SENSITIVE_FIELDS) delete v[k]
   return v
@@ -26,7 +32,10 @@ export const INSTRUCTOR_SENSITIVE_FIELDS = [
   'passwordHash', 'email', 'phone', 'userId', 'inviteStatus',
 ] as const
 
-export function stripInstructorSensitive<T extends Record<string, any>>(inst: T | null | undefined): Partial<T> | null {
+// Dönüş tipi `Omit` — gerekçe için bkz. stripVenueSensitive.
+export function stripInstructorSensitive<T extends Record<string, any>>(
+  inst: T | null | undefined,
+): Omit<T, (typeof INSTRUCTOR_SENSITIVE_FIELDS)[number]> | null {
   if (!inst) return null as any
   const i: any = { ...inst }
   for (const k of INSTRUCTOR_SENSITIVE_FIELDS) delete i[k]
