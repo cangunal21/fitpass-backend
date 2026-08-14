@@ -31,13 +31,28 @@
  * `const safe: any = ...` ile kuruyorsa tsc hiçbir şey göremez (any her şeye atanabilir).
  * O uçlar için `scripts/smoke.ts` içinde ÇALIŞMA ZAMANI uygunluk testi var — hangi uçların
  * derleyiciyle, hangilerinin testle korunduğu aşağıda her tipin başında yazılıdır.
+ *
+ * ── BU KATMANIN GÖREMEDİĞİ ŞEY (ölçüldü, varsayılmadı) ──────────────────────────────────────
+ * Sözleşme "alan VAR MI ve TİPİ doğru mu" der; "DEĞERİ doğru mu" DEMEZ. Somut örnek:
+ *
+ *   `getVenueById` içinde `classes[].instructor` yayılımla (`...c`) ham Prisma satırından
+ *   geliyor ve `stripInstructorSensitive` ile temizleniyor. O temizlik SİLİNSE bile alan
+ *   yerinde kalır ve tipe UYAR — çünkü ham satırda da `id` ve `fullName` vardır. Yani
+ *   hocanın passwordHash/e-posta/telefonu public'e sızar ve **tsc bunu göremez.**
+ *
+ *   Bu sınama yapıldı: temizlik kaldırıldı → tsc TEMİZ geçti, smoke KIRILDI
+ *   ("venue.classes[].instructor sızdırıyor"). Yani güvenlik özelliğini koruyan şey tip değil,
+ *   `scripts/smoke.ts` içindeki gizlilik testleridir. **O testleri silmeyin.**
+ *
+ * Kural: hassas alan temizliği = TEST işi. Alan adı/şekli sözleşmesi = TİP işi. İkisi
+ * birbirinin yerine geçmez.
  * ============================================================================================
  */
 
 // Bu satır dosyanın geri kalanının SHA-256 ön ekidir. Sözleşmeyi değiştirdiysen:
 //   1) diğer İKİ repodaki kopyayı da güncelle,  2) üç kopyada da damgayı yenile
 //   (`node scripts/tip-damgasi.cjs` doğrusunu yazar).
-export const TIP_SOZLESMESI_SURUMU = '5958a20683023'
+export const TIP_SOZLESMESI_SURUMU = '2112ddf925aca'
 
 // ── ORTAK ───────────────────────────────────────────────────────────────────────────────────
 
@@ -205,4 +220,177 @@ export interface FavoritesResponse {
    * düşer — web'de tam olarak bu oluyordu. Kendi profilinde bu alan hiç gelmez.
    */
   private?: boolean
+}
+
+// ── BEKLEME LİSTESİ ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Bir seans için kullanıcının bekleme listesi durumu. **Üretici derleyiciyle denetleniyor**
+ * (`waitlistController.getWaitlistStatus`).
+ */
+export interface WaitlistStatusResponse {
+  onWaitlist: boolean
+
+  /**
+   * Sıradaki GERÇEK yer (1 = en önde). Listede değilsen `null`.
+   *
+   * TUZAK: bir dönem burada TOPLAM sayı dönüyordu — 5 kişi varken 2. kişiye de "5" diyordu.
+   * Artık "kendinden önce katılanlar + 1". `totalWaiting` ile KARIŞTIRMA.
+   */
+  position: number | null
+
+  /** Listedeki toplam kişi sayısı — sıradaki yerin DEĞİL. */
+  totalWaiting: number
+}
+
+/** Bekleme listesine katılma/çıkma yanıtı. */
+export interface WaitlistActionResponse {
+  /**
+   * Sunucunun ürettiği bilgi metni. İSTEMCİ BUNU GÖSTERMEMELİ: sabit Türkçe, İngilizce
+   * arayüzde de Türkçe çıkar. İstemciler kendi i18n metinlerini kullanır; bu alan yalnız
+   * günlük/hata ayıklama içindir.
+   */
+  message?: string
+  /** Katılma yanıtında oluşan kayıt (201). */
+  entry?: unknown
+}
+
+// ── SALON ───────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Salonun public listede/kartlarda görünen hâli. **Üretici derleyiciyle denetleniyor**
+ * (`publicController.getVenues`).
+ *
+ * DİKKAT — bu yanıt Prisma satırının YAYILMIŞ hâlidir: `stripVenueSensitive` yalnız hassas
+ * kolonları siler, geri kalan HER kolon istemciye gider. Sözleşme "en az bu alanlar" der;
+ * yeni bir kolon eklendiğinde otomatik olarak public'e çıkar. **Hassas bir kolon eklerken
+ * `VENUE_SENSITIVE_FIELDS` listesine de eklemek ZORUNLUDUR** — 14 Ağustos'ta
+ * `passwordChangedAt` ve `ownerUserId` tam bu yüzden kimlik doğrulamasız uçtan sızıyordu.
+ */
+export interface VenueSummary {
+  id: number
+  name: string
+  address: string | null
+  /** Kapak görseli — onaylanmamışsa `null`. Onay bekleyen görseller ayrı alanda ve public'e ÇIKMAZ. */
+  coverImageUrl: string | null
+  /** "Mavi tik" — salonun DOĞRULANMIŞ olması. `isApproved` ile KARIŞTIRMA: bu uç zaten yalnız
+   *  onaylı salon döndürüyor, yani `isApproved` yanıtta HER ZAMAN true ve hiçbir salonu ayırt etmez. */
+  isVerified: boolean
+  /** 0–5. **0 "puan yok" demektir, "sıfır puan aldı" DEĞİL** — `totalReviews` ile birlikte oku. */
+  avgRating: number
+  totalReviews: number
+  neighborhoodId: number | null
+  cityId: number | null
+  /** ISO 8601. Venue'de `updatedAt` YOKTUR — site haritası bu yüzden `createdAt` kullanır. */
+  createdAt: string
+}
+
+export interface VenueListResponse extends Pagination {
+  venues: VenueSummary[]
+  hasMore: boolean
+  limit?: number
+}
+
+/** Salon detayındaki bir dersin YAKLAŞAN seansı (yalnız `status: 'open'` ve gelecekte olanlar). */
+export interface VenueClassSession {
+  /**
+   * SEANS id'si — ders id'si DEĞİL. Ders kartından rezervasyona giderken hedef BUDUR
+   * (`/ders/[id]` ve mobil `ClassDetail` seans id'siyle çalışır). Ders id'sine yönlendirmek
+   * "çalışıyor gibi" görünüp yanlış kaydı açar; web'de kart bir dönem HİÇ tıklanamıyordu.
+   */
+  id: number
+  /** ISO 8601, UTC. */
+  startsAt: string
+  /** ISO 8601, UTC. Geçmiş/yaklaşan ayrımı ve check-in penceresi BUNA bakmalı, `startsAt`'e değil. */
+  endsAt: string
+  /** KALAN yer — sunucuda hesaplanır. Gösterilecek sayı budur. */
+  spotsLeft: number
+  /** @deprecated `spotsLeft` kullan. Bkz. SessionSummary.availableSpots. */
+  availableSpots: number
+  /** Seansın TOPLAM kapasitesi — rezervasyonla AZALMAZ. */
+  capacity: number
+}
+
+/** Salon detayında listelenen bir ders (yalnız `isActive` olanlar). */
+export interface VenueClass {
+  /** DERS id'si — rezervasyon hedefi DEĞİL (bkz. VenueClassSession.id). */
+  id: number
+  title: string
+  titleEn: string | null
+  description: string | null
+  durationMinutes: number
+  basePrice: number
+
+  /** Spor dalı. Atanmamışsa `null` — istemci kategori adından renk/ikon türetmeye düşer. */
+  sportCategory: { name: string; colorHex: string | null; iconUrl: string | null } | null
+
+  /**
+   * Dersin hocası. Atanmamışsa `null`.
+   *
+   * PII TEMİZLENMİŞTİR: `stripInstructorSensitive` passwordHash/email/phone/userId/inviteStatus
+   * alanlarını siler. Bu uç KİMLİK DOĞRULAMASIZ — iç içe eğitmen objeleri bir dönem TAM SATIR
+   * taşıyordu ve hocanın e-postası/telefonu public'e sızıyordu.
+   */
+  instructor: { id: number; fullName: string } | null
+
+  /** Yaklaşan seanslar, en yakından uzağa. Boş olabilir: dersin açık seansı yoksa. */
+  sessions: VenueClassSession[]
+}
+
+/**
+ * Salon detay sayfasının gövdesi. **Üretici derleyiciyle denetleniyor**
+ * (`publicController.getVenueById`).
+ *
+ * Bu uç YALNIZ onaylı + aktif salon döndürür (donmuş/onaysız → 404). Yani `isApproved`
+ * yanıtta HER ZAMAN true'dur ve hiçbir salonu ayırt etmez — rozet için `isVerified` kullan.
+ */
+export interface VenueDetail extends VenueSummary {
+  description: string | null
+  /** Onaydan geçmiş galeri görselleri. Onay bekleyenler AYRI alanda ve public'e ÇIKMAZ. */
+  images: unknown
+  classes: VenueClass[]
+  instructors: unknown[]
+}
+
+export interface VenueDetailResponse {
+  venue: VenueDetail
+}
+
+// ── REZERVASYONLAR ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * Kullanıcının kendi rezervasyonu. **Üretici derleyiciyle denetleniyor**
+ * (`bookingController.getMyBookings`).
+ *
+ * NE GELMEZ: komisyon kırılımı ve salonun net hak edişi (`commissionAmount`, `venueCommission`,
+ * `userCommission`, `venuePayout`) BİLEREK ayıklanır — bunlar platformun iş modeli verisi,
+ * müşteriyi ilgilendirmez. Bir dönem tamamı yanıtta dönüyordu.
+ *
+ * SESSİZ KESME: bu liste `take: 200` ile sınırlı (tüm ömür-boyu geçmiş derin include'la tek
+ * yanıtta yüklenmesin diye). İstemci "tüm geçmiş" varsaymamalı.
+ */
+export interface BookingSummary {
+  id: number
+  status: string
+  bookingType: string
+  /** ISO 8601. Rezervasyonun OLUŞTURULMA anı — dersin tarihi DEĞİL. */
+  createdAt: string
+
+  /**
+   * Ders rezervasyonuysa dolu, drop-in ise `null`. **İkisinden BİRİ doludur** — istemci
+   * `session?.startsAt ?? dropInSlot?.startsAt` gibi yedekli okumalı. Web bir dönem yalnız
+   * `session` dalını çiziyordu ve drop-in kayıtları başlıksız/tarihsiz görünüyordu.
+   */
+  session: unknown | null
+  /** Drop-in rezervasyonuysa dolu, ders ise `null`. Bkz. `session`. */
+  dropInSlot: unknown | null
+
+  /** Salon yorumu (varsa). Geriye dönük uyum için tekil. */
+  review: unknown | null
+  /** Salon VEYA hoca puanı verilmiş mi. `review === null` iken bile true olabilir (yalnız hoca puanlanmışsa). */
+  reviewed: boolean
+}
+
+export interface MyBookingsResponse {
+  bookings: BookingSummary[]
 }

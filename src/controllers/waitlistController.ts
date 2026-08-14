@@ -5,9 +5,11 @@ import { sendPushNotification } from '../utils/push'
 import { trDate, trTime } from "../utils/trFormat"
 import { notifyFields, notifyPush } from '../utils/notifyText'
 import { Locale } from '../utils/locale'
+// API SÖZLEŞMESİ — üç repoda birebir aynı dosya (bkz. scripts/tip-damgasi.cjs).
+import type { WaitlistStatusResponse, WaitlistActionResponse, ApiError } from '../types/api'
 
 // Bekleme listesine katıl
-export const joinWaitlist = async (req: Request, res: Response) => {
+export const joinWaitlist = async (req: Request, res: Response<WaitlistActionResponse | ApiError>) => {
   try {
     const userId = (req as any).userId
     const sessionId = parseInt(req.params.sessionId as string)
@@ -47,13 +49,13 @@ export const joinWaitlist = async (req: Request, res: Response) => {
     const existing = await prisma.waitlist.findUnique({
       where: { userId_sessionId: { userId, sessionId } }
     })
-    if (existing) return res.status(400).json({ error: 'Zaten bekleme listesindesisiniz.' })
+    if (existing) return res.status(400).json({ error: 'Zaten bekleme listesindesiniz.' })
 
     const entry = await prisma.waitlist.create({
       data: { userId, sessionId }
     })
 
-    return res.status(201).json({ message: 'Bekleme listesine eklendiz!', entry })
+    return res.status(201).json({ message: 'Bekleme listesine eklendi.', entry })
   } catch (err: any) {
     if (err?.code === 'P2002') return res.status(400).json({ error: 'Zaten bekleme listesindesiniz.' })
     console.error(err)
@@ -62,7 +64,7 @@ export const joinWaitlist = async (req: Request, res: Response) => {
 }
 
 // Bekleme listesinden çık
-export const leaveWaitlist = async (req: Request, res: Response) => {
+export const leaveWaitlist = async (req: Request, res: Response<WaitlistActionResponse | ApiError>) => {
   try {
     const userId = (req as any).userId
     const sessionId = parseInt(req.params.sessionId as string)
@@ -76,7 +78,7 @@ export const leaveWaitlist = async (req: Request, res: Response) => {
 }
 
 // Seans için bekleme listesi durumu
-export const getWaitlistStatus = async (req: Request, res: Response) => {
+export const getWaitlistStatus = async (req: Request, res: Response<WaitlistStatusResponse | ApiError>) => {
   try {
     const userId = (req as any).userId
     const sessionId = parseInt(req.params.sessionId as string)

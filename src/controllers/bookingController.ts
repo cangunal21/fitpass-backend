@@ -10,6 +10,8 @@ import { stripVenueSensitive } from '../utils/sanitize'
 import { trDate, trTime } from "../utils/trFormat"
 import { notifyFields, notifyPush, notifyText } from '../utils/notifyText'
 import { Locale } from '../utils/locale'
+// API SÖZLEŞMESİ — üç repoda birebir aynı dosya (bkz. scripts/tip-damgasi.cjs).
+import type { MyBookingsResponse, ApiError } from '../types/api'
 
 class BookingError extends Error {
   status: number
@@ -336,7 +338,7 @@ export const createBooking = async (req: Request, res: Response) => {
 }
 
 // Kullanıcının rezervasyonlarını getir
-export const getMyBookings = async (req: Request, res: Response) => {
+export const getMyBookings = async (req: Request, res: Response<MyBookingsResponse | ApiError>) => {
   try {
     const userId = (req as any).userId
 
@@ -363,9 +365,13 @@ export const getMyBookings = async (req: Request, res: Response) => {
       // (commissionAmount, venueCommission, userCommission, venuePayout) müşteriye dönüyordu — bu
       // platformun iş modeli verisi, müşteriyi ilgilendirmez. checkInCode'u da ayıklıyoruz: müşteri
       // kendi kodunu görür ama yanıtın geri kalanı loglara/istemci state'ine gereksiz taşımasın.
-      const { commissionAmount, venueCommission, userCommission, venuePayout, ...bSafe } = b as any
+      // `as any` KALDIRILDI: yıkım (destructuring) gerçek tiple de çalışır ve `bSafe` doğru
+      // şekilde Omit<...> olur. `any` burada yalnızca sözleşmenin üretici tarafını körleştiriyordu.
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { commissionAmount, venueCommission, userCommission, venuePayout, ...bSafe } = b
       return {
       ...bSafe,
+      createdAt: b.createdAt.toISOString(),
       session: b.session ? {
         ...b.session,
         class: b.session.class ? {
@@ -380,8 +386,8 @@ export const getMyBookings = async (req: Request, res: Response) => {
         venue: b.dropInSlot.venue ? stripVenueSensitive(b.dropInSlot.venue) : null,
       } : null,
       // Geriye dönük uyum: eski istemci `review` (tekil, salon yorumu) bekliyor + yeni `reviewed` bayrağı
-      review: (b as any).reviews?.find((r: any) => r.targetType === 'venue') || null,
-      reviewed: ((b as any).reviews?.length || 0) > 0,
+      review: b.reviews.find((r) => r.targetType === 'venue') || null,
+      reviewed: b.reviews.length > 0,
       }
     })
 

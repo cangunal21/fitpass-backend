@@ -4209,14 +4209,28 @@ async function run() {
     const altBase = `http://localhost:${altPort}`
     const hGet = async () => { try { const r = await fetch(altBase + '/health'); return { s: r.status, j: await r.json().catch(() => null) } } catch { return { s: 0, j: null } } }
     try {
-      // 1) SAĞLIKLI olana kadar bekle (açılış işleri bitince)
+      // 1) SAĞLIKLI olana kadar bekle (açılış işleri bitince).
+      //
+      // BÜTÇE 90sn DEĞİL 180sn: bu adım tam bir ts-node sunucusunu SOĞUKTAN açıyor (derleme +
+      // Prisma bağlantısı + açılış işleri). Makine meşgulken (paralel tsc/jest/build) 90sn
+      // yetmiyordu ve test RASTGELE kırmızıya dönüyordu — 14 Ağustos'ta iki kez yaşandı ve
+      // her seferinde "gerçek kusur mu, kararsızlık mı?" diye zaman harcattı. Rastgele kırmızı
+      // veren bir kapı, kapı olmaktan çıkar: insanlar ona bakmayı bırakır.
+      //
+      // Sınırı gevşetmek doğrulamayı ZAYIFLATMIYOR: ölçtüğümüz şey "ne kadar hızlı açılıyor"
+      // değil, "sağlıklı sinyali veriyor ve SIGTERM'de temiz kapanıyor mu".
+      const HAZIR_BUTCESI_SN = 180
+      const baslangic = Date.now()
       let hazir = false
-      for (let i = 0; i < 90; i++) {
+      for (let i = 0; i < HAZIR_BUTCESI_SN; i++) {
         const h = await hGet()
         if (h.s === 200 && (h.j as any)?.ok === true) { hazir = true; break }
         await new Promise(r => setTimeout(r, 1000))
       }
-      if (!hazir) throw new Error('alt sunucu 90sn içinde sağlıklı olmadı')
+      if (!hazir) {
+        const gecen = Math.round((Date.now() - baslangic) / 1000)
+        throw new Error(`alt sunucu ${gecen}sn içinde sağlıklı olmadı (bütçe ${HAZIR_BUTCESI_SN}sn) — son /health yanıtı: ${JSON.stringify(await hGet())}`)
+      }
 
       // 2) SIGTERM → drenaj penceresinde /health 503 + shutting_down demeli.
       // Sinyal GRUBA değil, doğrudan sürece: artık sarmalayıcı yok, hedef zaten sunucunun kendisi.

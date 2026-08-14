@@ -11,7 +11,7 @@ import { trInstant, trAddDays } from '../utils/trFormat'
 import { getOccupancyMap, getOccupancy, spotsLeftOf } from '../utils/occupancy'
 // API SÖZLEŞMESİ — üç repoda birebir aynı dosya. Yanıt tipini imzaya yazmak, sunucunun
 // gerçekten o şekli döndürdüğünü tsc'ye DOĞRULATIR (alan silinir/tipi değişirse build kırılır).
-import type { SessionListResponse, SessionDetailResponse, ForYouResponse, ApiError } from '../types/api'
+import type { SessionListResponse, SessionDetailResponse, ForYouResponse, VenueListResponse, VenueDetailResponse, ApiError } from '../types/api'
 
 // GET /api/public/sessions
 export const getSessions = async (req: Request, res: Response<SessionListResponse | ApiError>) => {
@@ -328,7 +328,7 @@ export const getSessionById = async (req: Request, res: Response<SessionDetailRe
 }
 
 // GET /api/public/venues
-export const getVenues = async (req: Request, res: Response) => {
+export const getVenues = async (req: Request, res: Response<VenueListResponse | ApiError>) => {
   try {
     const venues = await prisma.venue.findMany({
       where: { isApproved: true, isActive: true },
@@ -344,7 +344,15 @@ export const getVenues = async (req: Request, res: Response) => {
     })
 
     const vHasMore = venues.length > 500
-    return res.json({ venues: venues.slice(0, 500).map(stripVenueSensitive), hasMore: vHasMore, limit: 500 })
+    // `createdAt` AÇIKÇA ISO dizgiye çevriliyor. Prisma satırında `Date` duruyor ve `res.json`
+    // onu zaten ISO'ya çevirirdi — ama o çevrim ÖRTÜKTÜ, yani sözleşme (src/types/api.ts)
+    // "string" derken üretici "Date" tutuyordu ve tsc ikisini bağdaştıramıyordu. Açık çevrim
+    // tel biçimini kodda görünür kılıyor; çıktı bit bit aynı, kazanç derleyici denetimi.
+    const safeVenues = venues.slice(0, 500).map((v) => {
+      const temiz = stripVenueSensitive(v)
+      return { ...temiz, createdAt: temiz.createdAt.toISOString() }
+    })
+    return res.json({ venues: safeVenues, hasMore: vHasMore, limit: 500 })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
@@ -352,7 +360,7 @@ export const getVenues = async (req: Request, res: Response) => {
 }
 
 // GET /api/public/venues/:id
-export const getVenueById = async (req: Request, res: Response) => {
+export const getVenueById = async (req: Request, res: Response<VenueDetailResponse | ApiError>) => {
   try {
     const id = parseInt(req.params.id as string)
     if (isNaN(id)) return res.status(404).json({ error: 'Salon bulunamadı.' })
@@ -388,26 +396,38 @@ export const getVenueById = async (req: Request, res: Response) => {
     // stripVenueSensitive YALNIZ üst-düzey venue kolonlarını siler; iç içe gelen eğitmen objeleri
     // (instructors[] ve classes[].instructor) tam satır taşır → passwordHash/email/phone SIZAR.
     // Her nested eğitmeni ayrıca temizle.
-    const safe: any = stripVenueSensitive(venue)
-    if (Array.isArray(safe.instructors)) safe.instructors = safe.instructors.map(stripInstructorSensitive)
+    // ARTIK `any` YOK. Eskiden `const safe: any = ...` idi ve bu, API sözleşmesinin üretici
+    // tarafını KÖR ediyordu: `any` her şeye atanabildiği için tsc bu yanıtın şeklini hiç
+    // denetleyemiyordu. `Array.isArray` korumaları da o körlüğün ürünüydü — Prisma `include`
+    // ettiği ilişkileri her zaman dizi olarak döndürür, tipler bunu zaten garanti ediyor.
+    const temiz = stripVenueSensitive(venue)
 
-    // Seanslar bu uçta HAM dönüyor; kalan yeri burada da sunucu hesaplamalı
+    // Seanslar bu uçta HAM geliyor; kalan yeri burada da sunucu hesaplamalı
     // (istemci capacity'yi kalan yer sanmasın).
-    const vOcc = await getOccupancyMap(
-      (venue.classes || []).flatMap((c: any) => (c.sessions || []).map((s: any) => s.id))
-    )
-    if (Array.isArray(safe.classes)) {
-      safe.classes = safe.classes.map((c: any) => {
-        const withInstructor = c && c.instructor ? { ...c, instructor: stripInstructorSensitive(c.instructor) } : c
-        if (!withInstructor || !Array.isArray(withInstructor.sessions)) return withInstructor
-        return {
-          ...withInstructor,
-          sessions: withInstructor.sessions.map((s: any) => {
-            const left = spotsLeftOf(s.capacity, vOcc.get(s.id) || 0)
-            return { ...s, spotsLeft: left, availableSpots: left } // availableSpots DEPRECATED
-          }),
-        }
-      })
+    const vOcc = await getOccupancyMap(venue.classes.flatMap((c) => c.sessions.map((s) => s.id)))
+
+    // Tarihler AÇIKÇA ISO dizgiye çevriliyor: `res.json` bunu zaten yapardı ama örtük olarak,
+    // ve o zaman sözleşme "string" derken üretici "Date" tutuyordu (bkz. getVenues).
+    const safe = {
+      ...temiz,
+      createdAt: temiz.createdAt.toISOString(),
+      // stripVenueSensitive YALNIZ üst-düzey venue kolonlarını siler; iç içe eğitmen objeleri
+      // TAM SATIR taşır → passwordHash/email/phone SIZAR. Her nested eğitmen ayrıca temizlenir.
+      instructors: temiz.instructors.map(stripInstructorSensitive),
+      classes: temiz.classes.map((c) => ({
+        ...c,
+        instructor: stripInstructorSensitive(c.instructor),
+        sessions: c.sessions.map((s) => {
+          const left = spotsLeftOf(s.capacity, vOcc.get(s.id) || 0)
+          return {
+            ...s,
+            startsAt: s.startsAt.toISOString(),
+            endsAt: s.endsAt.toISOString(),
+            spotsLeft: left,
+            availableSpots: left, // DEPRECATED — bkz. sözleşme
+          }
+        }),
+      })),
     }
     return res.json({ venue: safe })
   } catch (err) {
