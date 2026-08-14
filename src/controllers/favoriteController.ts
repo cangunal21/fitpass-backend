@@ -1,5 +1,7 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
+// API SÖZLEŞMESİ — üç repoda birebir aynı dosya (bkz. scripts/tip-damgasi.cjs).
+import type { FavoritesResponse, ApiError } from '../types/api'
 
 export const addFavorite = async (req: Request, res: Response) => {
   try {
@@ -51,7 +53,7 @@ export const getFavoriteStatus = async (req: Request, res: Response) => {
   }
 }
 
-export const getMyFavorites = async (req: Request, res: Response) => {
+export const getMyFavorites = async (req: Request, res: Response<FavoritesResponse | ApiError>) => {
   try {
     const userId = (req as any).userId
 
@@ -81,7 +83,7 @@ export const getMyFavorites = async (req: Request, res: Response) => {
   }
 }
 
-export const getUserFavorites = async (req: Request, res: Response) => {
+export const getUserFavorites = async (req: Request, res: Response<FavoritesResponse | ApiError>) => {
   try {
     const username = String(req.params.username)
 

@@ -554,6 +554,46 @@ async function run() {
     await prisma.user.delete({ where: { id: tu!.id } }).catch(() => {})
   })
 
+  // Yıldız dağılımı GERÇEK mi — web'de sabit kodluydu (%75/%18/%5) ve avgRating ne olursa olsun
+  // aynı çubuklar çiziliyordu. Puanı düşük salon bile "yorumların %75'i 5 yıldız" gösteriyordu;
+  // kullanıcı rezervasyon kararını buna bakarak verdiği için bu YANILTICI VERİYDİ.
+  await check('Puan: yıldız dağılımı GERÇEK sayılardan gelir (sabit oran değil)', async () => {
+    const Z = 990031, uniq = Date.now() + 31
+    await testPrisma.user.upsert({ where: { id: Z }, update: {}, create: { id: Z, username: `dag_${Z}`, email: `dag_${Z}@x.com`, passwordHash: 'x', fullName: 'Dagilim User' } })
+    // Bu salonun ÖNCEDEN yorumu olabilir; testin doğruluğu için başlangıç dağılımını ölç ve
+    // FARKI kontrol et (mutlak sayı değil). Aksi halde test sıraya bağımlı olur.
+    const onceki = (await expectOk(`/api/reviews/venue/${V}`)).json?.ratingBreakdown
+    if (!onceki) throw new Error('ratingBreakdown yanıtta HİÇ yok')
+
+    // 2 adet 1 yıldız + 1 adet 5 yıldız ekle → sabit oranla ASLA uyuşmayacak bir dağılım
+    const eklenen: number[] = []
+    const bkler: number[] = []
+    for (const [i, puan] of [1, 1, 5].entries()) {
+      const bk = await prisma.booking.create({ data: { userId: Z, sessionId: S, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `DAG-${uniq}-${i}` } })
+      const rv = await prisma.review.create({ data: { bookingId: bk.id, reviewerUserId: Z, targetType: 'venue', venueId: V, rating: puan, comment: `d${i}` } })
+      eklenen.push(rv.id); bkler.push(bk.id)
+    }
+    try {
+      const sonra = (await expectOk(`/api/reviews/venue/${V}`)).json?.ratingBreakdown
+      if (!sonra) throw new Error('ratingBreakdown ikinci çağrıda yok')
+      // Beş anahtarın HEPSİ gelmeli (yorum almamış yıldız 0 ile) — istemci eksik anahtar aramasın
+      for (const k of ['1', '2', '3', '4', '5']) {
+        if (typeof sonra[k] !== 'number') throw new Error(`ratingBreakdown['${k}'] sayı değil: ${sonra[k]}`)
+      }
+      if (sonra['1'] - (onceki['1'] || 0) !== 2) throw new Error(`1 yıldız farkı 2 olmalı, ${sonra['1'] - (onceki['1'] || 0)} geldi`)
+      if (sonra['5'] - (onceki['5'] || 0) !== 1) throw new Error(`5 yıldız farkı 1 olmalı, ${sonra['5'] - (onceki['5'] || 0)} geldi`)
+      if (sonra['3'] - (onceki['3'] || 0) !== 0) throw new Error('3 yıldıza dokunulmamalıydı')
+      // Toplam, aggregate'ten gelen totalReviews ile TUTMALI (iki ayrı sorgu, aynı gerçek)
+      const yanit = (await expectOk(`/api/reviews/venue/${V}`)).json
+      const dagilimToplam = ['1', '2', '3', '4', '5'].reduce((a, k) => a + (yanit.ratingBreakdown[k] || 0), 0)
+      if (dagilimToplam !== yanit.totalReviews) throw new Error(`dağılım toplamı ${dagilimToplam} != totalReviews ${yanit.totalReviews}`)
+    } finally {
+      await prisma.review.deleteMany({ where: { id: { in: eklenen } } }).catch(() => {})
+      await prisma.booking.deleteMany({ where: { id: { in: bkler } } }).catch(() => {})
+      await prisma.user.deleteMany({ where: { id: Z } }).catch(() => {})
+    }
+  })
+
   // Anonim yorum GERÇEKTEN anonim mi — reviewer objesi VE scalar reviewerUserId gizlenmeli
   await check('Gizlilik: anonim yorumda reviewer + reviewerUserId sızmıyor', async () => {
     const Y = 990022, uniq = Date.now() + 9
@@ -754,7 +794,11 @@ async function run() {
   // ---- KRİTİK gizlilik: public venue uçları IBAN/TCKN/KYC finansal veriyi SIZDIRMAZ ----
   await check('Gizlilik: public venue uçları IBAN/TCKN/KYC sızdırmaz', async () => {
     await prisma.venue.update({ where: { id: V }, data: { iban: 'TR000000000000000000000000', identityNumber: '11111111111', taxNumber: '1234567890', payoutGsm: '5551112233', contactName: 'Ad', contactSurname: 'Soyad', legalCompanyTitle: 'X AŞ', iyzicoSubMerchantKey: 'sk-test', subMerchantStatus: 'approved', kycDocs: { kimlik: 'url' } } })
-    const leakKeys = ['iban', 'identityNumber', 'taxNumber', 'payoutGsm', 'contactName', 'contactSurname', 'legalCompanyTitle', 'iyzicoSubMerchantKey', 'subMerchantStatus', 'kycDocs']
+    // `passwordChangedAt` + `ownerUserId`: 14 Ağu 2026'da ÜRETİMDE ölçüldü, kimlik doğrulamasız
+    // /api/public/venues yanıtında DÖNÜYORLARDI. İlki parolanın son değişim anını (hesap
+    // canlılığı) verir, ikincisi salonu özel bir kullanıcı hesabına bağlayıp sahibinin
+    // kimliğini çözmeye yarar. Hiçbir istemci okumuyordu.
+    const leakKeys = ['iban', 'identityNumber', 'taxNumber', 'payoutGsm', 'contactName', 'contactSurname', 'legalCompanyTitle', 'iyzicoSubMerchantKey', 'subMerchantStatus', 'kycDocs', 'passwordChangedAt', 'ownerUserId']
     const det = await expectOk(`/api/public/venues/${V}`)
     const vd = det.json?.venue || {}
     for (const k of leakKeys) if (k in vd) throw new Error(`venue DETAY '${k}' sızdırıyor (KVKK/finansal veri!)`)

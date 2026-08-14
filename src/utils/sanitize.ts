@@ -10,6 +10,13 @@ export const VENUE_SENSITIVE_FIELDS = [
   'subMerchantType', 'legalCompanyTitle', 'contactName', 'contactSurname', 'payoutGsm',
   'ibanMatchConsent', 'subMerchantStatus', 'subMerchantSubmittedAt', 'subMerchantApprovedAt',
   'subMerchantRejection', 'kycDocs',
+  // 14 Ağu 2026 — KİMLİK DOĞRULAMASIZ public uçlardan dönüyorlardı (üretimde ölçüldü):
+  //   · `passwordChangedAt` — parolanın en son ne zaman değiştiğini söyler. Saldırgana hesabın
+  //     canlılığını ve son müdahale anını verir; public bir katalogda hiçbir işi yok.
+  //   · `ownerUserId` — salonu ÖZEL bir kullanıcı hesabına bağlar. Public salon listesiyle
+  //     public kullanıcı profillerini eşleştirip salon sahibinin kimliğini çözmeye yarar.
+  // İkisi de hiçbir istemci tarafından okunmuyordu; kaldırılmaları hiçbir şeyi bozmaz.
+  'passwordChangedAt', 'ownerUserId',
 ] as const
 
 // DÖNÜŞ TİPİ `Omit`, `Partial` DEĞİL: fonksiyon yalnızca listedeki kolonları siler, geri

@@ -2,6 +2,8 @@ import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 import { clampStr, parseIntSafe } from '../utils/validate'
 import { sanitizeReview, hidePrivateReply } from '../utils/reviews'
+// API SÖZLEŞMESİ — üç repoda birebir aynı dosya (bkz. scripts/tip-damgasi.cjs).
+import type { VenueReviewsResponse, ApiError } from '../types/api'
 
 // Yorum/puan ekle (auth required)
 // YENİ MODEL: Bir katılımdan İKİ satır — salon (targetType='venue') + hoca (targetType='instructor').
@@ -239,7 +241,7 @@ export const deleteReviewReply = async (req: Request, res: Response) => {
 }
 
 // Salon yorumlarını getir (public, optionalAuth: private yanıtı sahibine gösterebilmek için)
-export const getVenueReviews = async (req: Request, res: Response) => {
+export const getVenueReviews = async (req: Request, res: Response<VenueReviewsResponse | ApiError>) => {
   try {
     const venueId = parseInt(req.params.venueId as string)
     const viewerId = (req as any).userId as number | undefined
@@ -259,7 +261,7 @@ export const getVenueReviews = async (req: Request, res: Response) => {
     const where = { venueId, targetType: 'venue' as const }
     // Ortalama/toplam TÜM yorumlardan (aggregate) hesaplanır — liste `take:50` ile sınırlı olduğundan
     // avg'i o dilimden hesaplarsak saklı venue.avgRating ile SAPARDI (ör. 80 yorumda 50'nin ortalaması).
-    const [reviews, stats] = await Promise.all([
+    const [reviews, stats, dagilim] = await Promise.all([
       prisma.review.findMany({
         where,
         include: { reviewer: { select: { fullName: true, username: true, avatarUrl: true } } },
@@ -267,11 +269,24 @@ export const getVenueReviews = async (req: Request, res: Response) => {
         take: 50,
       }),
       prisma.review.aggregate({ where, _avg: { rating: true }, _count: true }),
+      // YILDIZ DAĞILIMI SUNUCUDA: web'de bu dağılım SABİT KODLUYDU (5 yıldız %75, 4 yıldız %18,
+      // gerisi %5) ve avgRating ne olursa olsun aynı çubuklar çiziliyordu — yani kullanıcıya
+      // UYDURMA veri gösteriliyordu, üstelik rezervasyon kararını etkileyen bir yerde.
+      // İstemcide `reviews` dizisinden hesaplamak da YANLIŞ olurdu: o liste `take: 50` ile
+      // sınırlı, 80 yorumlu salonda dağılım sapardı (avgRating'in aggregate'ten gelme sebebiyle aynı).
+      prisma.review.groupBy({ by: ['rating'], where, _count: { rating: true } }),
     ])
 
     const safeReviews = reviews.map(r => hidePrivateReply(r, sanitizeReview(r), viewerId))
     const avgRating = stats._avg.rating ? Math.round(stats._avg.rating * 10) / 10 : 0
-    return res.json({ reviews: safeReviews, avgRating, totalReviews: stats._count })
+    // Her yıldız için sayı — hiç yorum almamış yıldız da 0 ile GELİR (istemci eksik anahtar
+    // aramasın, çubuğu doğrudan çizebilsin).
+    const ratingBreakdown: Record<'1' | '2' | '3' | '4' | '5', number> = { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0 }
+    for (const g of dagilim) {
+      const yildiz = String(Math.round(g.rating)) as '1' | '2' | '3' | '4' | '5'
+      if (yildiz in ratingBreakdown) ratingBreakdown[yildiz] += g._count.rating
+    }
+    return res.json({ reviews: safeReviews, avgRating, totalReviews: stats._count, ratingBreakdown })
   } catch (err) {
     console.error(err)
     return res.status(500).json({ error: 'Sunucu hatası.' })

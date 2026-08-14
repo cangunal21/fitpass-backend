@@ -37,7 +37,7 @@
 // Bu satır dosyanın geri kalanının SHA-256 ön ekidir. Sözleşmeyi değiştirdiysen:
 //   1) diğer İKİ repodaki kopyayı da güncelle,  2) üç kopyada da damgayı yenile
 //   (`node scripts/tip-damgasi.cjs` doğrusunu yazar).
-export const TIP_SOZLESMESI_SURUMU = '0f830c51b03fc'
+export const TIP_SOZLESMESI_SURUMU = '5958a20683023'
 
 // ── ORTAK ───────────────────────────────────────────────────────────────────────────────────
 
@@ -157,4 +157,52 @@ export interface SessionDetailResponse {
 /** `/api/public/for-you` — kişiselleştirilmiş seanslar; sayfalama YOK, sabit üst sınır. */
 export interface ForYouResponse {
   sessions: SessionSummary[]
+}
+
+// ── YORUM / PUAN ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Salon yorumları + puan özeti. **Üretici derleyiciyle denetleniyor**
+ * (`reviewController.getVenueReviews`).
+ *
+ * `avgRating` ve `totalReviews` TÜM yorumlardan (aggregate) hesaplanır; `reviews` listesi ise
+ * `take: 50` ile SINIRLIDIR. Bu yüzden istemci özetini listeden hesaplamamalı — 80 yorumlu
+ * salonda sapardı.
+ */
+export interface VenueReviewsResponse {
+  reviews: unknown[]
+  /** 0–5, tek ondalık. Hiç yorum yoksa 0. */
+  avgRating: number
+  totalReviews: number
+
+  /**
+   * Yıldız dağılımı — her yıldız için yorum SAYISI (yüzde değil). Yorum almamış yıldız da
+   * 0 ile gelir, istemci eksik anahtar aramasın.
+   *
+   * NEDEN SUNUCUDAN: web'de bu dağılım SABİT KODLUYDU (5★ %75, 4★ %18, gerisi %5) ve
+   * `avgRating` ne olursa olsun aynı çubuklar çiziliyordu — puanı 2.1 olan salon bile
+   * "yorumların %75'i 5 yıldız" gösteriyordu. Kullanıcı rezervasyon kararını buna bakarak
+   * verdiği için bu yalnız bir kusur değil, YANILTICI VERİYDİ.
+   */
+  ratingBreakdown: Record<'1' | '2' | '3' | '4' | '5', number>
+}
+
+// ── FAVORİLER ───────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Favori salon listesi. **Üretici derleyiciyle denetleniyor**
+ * (`favoriteController.getMyFavorites` / `getUserFavorites`).
+ *
+ * Yanıt DÜZ salon nesnesi taşır — `{ venue: {...} }` sarmalayıcısı YOKTUR. (Bir dönem sarmalıydı,
+ * bir istemci düzünü bekliyordu; smoke bu davranışı ayrıca kilitliyor.)
+ */
+export interface FavoritesResponse {
+  favorites: unknown[]
+
+  /**
+   * BAŞKASININ profiline bakılırken, o kullanıcı profilini/aktivitesini gizlemişse `true` gelir
+   * ve `favorites` BOŞ döner. İstemci bunu okumazsa "gizli" ile "favorisi yok" aynı ekrana
+   * düşer — web'de tam olarak bu oluyordu. Kendi profilinde bu alan hiç gelmez.
+   */
+  private?: boolean
 }
