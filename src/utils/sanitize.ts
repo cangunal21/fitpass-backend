@@ -37,6 +37,14 @@ export function stripVenueSensitive<T extends Record<string, any>>(
 // yalnız public/çapraz-realm gösterim içindir.
 export const INSTRUCTOR_SENSITIVE_FIELDS = [
   'passwordHash', 'email', 'phone', 'userId', 'inviteStatus',
+  // 15 Ağu 2026 — KARDEŞ YOL ATLANMIŞTI. Bir gün önce `passwordChangedAt` VENUE listesine
+  // eklendi ama Instructor'da da aynı kolon var ve public salon detayında iç içe eğitmen
+  // nesnelerinde SIZMAYA DEVAM ETTİ (üretimde ölçüldü). Parolanın son değişim anı, hesabın
+  // canlılığını ve son müdahale anını saldırgana verir; public bir katalogda hiçbir işi yok.
+  //
+  // DERS: hassas bir kolonu bir modelden temizlerken KARDEŞ MODELLERDE de aynı kolon var mı
+  // diye sor. Venue/Instructor ikisi de parola taşıyan, panel girişi olan varlıklar.
+  'passwordChangedAt',
 ] as const
 
 // Dönüş tipi `Omit` — gerekçe için bkz. stripVenueSensitive.

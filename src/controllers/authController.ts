@@ -95,7 +95,21 @@ export const register = async (req: Request, res: Response) => {
     // (middlewares/requireVerified.ts). Böylece başkasının e-postasıyla kayıt olan biri
     // o hesapla hiçbir şey yapamaz.
     const kod = await dogrulamaKoduUret(user.id)
-    sendEmailVerificationEmail(user.email, user.fullName, kod, localeFromReq(req)).catch(err => console.error('Verify mail gönderilemedi:', err))
+    // SONUÇ BEKLENİYOR — ateşle-unut DEĞİL.
+    //
+    // Eskiden bu çağrı beklenmiyor, `emailVerificationSent: true` SABİT dönüyordu. Resend
+    // düşerse (kota, domain doğrulaması, 5xx) ya da RESEND_API_KEY hiç yoksa gönderici
+    // sessizce dönüyordu: kullanıcı "kod gönderdik" ekranını görüyor, kod hiç gelmiyor,
+    // "tekrar gönder" aynı sessiz yolu izliyordu. E-posta doğrulaması rezervasyonun ÖN KOŞULU
+    // olduğu için tüm dönüşüm hunisi sessizce duruyordu.
+    //
+    // Gönderim ~8sn timeout'lu (utils/email.ts) — kaydı süresiz bekletmez. Başarısızsa
+    // kullanıcıya DÜRÜST bir bayrak dönüyoruz; istemci "kod gönderilemedi, tekrar dene"
+    // gösterebiliyor. Hesap yine oluşturuldu, kod yine üretildi: kullanıcı "tekrar gönder"
+    // ile devam edebilir.
+    const postaSonucu = await sendEmailVerificationEmail(user.email, user.fullName, kod, localeFromReq(req))
+      .catch((err) => { console.error('Verify mail gönderilemedi:', err); return { error: { message: String(err?.message || err) } } })
+    const postaGitti = !(postaSonucu as any)?.error
 
     // Referral kodu varsa uygula
     if (referralCode) {
@@ -104,11 +118,15 @@ export const register = async (req: Request, res: Response) => {
 
     const refreshToken = await issueRefreshToken(user.id)
     return res.status(201).json({
-      message: `Kayıt alındı! E-posta adresine 6 haneli doğrulama kodu gönderdik (${KOD_OMRU_DK} dakika geçerli).`,
+      message: postaGitti
+        ? `Kayıt alındı! E-posta adresine 6 haneli doğrulama kodu gönderdik (${KOD_OMRU_DK} dakika geçerli).`
+        : 'Kayıt alındı ancak doğrulama e-postası gönderilemedi. Lütfen kod ekranından "tekrar gönder" deneyin.',
       token,
       refreshToken,
       user,
-      emailVerificationSent: true,
+      // ARTIK SABİT DEĞİL: gönderim gerçekten başarılı olduysa true. İstemci false görürse
+      // kullanıcıya "gelmedi mi? tekrar gönder" yolunu öne çıkarabilir.
+      emailVerificationSent: postaGitti,
       // İstemci bu bayrağa bakıp kod ekranını açar. Kod girilmeden yazma uçları 403 döner.
       requiresEmailVerification: true,
     })

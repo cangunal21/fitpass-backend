@@ -34,6 +34,7 @@ import favoriteRoutes from './routes/favorites'
 import referralRoutes from './routes/referral'
 import { chat, getChatHistory } from './controllers/chatController'
 import { authMiddleware, optionalAuthMiddleware } from './middlewares/auth'
+import { epostaSagligi } from './utils/email'
 
 // GÜVENLİK: kritik secret'lar YOKSA sunucuyu HİÇ BAŞLATMA — ortamdan BAĞIMSIZ.
 // Eski hali `NODE_ENV === 'production'` tam eşitliğine bağlıydı: NODE_ENV set edilmemişse (ki
@@ -278,9 +279,15 @@ app.get('/health/ready', async (req, res) => {
     // saatler kaybettirdi; artık dışarıdan tek istekle doğrulanabiliyor.
     const yuklemeHazir = /^cloudinary:\/\/[^:@/<>\s]+:[^@/<>\s]+@[^/<>\s]+$/.test((process.env.CLOUDINARY_URL || '').trim())
       || !!(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET)
+    // E-POSTA SAĞLIĞI: Resend bozulursa (kota, domain doğrulaması, 5xx) kayıt hunisi SESSİZCE
+    // ölür — kullanıcı doğrulama kodunu hiç almaz. Hatalar loglanıyordu ama log okuyan yok;
+    // burada tek istekle görünür. Ayrıntı DEĞİL, durum: 'ok' | 'bozuk' | 'kullanilmadi'.
+    const eposta = epostaSagligi()
     res.json({
       ok: true,
       uploads: yuklemeHazir ? 'ok' : 'yapilandirilmamis',
+      email: eposta.durum,
+      ...(eposta.durum === 'bozuk' ? { emailBasarisiz: eposta.basarisiz, emailGonderilen: eposta.gonderilen } : {}),
       ...(indexHatalari.length ? { indexUyarisi: indexHatalari } : {}),
     })
   } catch {

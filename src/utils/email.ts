@@ -26,17 +26,55 @@ const resend = {
         ])
       } catch (e: any) {
         console.error('[email FAIL]', opts.subject, '→', e?.message || e)
+        epostaHatasiKaydet(String(e?.message || e))
         return { data: null, error: { message: String(e?.message || e) } }
       } finally {
         clearTimeout(timer)
       }
       if (res?.error) {
         console.error('[email FAIL]', opts.subject, '→', res.error?.name || res.error?.message || res.error)
+        epostaHatasiKaydet(String(res.error?.name || res.error?.message || res.error))
         return res
       }
+      epostaSayaci.gonderilen++
       return res
     }
   }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// E-POSTA SAĞLIK SAYACI
+//
+// Hatalar zaten `[email FAIL]` ile loglanıyordu — ama LOG OKUYAN KİMSE YOK. Resend bozulursa
+// (kota, domain doğrulaması düşmesi, 5xx) kayıt hunisi SESSİZCE ölür: kullanıcı doğrulama kodunu
+// hiç almaz, kimse fark etmez. Bu sayaç durumu `/health/ready` üzerinden GÖRÜNÜR kılıyor —
+// aynı uçta `uploads` için yapıldığı gibi.
+//
+// Bellekte tutulur: süreç yeniden başlayınca sıfırlanır. Amaç tarihsel istatistik değil,
+// "ŞU AN bozuk mu?" sorusuna cevap.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+const epostaSayaci = { gonderilen: 0, basarisiz: 0, sonHata: '' as string, sonHataAni: 0 }
+
+export function epostaSagligi(): { durum: 'ok' | 'bozuk' | 'kullanilmadi'; gonderilen: number; basarisiz: number; sonHata?: string } {
+  const toplam = epostaSayaci.gonderilen + epostaSayaci.basarisiz
+  if (toplam === 0) return { durum: 'kullanilmadi', gonderilen: 0, basarisiz: 0 }
+  // "Bozuk" ölçütü: son 15 dakikada hata VAR ve hata oranı %50'yi aşıyor. Tek tük hata
+  // (geçersiz alıcı adresi) sistemi bozuk göstermemeli; sistemik çöküş göstermeli.
+  const sonHataYakin = epostaSayaci.sonHataAni > 0 && Date.now() - epostaSayaci.sonHataAni < 15 * 60_000
+  const oran = epostaSayaci.basarisiz / toplam
+  return {
+    durum: sonHataYakin && oran > 0.5 ? 'bozuk' : 'ok',
+    gonderilen: epostaSayaci.gonderilen,
+    basarisiz: epostaSayaci.basarisiz,
+    ...(epostaSayaci.sonHata ? { sonHata: epostaSayaci.sonHata } : {}),
+  }
+}
+
+function epostaHatasiKaydet(mesaj: string) {
+  epostaSayaci.basarisiz++
+  epostaSayaci.sonHata = mesaj.slice(0, 200)
+  epostaSayaci.sonHataAni = Date.now()
 }
 
 const FROM_EMAIL = 'Şipşakspor <noreply@sipsakspor.com>'

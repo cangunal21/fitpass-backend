@@ -21,6 +21,30 @@ const money = (x: number) => Math.round(x * 100) / 100 // bookingController ile 
 // puanları iade eder, FK'lı alt kayıtları temizler (Payment/Review/Commission/ActivityLog),
 // rezervasyonları siler. Etkilenen kullanıcıları (bildirim için) döndürür.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+/**
+ * GEÇMİŞ + KATILIMLI SEANS SİLİNEMEZ.
+ *
+ * `purgeBookingsForSessions` check-in yapılmış rezervasyonların puanını GERİ ALIR — bu, HENÜZ
+ * OLMAMIŞ bir seans iptal edilirken doğrudur (ders yapılmadı, puan hak edilmedi). Ama seans
+ * ZATEN YAPILDIYSA ve kullanıcı check-in yaptıysa, o puanı hak etmiştir: salon takvimini
+ * toparlamak için eski bir seansı silince kullanıcının puanı, serisi (streak) ve istatistikleri
+ * sessizce geri alınıyordu. Kullanıcı hiçbir şey yapmadı, cezayı o çekiyordu.
+ *
+ * Kural: seans BAŞLAMIŞSA ve en az bir check-in varsa silme reddedilir. Gelecekteki seans
+ * serbestçe iptal edilebilir; geçmiş katılım TARİHTİR, salonun silme yetkisinde değildir.
+ */
+async function gecmisKatilimVarMi(sessionIds: number[]): Promise<boolean> {
+  if (!sessionIds.length) return false
+  const n = await prisma.booking.count({
+    where: {
+      sessionId: { in: sessionIds },
+      checkedIn: true,
+      session: { startsAt: { lte: new Date() } },
+    },
+  })
+  return n > 0
+}
+
 async function purgeBookingsForSessions(tx: any, sessionIds: number[]) {
   // Bekleme listesi kayıtları seansa GERÇEK FK ile bağlı → seans silinmeden önce temizlenmeli
   // (rezervasyon olmasa bile bekleme listesi olabilir; erken return'dan ÖNCE silinir)
@@ -786,6 +810,13 @@ export const deleteClass = async (req: Request, res: Response) => {
     if (!cls || cls.venueId !== venueId) return res.status(403).json({ error: 'Yetki yok.' })
     const sessions = await prisma.class_Session.findMany({ where: { classId }, select: { id: true } })
     const sessIds = sessions.map(s => s.id)
+    // Aynı kapı ders silmede de geçerli: ders silinince TÜM seansları da silinir, yani
+    // geçmiş katılımlar da yok olurdu (bkz. gecmisKatilimVarMi).
+    if (await gecmisKatilimVarMi(sessIds)) {
+      return res.status(400).json({
+        error: 'Bu dersin yapılmış ve katılım kaydı olan seansları var; silinemez. Dersi pasife alarak yeni rezervasyonu durdurabilirsiniz.',
+      })
+    }
     const affected = await prisma.$transaction(async (tx) => {
       // KİLİT SIRASI: Venue → User → Booking. recomputeVenueRating Venue'yu EN SONDA kilitliyordu,
       // createReview ise ÖNCE Venue'yu kilitleyip sonra Booking'e FK'li Review yazıyor → ters sıra,
@@ -816,6 +847,11 @@ export const deleteSession = async (req: Request, res: Response) => {
     const sessionId = parseInt(req.params.sessionId as string)
     const session = await prisma.class_Session.findUnique({ where: { id: sessionId }, include: { class: true } })
     if (!session || session.class.venueId !== venueId) return res.status(403).json({ error: 'Yetki yok.' })
+    if (await gecmisKatilimVarMi([sessionId])) {
+      return res.status(400).json({
+        error: 'Bu seans yapıldı ve katılım kaydı var; silinemez. Geçmiş katılım, kullanıcıların puan ve istatistiklerinin dayanağıdır.',
+      })
+    }
     const affected = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT id FROM "Venue" WHERE id = ${session.class.venueId} FOR UPDATE` // sıra: Venue → User → Booking (deleteClass ile aynı)
       const a = await purgeBookingsForSessions(tx, [sessionId])

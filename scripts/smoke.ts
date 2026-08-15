@@ -73,11 +73,35 @@ const V = 990001, C = 990001, S = 990001, U = 990001
 let token = ''
 
 let pass = 0, fail = 0
+/**
+ * ATLANAN kontroller — "geçti" DEĞİL.
+ *
+ * Kardeş repo (fitpass-web / fitpass-mobile) kontrolleri, o repolar diskte yoksa sessizce
+ * atlanıyordu ve test yine de ✅ sayılıyordu. CI'da YALNIZ backend checkout ediliyor, yani
+ * bu kontroller CI'da HİÇ KOŞMUYOR ama kapı yeşil görünüyordu. Yeşil görünüp hiç koşmayan bir
+ * kapı, olmayan kapıdan daha kötüdür: ona güvenilir.
+ *
+ * Artık ayrı sayılıyor ve özet satırında görünüyor.
+ */
+let skip = 0
+/** Kısmen koşan kontroller: bir bölümü (genelde kardeş repo dosyaları) okunamadığı için atlandı. */
+const kismiAtlananlar: string[] = []
 const lines: string[] = []
 
 async function check(name: string, fn: () => Promise<void>) {
   try { await fn(); pass++; lines.push(`  ✅ ${name}`) }
-  catch (e: any) { fail++; lines.push(`  ❌ ${name} — ${e.message}`) }
+  catch (e: any) {
+    // `atla()` özel bir işaret fırlatır: bu bir BAŞARISIZLIK değil, KOŞMAMA durumudur.
+    if (e?.__atlandi) { skip++; lines.push(`  ⏭️  ${name} — ATLANDI: ${e.message}`); return }
+    fail++; lines.push(`  ❌ ${name} — ${e.message}`)
+  }
+}
+
+/** Kontrolü ATLANDI olarak işaretle (başarısız DEĞİL, ama geçti de DEĞİL). */
+function atla(sebep: string): never {
+  const e: any = new Error(sebep)
+  e.__atlandi = true
+  throw e
 }
 
 async function http(path: string, opts: { token?: string; method?: string; body?: any; admin?: boolean } = {}) {
@@ -828,7 +852,10 @@ async function run() {
     await testPrisma.user.upsert({ where: { id: GU }, update: { activityPrivacy: 'public', banned: false }, create: { id: GU, username: `greg_${GU}`, email, passwordHash: 'x', fullName: 'Greg User', totalLessonsCompleted: 7, recordStreak: 4 } })
     const gvTok = jwt.sign({ venueId: GV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
     const guTok = jwt.sign({ userId: GU, email }, JWT_SECRET, { expiresIn: '1h' })
-    const INSTR_LEAK = ['passwordHash', 'email', 'phone', 'inviteStatus', 'userId']
+    // `passwordChangedAt`: 15 Ağu 2026'da eklendi. Bir gün önce VENUE listesine eklenmişti ama
+    // KARDEŞ YOL (Instructor) atlanmıştı ve public salon detayındaki iç içe eğitmen
+    // nesnelerinde sızmaya devam ediyordu — üretimde ölçüldü, varsayılmadı.
+    const INSTR_LEAK = ['passwordHash', 'email', 'phone', 'inviteStatus', 'userId', 'passwordChangedAt']
     const VENUE_FIN = ['iban', 'identityNumber', 'taxNumber', 'iyzicoSubMerchantKey', 'kycDocs']
 
     // 1) public eğitmen detayı — passwordHash/email/phone SIZMAZ (kimlik-doğrulamasız uç)
@@ -2965,18 +2992,22 @@ async function run() {
     if (!/session_rescheduled[\s\S]{0,600}?ÜCRETSİZ iptal/.test(nt)) throw new Error('erteleme bildiriminde ücretsiz iptal hakkı yazmıyor — kullanıcı hakkından habersiz kalır')
     // 2) İstemci metinleri "12 saate kadar ücretsiz" gibi yanıltıcı ifade İÇERMEMELİ
     const misleading = [/12 saat öncesine kadar ücretsiz/i, /free cancellation up to 12 hours/i, /cancel for free up to 12 hours/i]
+    // Bu kontrolün BACKEND kısmı her yerde koşar; İSTEMCİ METNİ kısmı kardeş repo yoksa atlanır.
+    // Atlanan kısım GÖRÜNÜR olmalı, yoksa "tamamı geçti" sanılır.
+    const eksikDosya: string[] = []
     const files = [
       path.join(__dirname, '../src/utils/email.ts'),
       path.join(process.env.HOME || '', 'fitpass-web/src/lib/i18n.tsx'),
       path.join(process.env.HOME || '', 'fitpass-mobile/src/lib/i18n.tsx'),
     ]
     for (const f of files) {
-      if (!fs.existsSync(f)) continue // kardeş repo yok → atla
+      if (!fs.existsSync(f)) { eksikDosya.push(path.basename(f)); continue } // kardeş repo yok
       const txt = fs.readFileSync(f, 'utf8')
       for (const re of misleading) {
         if (re.test(txt)) throw new Error(`yanıltıcı iptal metni geri gelmiş (${path.basename(f)}): ${re}`)
       }
     }
+    if (eksikDosya.length) kismiAtlananlar.push(`iptal/iade metni — istemci sözlükleri okunamadı: ${eksikDosya.join(', ')}`)
   })
 
   // Kategori silme koruması ROZET referansını da saymalı. Guard önceden hiç yazılmayan tabloları
@@ -3146,7 +3177,13 @@ async function run() {
     const fs = require('fs'), path = require('path')
     const webI18n = path.join(process.env.HOME || '', 'fitpass-web/src/lib/i18n.tsx')
     const mobI18n = path.join(process.env.HOME || '', 'fitpass-mobile/src/lib/i18n.tsx')
-    if (!fs.existsSync(webI18n) || !fs.existsSync(mobI18n)) return // kardeş repo yok → atla
+    // Eskiden burada `return` vardı: kontrol SESSİZCE atlanıyor ama ✅ sayılıyordu. CI'da yalnız
+    // backend checkout edildiği için bu kontrol CI'DA HİÇ KOŞMUYOR, buna rağmen kapı yeşil
+    // görünüyordu. Artık ATLANDI olarak raporlanıyor — yeşil görünüp koşmayan kapı, olmayan
+    // kapıdan daha kötüdür: ona güvenilir.
+    if (!fs.existsSync(webI18n) || !fs.existsSync(mobI18n)) {
+      atla('kardeş repo (fitpass-web / fitpass-mobile) diskte yok — bu kontrol KOŞMADI')
+    }
     const { NOTIFY } = require('../src/utils/notifyText')
     // Uygulama-içi olarak GERÇEKTEN yazılan anahtarlar (notifyFields çağrılan yerler)
     const inApp = ['follow', 'follow_request', 'follow_accept', 'like', 'comment', 'comment_reply', 'group_invite',
@@ -4762,7 +4799,14 @@ async function main() {
 
   console.log('\n=== SMOKE TEST ===')
   console.log(lines.join('\n'))
-  console.log(`\n${pass} geçti, ${fail} başarısız`)
+  console.log(`\n${pass} geçti, ${fail} başarısız${skip > 0 ? `, ${skip} ATLANDI` : ''}`)
+  if (skip > 0) {
+    console.log(`  ⚠️  ${skip} kontrol KOŞMADI (yukarıda ⏭️ ile işaretli). Bunlar "geçti" DEĞİLDİR.`)
+  }
+  if (kismiAtlananlar.length) {
+    console.log(`  ⚠️  ${kismiAtlananlar.length} kontrol KISMEN koştu:`)
+    for (const k of kismiAtlananlar) console.log(`      · ${k}`)
+  }
   await prisma.$disconnect()
   process.exit(fail > 0 ? 1 : 0)
 }

@@ -225,7 +225,12 @@ export const createBooking = async (req: Request, res: Response) => {
         })
         const occupiedSpots = occ._sum.groupSize || 0
 
-        await sendVenueBookingNotificationEmail(
+        // BEKLENMİYOR. Rezervasyon transaction'ı ÇOKTAN commit oldu; bu yalnız bir bildirim.
+        // `await` edildiğinde yanıt e-postanın hızına bağlanıyordu: her gönderim 8sn timeout'lu
+        // ve bu uçta 2-11 gönderim SIRAYLA bekleniyordu (salon + kullanıcı + etiketlenen kişi
+        // başına bir tane). Resend yavaşladığında mobil istemci 15sn'de vazgeçiyor, kullanıcı
+        // "rezervasyon olmadı" sanıyor — OYSA OLMUŞTU. Hata zaten loglanıyor + sayaca yazılıyor.
+        sendVenueBookingNotificationEmail(
           venue.email,
           venue.name,
           user?.fullName || 'Kullanıcı',
@@ -234,7 +239,7 @@ export const createBooking = async (req: Request, res: Response) => {
           time,
           booking.session!.capacity ?? 0,
           (booking.session!.capacity ?? 0) - occupiedSpots
-        )
+        ).catch((e) => console.error('Venue booking email:', e))
       }
     } catch (emailErr) {
       console.error('Venue email notification error:', emailErr)
@@ -248,7 +253,9 @@ export const createBooking = async (req: Request, res: Response) => {
         const startsAt = new Date(booking.session!.startsAt)
         const date = trDate(startsAt)
         const time = trTime(startsAt)
-        await sendBookingConfirmationEmail(userForEmail.email, userForEmail.fullName, booking.session!.class.title, date, time, booking.finalAmount, (userForEmail.locale as Locale) || 'tr')
+        // BEKLENMİYOR — gerekçe için bkz. yukarıdaki salon bildirimi.
+        sendBookingConfirmationEmail(userForEmail.email, userForEmail.fullName, booking.session!.class.title, date, time, booking.finalAmount, (userForEmail.locale as Locale) || 'tr')
+          .catch((e) => console.error('User confirmation email:', e))
       }
     } catch (emailErr) {
       console.error('User confirmation email error:', emailErr)
@@ -293,7 +300,9 @@ export const createBooking = async (req: Request, res: Response) => {
           const bookerName = booker?.fullName || notifyText(tLoc, 'anonymous_user')
 
           if (taggedUser.email && taggedUser.emailReminders !== false) {
-            await sendGroupTagNotificationEmail(
+            // BEKLENMİYOR — bu DÖNGÜ İÇİNDE ve etiketlenen kişi sayısı kadar tekrar ediyor.
+            // `await` ile 9 kişilik bir grup rezervasyonu yanıtı 70+ saniye bekletebiliyordu.
+            sendGroupTagNotificationEmail(
               taggedUser.email,
               taggedUser.fullName,
               bookerName,
@@ -302,7 +311,7 @@ export const createBooking = async (req: Request, res: Response) => {
               time,
               venueName,
               tLoc
-            )
+            ).catch((e) => console.error('Group tag email:', e))
           }
 
           const giParams = { name: bookerName, category: categoryName }
@@ -335,6 +344,37 @@ export const createBooking = async (req: Request, res: Response) => {
     console.error(err)
     res.status(500).json({ error: 'Sunucu hatası.' })
   }
+}
+
+/**
+ * TRANSFER İADESİ — TEK HESAP, İKİ ÇAĞIRAN.
+ *
+ * Transfer SEÇENEKLERİ listesi `(eskiBaz − yeniBaz) × kişi` diye HAM FİYAT FARKINI vaat ediyordu;
+ * gerçek transfer ise `ödenen − yeni borç` hesaplıyor ve kuponu yeni baza TİPİYLE uyguluyordu.
+ * Yüzde kuponlu bir rezervasyonda ikisi AYRIŞIYORDU: kullanıcı listede "₺100 iade" görüp seçiyor,
+ * işlem sonunda ₺50 alıyordu. Para konusunda yanıltmak, kusurdan fazlasıdır.
+ *
+ * Artık ikisi de burayı çağırıyor; ayrışma imkânsız.
+ */
+export function transferIadesiHesapla(args: {
+  finalAmount: number
+  venuePayout: number
+  oldBase: number
+  newBase: number
+  kupon: { discountType: string; discountValue: number } | null
+}): { yeniTutar: number; iade: number } {
+  const { finalAmount, venuePayout, oldBase, newBase, kupon } = args
+  let indirim = 0
+  if (kupon) {
+    indirim = kupon.discountType === 'percent'
+      ? money(newBase * (kupon.discountValue / 100))
+      : Math.min(kupon.discountValue, newBase)
+  } else if (oldBase > 0 && finalAmount < oldBase) {
+    // Kupon satırı silinmiş (nadir) → eski EFEKTİF oranı koru (yüzde-eşdeğeri).
+    indirim = money(newBase * (Math.max(0, oldBase - venuePayout) / oldBase))
+  }
+  const yeniTutar = money(Math.max(0, newBase - indirim))
+  return { yeniTutar, iade: money(Math.max(0, finalAmount - yeniTutar)) }
 }
 
 // Kullanıcının rezervasyonlarını getir
@@ -708,6 +748,12 @@ export const getTransferOptions = async (req: Request, res: Response) => {
     const venueId = booking.session.class.venueId
     const oldBasePrice = booking.session.class.basePrice
     const groupSize = booking.groupSize
+    // Kuponu BURADA da oku: iade vaadi gerçek transferle AYNI hesaptan çıkmalı (bkz.
+    // transferIadesiHesapla). Eskiden liste ham fiyat farkını vaat ediyor, işlem kuponu
+    // hesaba katıyordu ve yüzde kuponlu kullanıcı vaat edilenin YARISINI alıyordu.
+    const transferKuponu = booking.couponId
+      ? await prisma.coupon.findUnique({ where: { id: booking.couponId }, select: { discountType: true, discountValue: true } })
+      : null
 
     // Aynı salonun gelecekteki açık seansları (aynı/daha ucuz fiyat)
     const sessions = await prisma.class_Session.findMany({
@@ -745,7 +791,13 @@ export const getTransferOptions = async (req: Request, res: Response) => {
           endsAt: s.endsAt,
           available,
           capacity,
-          priceRefund: Math.max(0, (oldBasePrice - s.class.basePrice) * groupSize),
+          priceRefund: transferIadesiHesapla({
+            finalAmount: booking.finalAmount,
+            venuePayout: booking.venuePayout,
+            oldBase: oldBasePrice * groupSize,
+            newBase: s.class.basePrice * groupSize,
+            kupon: transferKuponu,
+          }).iade,
         })
       }
     }
@@ -894,23 +946,20 @@ export const transferBooking = async (req: Request, res: Response) => {
         // Finansal yeniden hesap — kuponu TİPİYLE yeni baza uygula. ESKİ kod indirimi MUTLAK
         // (oldBase − venuePayout) alıp küçük yeni baza uyguluyordu → YÜZDE kuponu dev mutlak indirime donup
         // salonu eksik ödüyor, kullanıcıyı fazla iade ediyordu (üst üste transferde bedava derse kadar).
-        let couponDiscount = 0
-        if (booking.couponId) {
-          const bc = await tx.coupon.findUnique({ where: { id: booking.couponId }, select: { discountType: true, discountValue: true } })
-          if (bc) {
-            couponDiscount = bc.discountType === 'percent'
-              ? money(newBase * (bc.discountValue / 100))
-              : Math.min(bc.discountValue, newBase)
-          } else if (oldBase > 0) {
-            // kupon satırı silinmiş (nadir) → eski EFEKTİF oranı koru (yüzde-eşdeğeri)
-            couponDiscount = money(newBase * (Math.max(0, oldBase - booking.venuePayout) / oldBase))
-          }
-        }
-        const newVenuePayout = money(Math.max(0, newBase - couponDiscount))
-        const newFinalAmount = money(Math.max(0, newBase - couponDiscount))
-        // İade = ÖDENEN (finalAmount) − yeni borç (newFinalAmount); baz farkı DEĞİL, yoksa kupon
-        // (özellikle yüzde) kullanan kullanıcıya fazla iade çıkardı. (ödeme entegrasyonunda karta iade)
-        const priceRefund = money(Math.max(0, booking.finalAmount - newFinalAmount))
+        // TEK HESAP: seçenek listesiyle BİREBİR aynı fonksiyon (transferIadesiHesapla).
+        // İade = ÖDENEN (finalAmount) − yeni borç; baz farkı DEĞİL, yoksa kupon (özellikle
+        // yüzde) kullanan kullanıcıya fazla iade çıkardı. (ödeme entegrasyonunda karta iade)
+        const bc = booking.couponId
+          ? await tx.coupon.findUnique({ where: { id: booking.couponId }, select: { discountType: true, discountValue: true } })
+          : null
+        const { yeniTutar: newFinalAmount, iade: priceRefund } = transferIadesiHesapla({
+          finalAmount: booking.finalAmount,
+          venuePayout: booking.venuePayout,
+          oldBase,
+          newBase,
+          kupon: bc,
+        })
+        const newVenuePayout = newFinalAmount
 
         // pointsEarned = TAHMİN, bakiye DEĞİL. Puan yalnızca check-in'de kredilenir
         // (awardAttendanceOnCheckin; createBooking satır ~186 bunu açıkça söylüyor) ve orada
@@ -932,7 +981,8 @@ export const transferBooking = async (req: Request, res: Response) => {
             baseAmount: money(newBase),
             venuePayout: newVenuePayout,
             finalAmount: newFinalAmount,
-            discountAmount: couponDiscount,
+            // İndirim = yeni baz − yeni tutar (transferIadesiHesapla'nın uyguladığı indirim).
+            discountAmount: money(Math.max(0, newBase - newFinalAmount)),
             pointsEarned: newPoints,
             // Hatırlatma bayrağı SIFIRLANIR: eski seans için hatırlatma gönderilmişse
             // reminderSent=true kalıyordu ve reminderJob yalnız false olanları taradığı için
