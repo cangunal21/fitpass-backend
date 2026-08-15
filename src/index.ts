@@ -77,7 +77,15 @@ app.use(cors({
     if (!origin || allowedOrigins.includes(origin)) return callback(null, true)
     // Vercel preview deploy'larına da izin ver (*.vercel.app)
     if (/^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(origin)) return callback(null, true)
-    return callback(new Error('CORS: bu origin\'e izin verilmiyor'))
+    // REDDET, AMA HATA FIRLATMA. `new Error(...)` Express hata işleyicisine düşüyor ve
+    // HTTP 500 + `console.error` üretiyordu: izinsiz bir origin'den gelen sıradan bir tarayıcı
+    // isteği loglarda ve metriklerde "SUNUCU HATASI" gibi görünüyor, GERÇEK 500'leri gizliyordu
+    // (sahte alarm, gürültü). `false` ile CORS başlıkları YAZILMAZ ve tarayıcı isteği zaten
+    // engeller — doğru davranış budur.
+    //
+    // NOT: CORS bir YETKİLENDİRME mekanizması değildir (tarayıcı politikasıdır); yetkiyi JWT
+    // sağlıyor. Zaten Origin başlığı olmayan istemciler (mobil, curl) bilerek kabul ediliyor.
+    return callback(null, false)
   },
 }))
 app.use(express.json())
@@ -360,7 +368,36 @@ const server = app.listen(PORT, async () => {
     bootTamam = true
     console.log('✅ Açılış işleri tamamlandı — sunucu trafiğe hazır')
   } catch (e) {
-    console.error('❌ AÇILIŞ HATASI — sunucu SAĞLIKSIZ kalacak (healthcheck geçmeyecek):', e)
+    console.error('❌ AÇILIŞ HATASI — yeniden denenecek (healthcheck bu arada geçmez):', e)
+    // TEK SEFERLİK DEĞİL, SINIRLI TEKRAR.
+    //
+    // Eskiden bu bayrak bir kez set edilemezse SONSUZA DEK false kalıyordu: deploy anında
+    // DB'nin birkaç saniyelik bir kesintisi yeni konteyneri KALICI ÖLÜ bırakıyor, deploy hiç
+    // tamamlanmıyor ve elle yeniden deploy gerekiyordu. Geçici bir aksaklık insan müdahalesi
+    // gerektirmemeli.
+    //
+    // Niyet KORUNUYOR: DB'ye gerçekten ulaşamayan konteyner trafik ALMAZ. Yalnızca "hiç deneme"
+    // yerine "sınırlı süre dene" oluyoruz. Süre dolarsa konteyner sağlıksız kalır ve Railway
+    // eski sürümü ayakta tutar — istenen davranış bu.
+    const TEKRAR_ARALIGI_MS = 5_000
+    const TEKRAR_BUTCESI_MS = 3 * 60_000 // 3 dk: geçici kesinti için bol, kalıcı arıza için kısa
+    const basladi = Date.now()
+    const yenidenDene = setInterval(async () => {
+      if (bootTamam) { clearInterval(yenidenDene); return }
+      if (Date.now() - basladi > TEKRAR_BUTCESI_MS) {
+        clearInterval(yenidenDene)
+        console.error(`❌ AÇILIŞ ${Math.round(TEKRAR_BUTCESI_MS / 1000)}sn içinde tamamlanamadı — sunucu SAĞLIKSIZ kalıyor.`)
+        return
+      }
+      try {
+        await prisma.$queryRaw`SELECT 1`
+        bootTamam = true
+        clearInterval(yenidenDene)
+        console.log('✅ DB yeniden erişilebilir — sunucu trafiğe hazır (gecikmeli açılış)')
+      } catch { /* bir sonraki turda yine denenecek */ }
+    }, TEKRAR_ARALIGI_MS)
+    // Süreç kapanışını bu zamanlayıcı BEKLETMESİN (SIGTERM'de temiz çıkış şart).
+    yenidenDene.unref?.()
   }
   awardSeasonChampions()
   // Sezon dönümünü yakalamak için 12 saatte bir kontrol (sezon başına tek kez ödül verir)
