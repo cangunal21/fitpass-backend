@@ -52,6 +52,41 @@ grep -vE '^ALTER TABLE .* FOREIGN KEY' "$DIR/_schema-all.sql" > "$DIR/schema-1-t
 rm -f "$DIR/_schema-all.sql"
 echo "    schema-1-tables.sql ($(grep -c 'CREATE TABLE' "$DIR/schema-1-tables.sql") tablo), schema-2-fks.sql ($(wc -l < "$DIR/schema-2-fks.sql" | tr -d ' ') FK)"
 
+# --- SEMA DISI TABLOLAR (prisma semasinda YOK ama prod'da VAR) -----------------------------------
+# BEDELI ODENMIS: sema `schema.prisma`dan, veri ise prod'daki TUM tablolardan cekiliyor. Aradaki
+# fark, geri yuklemeyi KIRIYOR. Olculdu (17 Agu 2026): Prisma'nin kendi kayit tablosu
+# `_prisma_migrations` prod'da var, semada yok -> CSV'si aliniyor ama CREATE TABLE'i uretilmiyor
+# -> dogrulama `relation "_prisma_migrations" does not exist` ile cokuyordu. Yani bu yoldan alinan
+# yedek HIC dogrulanamamisti.
+#
+# Tek ornegi degil SINIFI kapatiyoruz: semada karsiligi olmayan HER tablonun DDL'i, prod'daki
+# GERCEK yapisindan (information_schema) uretiliyor. Ileride kodla acilan baska bir tablo olursa
+# da calisir. `_prisma_migrations` ozellikle onemli: geri yuklemede olmazsa Prisma tum
+# migration'lari yeniden uygulamaya calisir.
+SEMADISI=0
+while IFS= read -r t; do
+  [[ -n "$t" ]] || continue
+  # Semada zaten var mi? (tirnakli ya da tirnaksiz CREATE TABLE)
+  grep -qE "CREATE TABLE (IF NOT EXISTS )?(\"?public\"?\.)?\"?${t}\"?" "$DIR/schema-1-tables.sql" && continue
+  DDL="$("$PSQL" "$PROD_URL" -tAc "
+    SELECT 'CREATE TABLE IF NOT EXISTS \"'||table_name||'\" ('||
+           string_agg('\"'||column_name||'\" '||
+             CASE WHEN data_type='USER-DEFINED' THEN 'text' ELSE data_type END||
+             COALESCE('('||character_maximum_length||')','')||
+             CASE WHEN is_nullable='NO' THEN ' NOT NULL' ELSE '' END,
+             ', ' ORDER BY ordinal_position)||');'
+    FROM information_schema.columns
+    WHERE table_schema='public' AND table_name='${t}'
+    GROUP BY table_name" 2>/dev/null)"
+  if [[ -n "$DDL" ]]; then
+    printf '\n-- sema disi (prod'"'"'da var, schema.prisma'"'"'da yok):\n%s\n' "$DDL" >> "$DIR/schema-1-tables.sql"
+    SEMADISI=$((SEMADISI+1))
+    echo "    + sema disi tablo eklendi: $t"
+  fi
+done < <("$PSQL" "$PROD_URL" -tAc \
+  "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name")
+[[ "$SEMADISI" -gt 0 ]] && echo "    ($SEMADISI tablo prisma semasinda yoktu, prod yapisindan uretildi)"
+
 # CANLI indeksler: ensureIndexes.ts bazi unique indeksleri KODLA aciyor (prisma semasinda yok).
 # Bunlari da kaydediyoruz ki yedek, canlinin gercek halini yansitsin.
 "$PSQL" "$PROD_URL" -tAc "SELECT indexdef||';' FROM pg_indexes WHERE schemaname='public' ORDER BY indexname" \
@@ -75,13 +110,25 @@ for t in "${TABLES[@]}"; do
   [[ -z "$t" ]] && continue
   "$PSQL" "$PROD_URL" -q -c "\\copy (SELECT * FROM \"$t\") TO '$DATA/$t.csv' WITH (FORMAT csv, HEADER true)" >/dev/null
   n="$("$PSQL" "$PROD_URL" -tAc "SELECT count(*) FROM \"$t\"")"
+  # SAAT DILIMI BAGLANTI ANINDA SABITLENIR (PGOPTIONS='-c timezone=UTC'): `to_jsonb` bir
+  # `timestamptz` alanini OTURUMUN
+  # saat dilimine gore metne cevirir. Prod Etc/UTC, bu makine America/Toronto -> AYNI an iki
+  # farkli metin uretiyor ("...T16:10:43+00:00" vs "...T19:10:43+03:00") -> md5'ler tutmuyor ve
+  # dogrulama "ICERIK farkli" diye YANLIS ALARM veriyordu. Olculdu 17 Agu 2026: veri birebir
+  # aynıyken `_prisma_migrations` surekli farkli gorunuyordu. UTC'ye sabitlemek karsilastirmayi
+  # ZAYIFLATMAZ, tam tersine dogru sey olan ANI karsilastirir (yerel gosterimini degil).
+  #
+  # NEDEN `SET TimeZone=...; SELECT ...` DEGIL: psql her ifadenin sonucunu basar; `SET` de "SET"
+  # komut etiketini yazar ve `-tAc` ile yakalanan degisken "SET\n<ozet>" olur -> karsilastirma
+  # tamamen bozulur (denendi: 42 tablo "84 fark" gorundu). PGOPTIONS baglantiyi kurarken ayarlar,
+  # hicbir cikti uretmez.
   # ICERIK OZETI: "satir sayisi ayni" != "veri ayni". Her satirin TAM metin gosteriminin md5'ini
   # alip siraya BAGLI OLMAYAN sekilde birlestiriyoruz -> tek bir parmak izi. Boylece geri yuklemeden
   # sonra sadece sayilari degil her alanin degerini de karsilastirabiliyoruz.
   # to_jsonb kullaniyoruz (x::text DEGIL): canli DB `db push` ile buyudugu icin fiziksel sutun
   # sirasi sema sirasindan farkli; row::text buna duyarli olup ayni veride bile yanlis alarm veriyordu.
   # Surumler arasi guvenli: PG12+ float8'i "en kisa tam donusum" ile yazar, jsonb anahtarlari normalize.
-  d="$("$PSQL" "$PROD_URL" -tAc "SELECT md5(coalesce(string_agg(md5(to_jsonb(x)::text), '' ORDER BY md5(to_jsonb(x)::text)), '')) FROM \"$t\" x" 2>/dev/null || echo DIGEST_ALINAMADI)"
+  d="$(PGOPTIONS='-c timezone=UTC' "$PSQL" "$PROD_URL" -tAc "SELECT md5(coalesce(string_agg(md5(to_jsonb(x)::text), '' ORDER BY md5(to_jsonb(x)::text)), '')) FROM \"$t\" x" 2>/dev/null || echo DIGEST_ALINAMADI)"
   printf '%s\t%s\t%s\n' "$t" "$n" "$d" >> "$DIR/rowcounts.tsv"
   TOTAL=$((TOTAL + n))
   printf '    %-30s %8s satir  %s\n' "$t" "$n" "${d:0:8}"
@@ -184,7 +231,7 @@ else
   FAIL=0
   while IFS=$'\t' read -r t src sdig; do
     dst="$("$PSQL" "$T" -tAc "SELECT count(*) FROM \"$t\"" 2>/dev/null || echo X)"
-    ddig="$("$PSQL" "$T" -tAc "SELECT md5(coalesce(string_agg(md5(to_jsonb(x)::text), '' ORDER BY md5(to_jsonb(x)::text)), '')) FROM \"$t\" x" 2>/dev/null || echo X)"
+    ddig="$(PGOPTIONS='-c timezone=UTC' "$PSQL" "$T" -tAc "SELECT md5(coalesce(string_agg(md5(to_jsonb(x)::text), '' ORDER BY md5(to_jsonb(x)::text)), '')) FROM \"$t\" x" 2>/dev/null || echo X)"
     if [[ "$src" != "$dst" ]]; then
       printf '  ✗ %-28s SATIR kaynak=%s geri=%s\n' "$t" "$src" "$dst"; FAIL=$((FAIL+1))
     elif [[ "$sdig" != "$ddig" ]]; then
