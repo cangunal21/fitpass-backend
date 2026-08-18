@@ -825,6 +825,16 @@ export const addActivityComment = async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Aktivite bulunamadı.' })
     }
 
+    // UZUN YORUMU SESSIZCE KIRPMA. Eskiden `.slice(0, 500)` ile kesilip 201 donuluyordu: kullanici
+    // yazdiginin tamaminin gittigini saniyor, yorum yarim yayinlaniyordu. chatController ayni kusuru
+    // bilerek 400'e cevirmis ve gerekcesini yazmis; bu kardes yol atlanmisti. Istemciler ayrica
+    // maxLength ile sinirlar, ama sunucu tek dogruluk kaynagi.
+    const YORUM_MAX = 500
+    const temizIcerik = String(content).trim()
+    if (temizIcerik.length > YORUM_MAX) {
+      return res.status(400).json({ error: `Yorum çok uzun (en fazla ${YORUM_MAX} karakter).` })
+    }
+
     let parentComment = null
     const pid = parseInt(parentId, 10)
     if (parentId && !Number.isNaN(pid)) {
@@ -835,7 +845,7 @@ export const addActivityComment = async (req: Request, res: Response) => {
     }
 
     const comment = await prisma.activityComment.create({
-      data: { feedKey, userId, content: String(content).trim().slice(0, 500), parentId: parentComment?.id || null },
+      data: { feedKey, userId, content: temizIcerik, parentId: parentComment?.id || null },
       include: { user: { select: { username: true, fullName: true, avatarUrl: true } } },
     })
 
@@ -884,6 +894,43 @@ export const addActivityComment = async (req: Request, res: Response) => {
 }
 
 // GET /api/social/notifications
+// DELETE /api/social/comments/:commentId
+// YORUM SILME — daha once HICBIR yol yoktu: ne yazar kendi yorumunu, ne aktivite sahibi kendi
+// aktivitesindeki bir yorumu kaldirabiliyordu. Engelleme (block) ozelligi de bulunmadigi icin
+// istenmeyen yoruma maruz kalan kullanicinin HICBIR self-servis caresi yoktu; tek secenek
+// admin'e sikayet edip KARSI TARAFIN BANLANMASINI beklemekti (ki o da tum yorumlarini kalici siler).
+// Yetki: yorumu YAZAN + aktivitenin SAHIBI. Yetkisiz istekte 403 degil 404 — "var ama dokunamazsin"
+// ile "yok" ayirt edilmemeli (feed uclarindaki existence-oracle kuraliyla tutarli).
+export const deleteActivityComment = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    const commentId = parseInt(String(req.params.commentId), 10)
+    if (!commentId || Number.isNaN(commentId)) return res.status(400).json({ error: 'Geçersiz yorum.' })
+
+    const comment = await prisma.activityComment.findUnique({
+      where: { id: commentId },
+      select: { id: true, userId: true, feedKey: true },
+    })
+    if (!comment) return res.status(404).json({ error: 'Yorum bulunamadı.' })
+
+    const activity = await resolveFeedActivity(comment.feedKey)
+    const yetkili = comment.userId === userId || (activity != null && activity.ownerId === userId)
+    if (!yetkili) return res.status(404).json({ error: 'Yorum bulunamadı.' })
+
+    // Yanitlar da gider: parentId FK'si ON DELETE kurali tasimiyor, yetim yanit birakmak
+    // "silinen yoruma cevap" gibi baglamsiz satirlar uretirdi. Tek transaction — yarim kalmasin.
+    await prisma.$transaction([
+      prisma.activityComment.deleteMany({ where: { parentId: commentId } }),
+      prisma.activityComment.delete({ where: { id: commentId } }),
+    ])
+
+    return res.json({ message: 'Yorum silindi.' })
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
 export const getNotifications = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId

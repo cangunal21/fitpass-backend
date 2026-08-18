@@ -116,17 +116,29 @@ export async function awardSeasonChampions(now: Date = new Date()) {
     const writtenByUser = new Map<number, number>()
     for (const w of written) writtenByUser.set(w.userId, (writtenByUser.get(w.userId) || 0) + 1)
 
+    let bildirimHatasi = 0
     const users = await prisma.user.findMany({ where: { id: { in: [...writtenByUser.keys()] } }, select: { id: true, pushToken: true, locale: true } })
     for (const u of users) {
       const n = writtenByUser.get(u.id) || 0
       const loc = (u.locale || 'tr') as Locale
       // Sezon adı da çevrilir: prev.label "Güz 2026" / prev.labelEn "Fall 2026"
       const params = { season: loc === 'en' ? prev.labelEn : prev.label, count: n }
-      await prisma.notification.create({ data: { userId: u.id, type: 'badge', ...notifyFields(loc, 'season_champion', params) } }).catch(() => {})
+      // BİLDİRİM HATASI GÖRÜNÜR OLSUN. `.catch(() => {})` sessizdi ve iş idempotent olduğu için
+      // (rozet zaten yazılmışsa erken dönüyor) telafi de imkânsızdı: kullanıcı sezon şampiyonu
+      // rozetini alıyor ama bundan HABERİ olmuyordu ve bir daha da bildirim gitmiyordu.
+      // Rozet zaten yazıldı; bu yüzden hata işi düşürmez — ama log'a düşer ve sayılır.
+      const bildirimOk = await prisma.notification.create({
+        data: { userId: u.id, type: 'badge', ...notifyFields(loc, 'season_champion', params) },
+      }).then(() => true).catch((e) => { console.error(`şampiyon bildirimi yazılamadı user#${u.id}:`, e); return false })
+      if (!bildirimOk) bildirimHatasi++
       const push = notifyPush(loc, 'season_champion', params)
-      if (u.pushToken && push) sendPushNotification(u.pushToken, push.title, push.body).catch(() => {})
+      if (u.pushToken && push) {
+        sendPushNotification(u.pushToken, push.title, push.body)
+          .catch((e) => console.error(`şampiyon push'u gitmedi user#${u.id}:`, e))
+      }
     }
     console.log(`🏆 ${prev.key}: ${toCreate.length} şampiyon rozeti verildi (${users.length} kişi).`)
+    if (bildirimHatasi > 0) console.error(`⚠️ ${bildirimHatasi} şampiyon bildirimi YAZILAMADI — rozet verildi ama kişiye haber gitmedi.`)
   } catch (err) {
     console.error('Season champion job error:', err)
   }

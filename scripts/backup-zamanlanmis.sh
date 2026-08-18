@@ -32,9 +32,33 @@ DURUM="$HEDEF/SON-DURUM.txt"
 SAKLANACAK=14   # kaç yedek tutulacak (günlükte ~2 hafta)
 
 mkdir -p "$HEDEF"
+chmod 700 "$HEDEF" 2>/dev/null || true   # klasor drwxr-xr-x idi; icerik TUM kullanici verisi
 exec >> "$GUNLUK" 2>&1
 echo ""
 echo "════════ $(date '+%Y-%m-%d %H:%M:%S') ════════"
+
+# ── ESZAMANLILIK KILIDI ─────────────────────────────────────────────────────────────────────
+# Iki kosu ust uste binerse (elle tetikleme + zamanlanmis is, ya da uykudan sonra telafi) asagidaki
+# "yarim yedek supurgesi" DEVAM EDEN kosunun klasorunu yeniden adlandiriyor; psql `\copy` artik
+# olmayan dizine yazmaya calisip exit 1 veriyor ve KOSAN yedek oluyor. macOS'ta flock yok;
+# `mkdir` atomik oldugu icin kilit olarak kullaniliyor.
+KILIT="$HEDEF/.kilit"
+if ! mkdir "$KILIT" 2>/dev/null; then
+  # Bayat kilit (surec olmus): 6 saatten eskiyse temizle. Yedek en fazla ~10 dk suruyor.
+  if [[ -n "$(find "$KILIT" -maxdepth 0 -mmin +360 2>/dev/null)" ]]; then
+    echo "⚠️  bayat kilit temizlendi (6 saatten eski)"
+    rm -rf "$KILIT"; mkdir "$KILIT" 2>/dev/null || true
+  else
+    echo "⏭️  Baska bir yedek kosusu devam ediyor — bu tetikleme atlandi."
+    exit 0
+  fi
+fi
+trap 'rm -rf "$KILIT"' EXIT
+
+# TIME MACHINE KAPSAM DISI: yedek dosyasi TUM kullanici verisini iceriyor (e-posta, passwordHash).
+# Time Machine hedefi cogu zaman sifresiz harici bir disk; oraya sessizce kopyalanmasi istenmiyor.
+# Kullanicinin politikasi: prod dump'i SIFRELI harici diske ELLE. Idempotent, best-effort.
+tmutil addexclusion "$HEDEF" >/dev/null 2>&1 || true
 
 if [[ ! -f "$GIZLI" ]]; then
   echo "❌ Gizli ayar dosyası yok: $GIZLI"
@@ -100,8 +124,14 @@ if [[ "$KOD" -ne 0 ]]; then
   SONRAKI=$(ls -1d "$HEDEF"/sipsakspor-prod-* 2>/dev/null | sort)
   comm -13 <(printf '%s\n' "$ONCEKI") <(printf '%s\n' "$SONRAKI") | while read -r yeni; do
     [[ -e "$yeni" ]] || continue
-    mv "$yeni" "$HEDEF/DOGRULANMAMIS-$(basename "$yeni")" 2>/dev/null || true
-    echo "⚠️  doğrulanmamış ürün işaretlendi: DOGRULANMAMIS-$(basename "$yeni")"
+    yeni_ad="DOGRULANMAMIS-$(basename "$yeni")"
+    mv "$yeni" "$HEDEF/$yeni_ad" 2>/dev/null || true
+    # .sha256 dosyasinin ICINDE eski dosya adi yaziyor; yeniden adlandirdiktan sonra
+    # `shasum -c` "No such file" der ve saglama DOGRULANAMAZ hale gelir. Adi da guncelle.
+    if [[ "$yeni_ad" == *.sha256 ]]; then
+      sed -i '' "s| sipsakspor-prod-| DOGRULANMAMIS-sipsakspor-prod-|" "$HEDEF/$yeni_ad" 2>/dev/null || true
+    fi
+    echo "⚠️  doğrulanmamış ürün işaretlendi: $yeni_ad"
   done
 fi
 
@@ -121,6 +151,23 @@ ls -1dt EKSIK-* DOGRULANMAMIS-* 2>/dev/null | tail -n +4 | while read -r eski; d
 done
 
 SAYI=$(ls -1dt sipsakspor-prod-* 2>/dev/null | wc -l | tr -d ' ')   # EKSIK-* sayılmaz: onlar yedek değil
+
+# ── UYARI KANALI ────────────────────────────────────────────────────────────────────────────
+# SON-DURUM.txt yazılıyordu ama OKUYAN/UYARAN hiçbir şey yoktu: yedek haftalarca başarısız olsa
+# insan ancak dosyayı elle açarsa görürdü — ve zaten açmıyor. Railway'de otomatik yedek olmadığı
+# için bu klasör TEK yedek hattı; sessiz başarısızlık en pahalı hâli.
+# macOS bildirim merkezi launchd'nin GUI oturumundan erişilebilir; best-effort (hata işi düşürmez).
+uyar() {
+  osascript -e "display notification \"$2\" with title \"Şipşakspor yedek\" subtitle \"$1\"" >/dev/null 2>&1 || true
+}
+
+# BAYATLIK: en yeni yedek kaç gün önce? Mac kapalıysa iş HİÇ koşmaz ve hiçbir şey uyarmaz —
+# o boşluğu kapatamayız, ama koştuğunda bayatlığı GÖRÜNÜR kılabiliriz.
+SON_YEDEK="$(ls -1t sipsakspor-prod-*.tgz 2>/dev/null | head -1)"
+BAYAT_GUN=0
+if [[ -n "$SON_YEDEK" ]]; then
+  BAYAT_GUN=$(( ( $(date +%s) - $(stat -f %m "$SON_YEDEK" 2>/dev/null || echo 0) ) / 86400 ))
+fi
 # ── BİLİNMEYEN ÇIKIŞ KODU ASLA BAŞARI SAYILMAZ ──────────────────────────────────────────────
 # Bu blok eskiden `if 0 / elif 3 / else` idi ve **3 dalı bu makinede erişilemezdi**: prod
 # PostgreSQL 18.4, yereldeki istemci 16 — sürüm uyuşmazlığı yüzünden `backup-prod.sh` her zaman
@@ -138,10 +185,25 @@ case "$KOD" in
       printf '    Bu Mac kaybolursa/bozulursa veri de gider. Aynı diskteki yedek, yedek değildir.\n'
       printf '\n'
       printf 'Klasör: %s\n' "$HEDEF"
+      printf 'Saklanan yedek sayısı: %s\n' "$SAYI"
     } > "$DURUM"
+    ;;
+  2)
+    # 2 = dogrulama KOSTU ve DUSTU (veri farki ya da SEMA farki). 3'ten (hic kosmadi) ve
+    # jenerik hatadan AYRI: burada elimizde somut bir kanit var, bakilacak yer belli.
+    echo "❌ Yedek DOĞRULANAMADI — geri yükleme testi KOŞTU ve DÜŞTÜ."
+    {
+      printf 'DOGRULAMA-DUSTU\t%s\tgeri yukleme testi KOSTU ve DUSTU\n' "$(date '+%Y-%m-%d %H:%M')"
+      printf '\n'
+      printf '⚠️  BU YEDEGE GUVENME. Ayrinti icin arsiv icindeki SEMA-FARKLARI.txt ya da\n'
+      printf '    %s dosyasindaki "5/6" bolumune bak.\n' "$GUNLUK"
+      printf '    Sik sebep: schema.prisma degisti ama prod a HENUZ DEPLOY EDILMEDI.\n'
+    } > "$DURUM"
+    uyar "DOĞRULANAMADI" "Geri yükleme testi düştü. Şema farkı olabilir — yedek.log'a bak."
     ;;
   3)
     echo "⚠️  Yedek alındı ama DOĞRULANMADI — geri yükleme testi KOŞMADI."
+    uyar "DOĞRULANMADI" "Dosya var ama geri yüklenebildiği kanıtlanmadı. Yerel PostgreSQL çalışıyor mu?"
     {
       printf 'DOGRULANMADI\t%s\tdosya var ama geri yukleme testi KOSMADI\n' "$(date '+%Y-%m-%d %H:%M')"
       printf '\n'
@@ -154,6 +216,7 @@ case "$KOD" in
     ;;
   *)
     echo "❌ BAŞARISIZ (çıkış kodu $KOD) — yukarıdaki çıktıya bak."
+    uyar "BAŞARISIZ (kod $KOD)" "Yedek alınamadı. ~/sipsakspor-yedek/yedek.log dosyasına bak."
     printf 'HATA\t%s\tcikis kodu %s\n' "$(date '+%Y-%m-%d %H:%M')" "$KOD" > "$DURUM"
     ;;
 esac

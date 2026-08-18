@@ -225,8 +225,13 @@ model User {
 
 model Report {
   id             Int       @id @default(autoincrement())
-  reporter       User      @relation("ReportsMade", fields: [reporterUserId], references: [id])
-  reporterUserId Int
+  // reporterUserId NULLABLE + ON DELETE SET NULL. Eskiden NOT NULL'di ve hesap silmede o kisinin
+  // ACTIGI sikayetler de siliniyordu — yani BASKA kullanicilar hakkindaki incelenmemis moderasyon
+  // kaniti kayboluyordu. Olculdu: 10 acik sikayet -> sikayet eden hesabini sildi -> 0.
+  // Istismar yolu acikti: taciz eden, kurbani hesabini silmeye ikna ederse kayit da yok oluyordu.
+  // Sikayet ASIL olarak SIKAYET EDILEN hakkindadir; sikayet eden kimligi ek bilgidir.
+  reporter       User?     @relation("ReportsMade", fields: [reporterUserId], references: [id], onDelete: SetNull)
+  reporterUserId Int?
   reportedUser   User      @relation("ReportsAgainst", fields: [reportedUserId], references: [id])
   reportedUserId Int
   reason         String?

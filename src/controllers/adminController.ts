@@ -147,6 +147,38 @@ export const suspendVenue = async (req: Request, res: Response) => {
       data: { isSuspended: suspend, isActive: !suspend },
     })
     invalidate(`venueState:${venueId}`) // venueAuthMiddleware 60sn cache'ini hemen düşür → askıya alma anında etki eder
+
+    // ── ETKİLENEN KULLANICILARA HABER VER ────────────────────────────────────────────────────
+    // Askıya alma rezervasyonları İPTAL ETMİYOR ama check-in'i kapatıyor (venueApprovedMiddleware
+    // → 403). Eskiden hiçbir bildirim gitmiyordu: kullanıcının rezervasyonu "onaylı" görünmeye
+    // devam ediyor, kişi derse gidiyor ve kapıda öğreniyordu. deleteVenue bu sorumluluğu zaten
+    // alıyor (booking_cancelled_venue_closed) — kardeş yol atlanmıştı.
+    // Metin iptal DEMİYOR; "duruyor ama giriş kapalı, istersen tam iade ile iptal et" diyor.
+    try {
+      const etkilenen = await prisma.booking.findMany({
+        where: {
+          status: { in: ['confirmed', 'pending'] },
+          session: { startsAt: { gt: new Date() }, class: { venueId } },
+        },
+        select: { userId: true },
+        distinct: ['userId'],
+      })
+      const ids = etkilenen.map(b => b.userId)
+      if (ids.length) {
+        const anahtar = suspend ? 'venue_suspended' : 'venue_reopened'
+        const params = { venue: venue.name }
+        const users = await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, pushToken: true, locale: true } })
+        for (const u of users) {
+          const loc = (u.locale || 'tr') as Locale
+          await prisma.notification.create({ data: { userId: u.id, type: 'venue_status', ...notifyFields(loc, anahtar, params) } }).catch(() => {})
+          const push = notifyPush(loc, anahtar, params)
+          if (u.pushToken && push) sendPushNotification(u.pushToken, push.title, push.body).catch(() => {})
+        }
+      }
+    } catch (e) {
+      // Bildirim best-effort: askıya alma işleminin KENDİSİ başarılı oldu, onu 500'e çevirme.
+      console.error('suspendVenue bildirim hatası:', e)
+    }
     // bkz. onay ucu — finans/KYC alanları yanıtta dönmez
     const { passwordHash, iban, identityNumber, taxNumber, kycDocs, iyzicoSubMerchantKey, ...safeVenue } =
       venue as typeof venue & { iban?: unknown; identityNumber?: unknown; taxNumber?: unknown; kycDocs?: unknown; iyzicoSubMerchantKey?: unknown }

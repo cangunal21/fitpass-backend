@@ -523,7 +523,10 @@ export const updatePrivacy = async (req: Request, res: Response) => {
 export const deleteAccount = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId
-    const { password } = req.body
+    // GÖVDESİZ İSTEK 500 VERMESİN: Express 5'te body-parser gövde yoksa `req.body`yi undefined
+    // bırakıyor; `const { password } = req.body` doğrudan TypeError fırlatıp 500 üretiyordu.
+    // Doğru cevap 401 (parola yok = doğrulanamaz), sunucu hatası değil.
+    const { password } = (req.body ?? {}) as { password?: string }
 
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { passwordHash: true } })
     if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' })
@@ -597,7 +600,10 @@ export const deleteAccount = async (req: Request, res: Response) => {
         }
       }
       await tx.referral.deleteMany({ where: { OR: [{ referrerId: userId }, { referredId: userId }] } })
-      await tx.report.deleteMany({ where: { OR: [{ reporterUserId: userId }, { reportedUserId: userId }] } })
+      // YALNIZ bu kullanici HAKKINDAKI sikayetler silinir. Onun ACTIGI sikayetler KALIR: FK artik
+      // ON DELETE SET NULL, reporterUserId null'a duser ve kayit incelenebilir kalir. Aksi halde
+      // taciz eden, kurbani hesabini silmeye ikna ederek kaniti yok edebiliyordu.
+      await tx.report.deleteMany({ where: { reportedUserId: userId } })
 
       // KUPON HAKKI İADE — bu transaction referral sayacını ve referral puanını bilinçle geri alıyor
       // ama kuponu ATLIYORDU: hesap silinince booking'ler hard-delete ediliyor, kuponun yaktığı

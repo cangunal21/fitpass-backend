@@ -52,19 +52,32 @@ export const sendRatingPrompts = async () => {
         const rpLoc = (booking.user?.locale || 'tr') as Locale
         const rpParams = { classTitle }
 
-        // In-app bildirim (best-effort — championJob deseni)
-        await prisma.notification.create({
+        // TESLİM SAYACI — bayrak gönderimden ÖNCE sahipleniliyor (eşzamanlı çift gönderimi
+        // engellemek için doğru), ama hiçbir kanal teslim edemezse bayrak true KALIYORDU ve
+        // hatırlatma bir daha ASLA denenmiyordu: kullanıcı puanlama isteğini hiç görmüyordu.
+        // reminderJob bu geri-alma desenini zaten taşıyor (denenen>0 && teslim===0 → bayrağı geri ver);
+        // kardeş iş atlanmıştı.
+        let teslim = 0
+
+        const bildirimSonuc = await prisma.notification.create({
           data: { userId: booking.userId, type: 'rating_prompt', ...notifyFields(rpLoc, 'rating_prompt', rpParams) },
-        }).catch(() => {})
+        }).then(() => true).catch(() => false)
+        if (bildirimSonuc) teslim++
 
         const rpPush = notifyPush(rpLoc, 'rating_prompt', rpParams)
         if (booking.user?.pushToken && rpPush) {
-          await sendPushNotification(
+          const pushOk = await sendPushNotification(
             booking.user.pushToken,
             rpPush.title,
             rpPush.body,
             { type: 'rating_prompt', bookingId: booking.id }, // mobil deep-link için data
           )
+          if (pushOk) teslim++
+        }
+
+        if (teslim === 0) {
+          await prisma.booking.updateMany({ where: { id: booking.id }, data: { ratingPromptSent: false } })
+          console.error(`↩️ Puanlama hatırlatması hiçbir kanaldan gitmedi, tekrar denenecek: booking#${booking.id}`)
         }
       } catch (e) {
         console.error(`Rating prompt error for booking ${booking.id}:`, e)

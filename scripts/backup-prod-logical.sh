@@ -365,8 +365,33 @@ fi
 # --- 6/6 PAKETLE ---------------------------------------------------------------------------------
 echo "=== 6/6 Tek dosyaya paketleniyor ==="
 TGZ="$DIR.tgz"
-tar -czf "$TGZ" -C "$(dirname "$DIR")" "$(basename "$DIR")"
+# umask 077: arsiv OLUSURKEN 600 olsun. Sonradan chmod da yapiliyor ama arada bir an bile
+# dunyaya-okunur birakmamak dogru (dosya TUM kullanici verisini iceriyor: e-posta + passwordHash).
+( umask 077; tar -czf "$TGZ" -C "$(dirname "$DIR")" "$(basename "$DIR")" )
+
+# ARSIVIN KENDISI SINANIR. Dogrulama KLASOR uzerinde yapiliyordu; sonra tar aliniyor ve klasor
+# SILINIYORDU — yani "KANITLANDI" cumlesi artik var olmayan bir sey hakkindaydi. Bozuk/yarim bir
+# .tgz (disk dolmasi, kesinti) bu asamaya kadar hic fark edilmezdi.
+if ! tar -tzf "$TGZ" >/dev/null 2>&1; then
+  echo "HATA: uretilen arsiv OKUNAMIYOR (tar -tzf basarisiz) — yedek gecersiz."
+  rm -f "$TGZ"
+  exit 2
+fi
+BEKLENEN_DOSYA="$(find "$DIR" -type f | wc -l | tr -d ' ')"
+ARSIV_DOSYA="$(tar -tzf "$TGZ" | grep -vc '/$' || echo 0)"
+if [[ "$ARSIV_DOSYA" -lt "$BEKLENEN_DOSYA" ]]; then
+  echo "HATA: arsivde $ARSIV_DOSYA dosya var, klasorde $BEKLENEN_DOSYA idi — eksik paketleme."
+  rm -f "$TGZ"
+  exit 2
+fi
+
 rm -rf "$DIR"
+chmod 600 "$TGZ" 2>/dev/null || true
+
+# SAGLAMA: felaket gunune kadar bekleyip "acaba bozuldu mu" diye dusunmemek icin. Dogrulama:
+#   shasum -a 256 -c sipsakspor-prod-....tgz.sha256
+( cd "$(dirname "$TGZ")" && shasum -a 256 "$(basename "$TGZ")" > "$(basename "$TGZ").sha256" ) 2>/dev/null || true
+chmod 600 "$TGZ.sha256" 2>/dev/null || true
 SIZE="$(du -h "$TGZ" | cut -f1)"
 
 echo ""

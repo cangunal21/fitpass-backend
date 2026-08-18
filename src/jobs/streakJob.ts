@@ -33,11 +33,19 @@ export const sendStreakNudges = async () => {
     const recentBookings = await prisma.booking.findMany({
       where: { status: 'confirmed', checkedIn: true, session: { startsAt: { gte: since } }, user: eligibleUser },
       select: { userId: true },
+      // DISTINCT ŞART: `take` KİŞİ değil SATIR sınırlıyordu. Çok gelen bir kullanıcının 5000 satırı
+      // diğer herkesi pencereden itebiliyordu (attendanceJob'daki "kırpma elemeden önce" kusurunun
+      // aynısı). distinct ile sınır artık AYRI KULLANICI sayısına uygulanır.
+      distinct: ['userId'],
       take: 5000,
     })
     const recentDropins = await prisma.dropInParticipant.findMany({
       where: { status: 'confirmed', checkedIn: true, slot: { startsAt: { gte: since } }, user: eligibleUser },
       select: { userId: true },
+      // DISTINCT ŞART: `take` KİŞİ değil SATIR sınırlıyordu. Çok gelen bir kullanıcının 5000 satırı
+      // diğer herkesi pencereden itebiliyordu (attendanceJob'daki "kırpma elemeden önce" kusurunun
+      // aynısı). distinct ile sınır artık AYRI KULLANICI sayısına uygulanır.
+      distinct: ['userId'],
       take: 5000,
     })
     const candidateIds = Array.from(new Set([

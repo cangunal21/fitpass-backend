@@ -2518,6 +2518,52 @@ async function run() {
     }
   })
 
+  await check('Yorum silme: YAZAR ve AKTİVİTE SAHİBİ silebilir, yabancı silemez (404)', async () => {
+    // Daha önce yorum silmenin HİÇBİR yolu yoktu: istenmeyen yoruma maruz kalan kullanıcının tek
+    // çaresi admin'e şikayet edip karşı tarafın BANLANMASINI beklemekti (o da tüm yorumlarını siler).
+    const CO = 991030, CY = 991031, CX = 991032
+    for (const [id, ad] of [[CO,'Sahip'],[CY,'Yorumcu'],[CX,'Yabanci']] as [number,string][]) {
+      await testPrisma.user.upsert({ where: { id }, update: { banned: false, profilePrivacy: 'public' }, create: { id, username: `yc_${id}`, email: `yc_${id}@x.com`, passwordHash: 'x', fullName: ad } })
+    }
+    const bk = await prisma.booking.create({ data: { userId: CO, sessionId: S, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `YRM-${Date.now()}` } })
+    const fk = `b-${bk.id}`
+    const tok = (id: number) => jwt.sign({ userId: id, email: `yc_${id}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    try {
+      // Yorumcu yorum yazar, ona bir de yanit gelir
+      const c1 = await http(`/api/social/feed/${fk}/comments`, { method: 'POST', token: tok(CY), body: { content: 'ilk yorum' } })
+      if (c1.status !== 201) throw new Error(`yorum yazilamadi: ${c1.status} ${c1.text.slice(0,100)}`)
+      const cid = c1.json?.comment?.id
+      if (!cid) throw new Error('yorum id donmedi')
+      const c2 = await http(`/api/social/feed/${fk}/comments`, { method: 'POST', token: tok(CX), body: { content: 'yanit', parentId: cid } })
+      if (c2.status !== 201) throw new Error(`yanit yazilamadi: ${c2.status}`)
+
+      // 1) YABANCI silemez → 404 (403 değil: existence-oracle tutarlılığı)
+      const yab = await http(`/api/social/comments/${cid}`, { method: 'DELETE', token: tok(CX) })
+      if (yab.status !== 404) throw new Error(`yabanci baskasinin yorumunu sildi: ${yab.status}`)
+
+      // 2) UZUN yorum sessizce kırpılmaz, 400 döner
+      const uzun = await http(`/api/social/feed/${fk}/comments`, { method: 'POST', token: tok(CY), body: { content: 'a'.repeat(501) } })
+      if (uzun.status !== 400) throw new Error(`501 karakterlik yorum ${uzun.status} (400 bekleniyor — sessiz kirpma)`)
+
+      // 3) YAZAR kendi yorumunu siler; YANITI da gider (yetim yanıt kalmaz)
+      const kendi = await http(`/api/social/comments/${cid}`, { method: 'DELETE', token: tok(CY) })
+      if (kendi.status !== 200) throw new Error(`yazar kendi yorumunu silemedi: ${kendi.status} ${kendi.text.slice(0,100)}`)
+      if (await prisma.activityComment.count({ where: { feedKey: fk } }) !== 0) throw new Error('yanit yetim kaldi (parent silindi, yanit durdu)')
+
+      // 4) AKTİVİTE SAHİBİ, başkasının yorumunu silebilir
+      const c3 = await http(`/api/social/feed/${fk}/comments`, { method: 'POST', token: tok(CX), body: { content: 'istenmeyen' } })
+      const cid3 = c3.json?.comment?.id
+      const sahip = await http(`/api/social/comments/${cid3}`, { method: 'DELETE', token: tok(CO) })
+      if (sahip.status !== 200) throw new Error(`aktivite sahibi yorumu silemedi: ${sahip.status} ${sahip.text.slice(0,100)}`)
+      if (await prisma.activityComment.count({ where: { feedKey: fk } }) !== 0) throw new Error('sahip silmesi satiri birakmis')
+    } finally {
+      await prisma.activityComment.deleteMany({ where: { feedKey: fk } }).catch(() => {})
+      await prisma.notification.deleteMany({ where: { userId: { in: [CO, CY, CX] } } }).catch(() => {})
+      await prisma.booking.deleteMany({ where: { id: bk.id } }).catch(() => {})
+      await prisma.user.deleteMany({ where: { id: { in: [CO, CY, CX] } } }).catch(() => {})
+    }
+  })
+
   // ================== HATA YOLLARI REGRESYONLARI (denetim turu 15) ==================
   await check('Hata yolu: şifre değişince TÜM refresh oturumları iptal edilir (atomik)', async () => {
     const CU = 990901

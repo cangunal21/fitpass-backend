@@ -5,6 +5,7 @@ import {
   acceptFollowRequest, rejectFollowRequest, getFollowRequests,
   getUserLeaderboard, getVenueLeaderboard, getStreakLeaderboard, getSuggestions, getFeed,
   likeActivity, unlikeActivity, getActivityComments, addActivityComment,
+  deleteActivityComment,
   getNotifications, markNotificationsRead, getMyCalendar,
 } from '../controllers/socialController'
 import { reportUser } from '../controllers/reportController'
@@ -33,6 +34,8 @@ router.post('/feed/:feedKey/like', authMiddleware, requireVerifiedEmail, likeAct
 router.delete('/feed/:feedKey/like', authMiddleware, unlikeActivity)
 router.get('/feed/:feedKey/comments', optionalAuthMiddleware, getActivityComments)
 router.post('/feed/:feedKey/comments', authMiddleware, requireVerifiedEmail, addActivityComment)
+// Yorum silme: yazar VEYA aktivite sahibi (yetki kontrolu controller'da; yetkisizde 404)
+router.delete('/comments/:commentId', authMiddleware, deleteActivityComment)
 router.get('/notifications', authMiddleware, getNotifications)
 router.put('/notifications/read', authMiddleware, markNotificationsRead)
 router.post('/report', authMiddleware, requireVerifiedEmail, reportUser)

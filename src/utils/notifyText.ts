@@ -75,6 +75,24 @@ export const NOTIFY: Record<string, Entry> = {
     },
     pushTitle: { tr: 'Rezervasyonun iptal edildi', en: 'Your booking was cancelled' },
   },
+  // SALON GECICI OLARAK KAPANDI (askiya alma / onay geri alma). Rezervasyon IPTAL EDILMEZ —
+  // bu yuzden `booking_cancelled_venue_closed`tan AYRI bir metin. Onceden hicbir bildirim
+  // gitmiyordu: kullanicinin rezervasyonu "onaylı" gorunmeye devam ediyor ama check-in kapali
+  // (venueApprovedMiddleware 403) — yani kisi derse gidip kapida ogreniyordu.
+  venue_suspended: {
+    body: {
+      tr: '{venue} geçici olarak kapandı. Rezervasyonların duruyor ama salon yeniden açılana kadar giriş yapılamıyor. İptal edersen tam iade alırsın.',
+      en: '{venue} is temporarily closed. Your bookings remain, but check-in is unavailable until it reopens. Cancel any time for a full refund.',
+    },
+    pushTitle: { tr: 'Salon geçici olarak kapandı', en: 'Venue temporarily closed' },
+  },
+  venue_reopened: {
+    body: {
+      tr: '{venue} yeniden açıldı. Rezervasyonların geçerli, derse gidebilirsin.',
+      en: '{venue} has reopened. Your bookings are valid — see you in class.',
+    },
+    pushTitle: { tr: 'Salon yeniden açıldı', en: 'Venue reopened' },
+  },
   booking_transferred: {
     pushTitle: { tr: 'Dersin değiştirildi 🔄', en: 'Your class was changed 🔄' },
     pushBody: { tr: '{classTitle} · {date} {time}.{refund}', en: '{classTitle} · {date} {time}.{refund}' },
