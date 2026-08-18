@@ -17,7 +17,21 @@
 set -euo pipefail
 
 PROD_URL="${1:-${PROD_DATABASE_URL:-}}"
-if [[ -z "$PROD_URL" ]]; then
+
+# ── PAROLAYI KOMUT SATIRINDAN CIKAR ─────────────────────────────────────────────────────────────
+# `psql "postgresql://kullanici:PAROLA@host/db"` cagrisinda baglanti adresi bir KOMUT SATIRI
+# ARGUMANIDIR; makinedeki her yerel surec `ps`/`pgrep -f` ile onu okuyabilir. 18 Agu 2026'da bu
+# somut olarak gerceklesti: bir surec listesi alindi ve prod parolasi cikti. Parola artik PGPASSWORD
+# ortam degiskeniyle gecirilir (surec ortami, komut satirinin aksine, baska kullanicilara kapalidir);
+# komut satirinda yalnizca kullanici@host/db kalir.
+_urldecode() { local s="${1//+/ }"; printf '%b' "${s//%/\\x}"; }
+PROD_URL_GUVENLI="$PROD_URL"
+if [[ "$PROD_URL" =~ ^([a-zA-Z+]+)://([^:@/]+):([^@]+)@(.+)$ ]]; then
+  PGPASSWORD="$(_urldecode "${BASH_REMATCH[3]}")"; export PGPASSWORD
+  PROD_URL_GUVENLI="${BASH_REMATCH[1]}://${BASH_REMATCH[2]}@${BASH_REMATCH[4]}"
+fi
+
+if [[ -z "$PROD_URL_GUVENLI" ]]; then
   echo "HATA: prod veritabani URL'si gerekli."
   echo "Kullanim: $0 \"postgresql://...\""
   exit 1
@@ -33,7 +47,7 @@ DIR="${BACKUP_DIR:-$HOME/Desktop}/sipsakspor-prod-${STAMP}"
 DATA="$DIR/data"
 mkdir -p "$DATA"
 
-SRV="$("$PSQL" "$PROD_URL" -tAc 'SHOW server_version' 2>/dev/null | tr -d '[:space:]')" || true
+SRV="$("$PSQL" "$PROD_URL_GUVENLI" -tAc 'SHOW server_version' 2>/dev/null | tr -d '[:space:]')" || true
 [[ -n "$SRV" ]] || { echo "HATA: prod'a baglanilamadi. URL'yi ve ag erisimini kontrol et."; exit 1; }
 echo "prod sunucu: PostgreSQL $SRV   |   istemci: $("$PSQL" --version | awk '{print $3}')"
 echo "hedef klasor: $DIR"
@@ -68,30 +82,93 @@ while IFS= read -r t; do
   [[ -n "$t" ]] || continue
   # Semada zaten var mi? (tirnakli ya da tirnaksiz CREATE TABLE)
   grep -qE "CREATE TABLE (IF NOT EXISTS )?(\"?public\"?\.)?\"?${t}\"?" "$DIR/schema-1-tables.sql" && continue
-  DDL="$("$PSQL" "$PROD_URL" -tAc "
-    SELECT 'CREATE TABLE IF NOT EXISTS \"'||table_name||'\" ('||
-           string_agg('\"'||column_name||'\" '||
-             CASE WHEN data_type='USER-DEFINED' THEN 'text' ELSE data_type END||
-             COALESCE('('||character_maximum_length||')','')||
-             CASE WHEN is_nullable='NO' THEN ' NOT NULL' ELSE '' END,
-             ', ' ORDER BY ordinal_position)||');'
-    FROM information_schema.columns
-    WHERE table_schema='public' AND table_name='${t}'
-    GROUP BY table_name" 2>/dev/null)"
+  # KATALOGDAN uret, information_schema'dan DEGIL. information_schema `data_type` sutunu dizileri
+  # 'ARRAY' diye verir (gecersiz SQL uretir), `numeric(10,2)`yi hassasiyetsiz 'numeric' yapar ve
+  # PK/DEFAULT'u HIC tasimaz. Yerel PG16'da sinandi: uretilen DDL ucunde de bozuktu; arsivdeki
+  # `_prisma_migrations` DDL'i PK'siz cikmisti. format_type + pg_get_expr ikisi de dogru getirir.
+  DDL="$("$PSQL" "$PROD_URL_GUVENLI" -tAc "
+    SELECT 'CREATE TABLE IF NOT EXISTS \"'||c.relname||'\" ('||
+           string_agg('\"'||a.attname||'\" '||format_type(a.atttypid, a.atttypmod)||
+             CASE WHEN a.attnotnull THEN ' NOT NULL' ELSE '' END||
+             COALESCE(' DEFAULT '||pg_get_expr(d.adbin, d.adrelid), ''),
+             ', ' ORDER BY a.attnum)||
+           COALESCE((SELECT ', CONSTRAINT \"'||pc.conname||'\" '||pg_get_constraintdef(pc.oid)
+                     FROM pg_constraint pc WHERE pc.conrelid=c.oid AND pc.contype='p'), '')||
+           ');'
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid=c.relnamespace AND n.nspname='public'
+    JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
+    LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum
+    WHERE c.relname='${t}' AND c.relkind='r'
+    GROUP BY c.relname, c.oid" 2>/dev/null)"
   if [[ -n "$DDL" ]]; then
     printf '\n-- sema disi (prod'"'"'da var, schema.prisma'"'"'da yok):\n%s\n' "$DDL" >> "$DIR/schema-1-tables.sql"
     SEMADISI=$((SEMADISI+1))
     echo "    + sema disi tablo eklendi: $t"
   fi
-done < <("$PSQL" "$PROD_URL" -tAc \
+done < <("$PSQL" "$PROD_URL_GUVENLI" -tAc \
   "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name")
 [[ "$SEMADISI" -gt 0 ]] && echo "    ($SEMADISI tablo prisma semasinda yoktu, prod yapisindan uretildi)"
 
 # CANLI indeksler: ensureIndexes.ts bazi unique indeksleri KODLA aciyor (prisma semasinda yok).
 # Bunlari da kaydediyoruz ki yedek, canlinin gercek halini yansitsin.
-"$PSQL" "$PROD_URL" -tAc "SELECT indexdef||';' FROM pg_indexes WHERE schemaname='public' ORDER BY indexname" \
+"$PSQL" "$PROD_URL_GUVENLI" -tAc "SELECT indexdef||';' FROM pg_indexes WHERE schemaname='public' ORDER BY indexname" \
   > "$DIR/live-indexes.sql" 2>/dev/null || true
 echo "    live-indexes.sql ($(wc -l < "$DIR/live-indexes.sql" | tr -d ' ') indeks — kodla acilanlar dahil)"
+
+# CANLI DEFAULT'lar: sema `prisma migrate diff` ile uretiliyor, ama Prisma'nin ISTEMCI TARAFINDA
+# urettigi degerler (ornegin `@default(uuid())`) DB tarafina DEFAULT olarak YAZILMAZ. Prod'da ise
+# migration'la konmus gercek bir DB default'u olabilir. Olculdu (17 Agu 2026): RefreshToken.family
+# prod'da `DEFAULT gen_random_uuid()::text` tasiyor, uretilen semada bu DUSMUS; geri yuklenen DB'de
+# DEFAULT'lu sutun sayisi 154 yerine 150 cikiyordu. Yani "kanitlanmis" damgali ama semasi eksik bir DB.
+# Tek ornegi degil SINIFI kapatiyoruz: prod'daki TUM sutun default'lari ALTER olarak tasiniyor.
+"$PSQL" "$PROD_URL_GUVENLI" -tAc "
+  SELECT 'ALTER TABLE \"'||c.relname||'\" ALTER COLUMN \"'||a.attname||'\" SET DEFAULT '||pg_get_expr(d.adbin, d.adrelid)||';'
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid=c.relnamespace AND n.nspname='public'
+  JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
+  JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum
+  WHERE c.relkind='r'
+  ORDER BY c.relname, a.attnum" > "$DIR/schema-1b-defaults.sql" 2>/dev/null || true
+echo "    schema-1b-defaults.sql ($(wc -l < "$DIR/schema-1b-defaults.sql" | tr -d ' ') default — prod'un GERCEK hali)"
+
+# PROD KATALOG PARMAK IZI: dogrulama adiminda geri yuklenen DB ile SATIR SATIR karsilastirilir.
+# Ayrica insanin sonradan `diff` alabilecegi tek dosya budur.
+katalog_sql() {
+  cat <<'SQL'
+SELECT 'COL|'||table_name||'|'||column_name||'|'||data_type||'|'||coalesce(character_maximum_length::text,'-')||'|'||is_nullable||'|'||coalesce(column_default,'-')
+  FROM information_schema.columns WHERE table_schema='public'
+UNION ALL
+-- contype filtresi BILINCLI. Disarida birakilanlar ve NEDENI (17 Agu 2026'da olculdu, 291 fark):
+--   'n' NOT NULL  : PostgreSQL 17+ bunlari pg_constraint'te AYRI satir olarak listeler, 16 listelemez.
+--                   Prod 18.4, dogrulama hedefi yerel 16 -> 289 sahte fark. Bilgi kaybi YOK: NOT NULL
+--                   zaten asagidaki COL| satirlarinda is_nullable olarak karsilastiriliyor.
+--   'u' UNIQUE    : prod'da tabloya gomulu UNIQUE olarak (RefreshToken_token_key gibi) duruyor;
+--                   `prisma migrate diff` ayni tekilligi CREATE UNIQUE INDEX olarak uretiyor. Ikisi de
+--                   ayni kisitlamayi uygular ve IDX| satirlarinda ZATEN karsilastiriliyor (o tarafta
+--                   sifir fark cikti). Beyan bicimi farki, geri yukleme icin anlamli degil.
+-- Iceride kalanlar semantik tasiyor ve baska hicbir yerde olculmuyor: p=PK, f=FK, c=CHECK, x=EXCLUDE.
+SELECT 'CON|'||conrelid::regclass::text||'|'||conname||'|'||contype::text||'|'||pg_get_constraintdef(oid)
+  FROM pg_constraint WHERE connamespace='public'::regnamespace AND contype IN ('p','f','c','x')
+UNION ALL
+SELECT 'IDX|'||tablename||'|'||indexname||'|'||indexdef
+  FROM pg_indexes WHERE schemaname='public'
+ORDER BY 1
+SQL
+}
+# HATAYI YUTMA. Ilk yazimda burada `2>/dev/null || true` vardi ve sorgu `text || "char"` belirsiz
+# operator hatasiyla dusuyordu; dosya BOS kaliyor, asagidaki `[[ -s ... ]]` karsilastirmayi
+# atliyor, SEMA_FARK 0 kaliyor ve yedek "sema de eslesti" damgasi aliyordu. Yani yeni kapi hicbir
+# sey olcmeden yesil veriyordu — duzeltmeye calistigi kusurun aynisi. Hata artik gorunur ve
+# katalog uretilemezse dogrulama BASARISIZ sayilir (asagida SEMA_FARK=-1).
+if ! katalog_sql | "$PSQL" "$PROD_URL_GUVENLI" -tA -f - > "$DIR/schema-0-prod-katalog.txt" 2>"$DIR/_katalog-hata.txt"; then
+  echo "    ✗ prod katalogu OKUNAMADI: $(head -2 "$DIR/_katalog-hata.txt" | tr '\n' ' ')"
+else
+  rm -f "$DIR/_katalog-hata.txt"
+fi
+KATALOG_SATIR="$(wc -l < "$DIR/schema-0-prod-katalog.txt" | tr -d ' ')"
+echo "    schema-0-prod-katalog.txt ($KATALOG_SATIR satir: sutun+kisit+indeks)"
+[[ "$KATALOG_SATIR" -eq 0 ]] && echo "    ⚠️  katalog BOS — sema karsilastirmasi yapilamayacak, dogrulama BASARISIZ sayilacak"
 
 # --- 2/6 TABLO LISTESI + VERI --------------------------------------------------------------------
 echo "=== 2/6 Veri cekiliyor (tablo basina CSV) ==="
@@ -100,7 +177,7 @@ echo "=== 2/6 Veri cekiliyor (tablo basina CSV) ==="
 TABLES=(); NTAB=0
 while IFS= read -r t; do
   [[ -n "$t" ]] && { TABLES+=("$t"); NTAB=$((NTAB+1)); }
-done < <("$PSQL" "$PROD_URL" -tAc \
+done < <("$PSQL" "$PROD_URL_GUVENLI" -tAc \
   "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name")
 [[ "$NTAB" -gt 0 ]] || { echo "HATA: public semasinda tablo yok."; exit 1; }
 
@@ -108,8 +185,8 @@ done < <("$PSQL" "$PROD_URL" -tAc \
 TOTAL=0
 for t in "${TABLES[@]}"; do
   [[ -z "$t" ]] && continue
-  "$PSQL" "$PROD_URL" -q -c "\\copy (SELECT * FROM \"$t\") TO '$DATA/$t.csv' WITH (FORMAT csv, HEADER true)" >/dev/null
-  n="$("$PSQL" "$PROD_URL" -tAc "SELECT count(*) FROM \"$t\"")"
+  "$PSQL" "$PROD_URL_GUVENLI" -q -c "\\copy (SELECT * FROM \"$t\") TO '$DATA/$t.csv' WITH (FORMAT csv, HEADER true)" >/dev/null
+  n="$("$PSQL" "$PROD_URL_GUVENLI" -tAc "SELECT count(*) FROM \"$t\"")"
   # SAAT DILIMI BAGLANTI ANINDA SABITLENIR (PGOPTIONS='-c timezone=UTC'): `to_jsonb` bir
   # `timestamptz` alanini OTURUMUN
   # saat dilimine gore metne cevirir. Prod Etc/UTC, bu makine America/Toronto -> AYNI an iki
@@ -128,7 +205,7 @@ for t in "${TABLES[@]}"; do
   # to_jsonb kullaniyoruz (x::text DEGIL): canli DB `db push` ile buyudugu icin fiziksel sutun
   # sirasi sema sirasindan farkli; row::text buna duyarli olup ayni veride bile yanlis alarm veriyordu.
   # Surumler arasi guvenli: PG12+ float8'i "en kisa tam donusum" ile yazar, jsonb anahtarlari normalize.
-  d="$(PGOPTIONS='-c timezone=UTC' "$PSQL" "$PROD_URL" -tAc "SELECT md5(coalesce(string_agg(md5(to_jsonb(x)::text), '' ORDER BY md5(to_jsonb(x)::text)), '')) FROM \"$t\" x" 2>/dev/null || echo DIGEST_ALINAMADI)"
+  d="$(PGOPTIONS='-c timezone=UTC' "$PSQL" "$PROD_URL_GUVENLI" -tAc "SELECT md5(coalesce(string_agg(md5(to_jsonb(x)::text), '' ORDER BY md5(to_jsonb(x)::text)), '')) FROM \"$t\" x" 2>/dev/null || echo DIGEST_ALINAMADI)"
   printf '%s\t%s\t%s\n' "$t" "$n" "$d" >> "$DIR/rowcounts.tsv"
   TOTAL=$((TOTAL + n))
   printf '    %-30s %8s satir  %s\n' "$t" "$n" "${d:0:8}"
@@ -138,7 +215,7 @@ echo "    TOPLAM: $NTAB tablo / $TOTAL satir"
 # --- 3/6 SEQUENCE'LER ----------------------------------------------------------------------------
 # Bunlar olmadan geri yuklenen veritabaninda ID sayaclari 1'den baslar -> ilk yazmada cakisma.
 echo "=== 3/6 ID sayaclari (sequence) kaydediliyor ==="
-"$PSQL" "$PROD_URL" -tAc \
+"$PSQL" "$PROD_URL_GUVENLI" -tAc \
   "SELECT format('SELECT setval(%L, %s, true);', schemaname||'.'||quote_ident(sequencename), GREATEST(COALESCE(last_value,1),1)) FROM pg_sequences WHERE schemaname='public'" \
   > "$DIR/schema-3-sequences.sql"
 echo "    $(wc -l < "$DIR/schema-3-sequences.sql" | tr -d ' ') sequence"
@@ -226,6 +303,39 @@ else
   # FK'lar EN SON: veri ic tutarsizsa tam burada patlar -> yedegin saglamligi icin en guclu kanit
   "$PSQL" "$T" -q -v ON_ERROR_STOP=1 -f "$DIR/schema-2-fks.sql" >/dev/null
   "$PSQL" "$T" -q -v ON_ERROR_STOP=1 -f "$DIR/schema-3-sequences.sql" >/dev/null
+  # Prod'un GERCEK default'lari (prisma semasinin uretemedikleri dahil)
+  [[ -s "$DIR/schema-1b-defaults.sql" ]] && "$PSQL" "$T" -q -v ON_ERROR_STOP=1 -f "$DIR/schema-1b-defaults.sql" >/dev/null
+  # Kodla acilan indeksler (ensureIndexes.ts). Var olanlar "already exists" der; BEKLENEN durum bu,
+  # o yuzden burada ON_ERROR_STOP kapali. RESTORE.md adim 5 de ayni seyi soyluyor.
+  [[ -s "$DIR/live-indexes.sql" ]] && "$PSQL" "$T" -q -f "$DIR/live-indexes.sql" >/dev/null 2>&1
+
+  # --- SEMA KARSILASTIRMASI ----------------------------------------------------------------------
+  # Dogrulama eskiden YALNIZ VERIYE bakiyordu: count(*) + icerik ozeti. Semanin dogru geri geldigini
+  # HICBIR sey kontrol etmiyordu. Olculdu (17 Agu 2026): prod ile geri yuklenen DB arasinda indeks
+  # 113 vs 107, PK 42 vs 41, DEFAULT'lu sutun 154 vs 150 farki vardi — ve yedek yine "KANITLANDI"
+  # damgasi aliyordu. schema.prisma'da ifade edilemeyen HER prod DDL'i (DB default, CHECK, trigger,
+  # kismi indeks) bu bosluktan sessizce dusuyordu; felaket gunune kadar da fark edilmiyordu.
+  SEMA_FARK=0
+  if [[ ! -s "$DIR/schema-0-prod-katalog.txt" ]]; then
+    # "Karsilastiramadim" ile "fark yok" AYNI SEY DEGIL. Katalog yoksa sema hakkinda hicbir sey
+    # bilmiyoruz demektir; bu durumda yedegi "sema de dogrulandi" diye damgalamak yalan olur.
+    echo "    ✗ prod katalogu YOK/BOS — sema karsilastirilamadi (dogrulanmamis sayiliyor)"
+    SEMA_FARK=-1
+  else
+    katalog_sql | "$PSQL" "$T" -tA -f - > "$DIR/_katalog-geri.txt" 2>/dev/null || true
+    if ! diff -u "$DIR/schema-0-prod-katalog.txt" "$DIR/_katalog-geri.txt" > "$DIR/_sema-diff.txt" 2>&1; then
+      SEMA_FARK="$(grep -c '^[+-][^+-]' "$DIR/_sema-diff.txt" || echo 0)"
+      { echo "# PROD ile GERI YUKLENEN DB arasindaki SEMA farklari"
+        echo "# '-' prod'da VAR geri yuklenende YOK · '+' tersi"
+        echo ""
+        grep '^[+-][^+-]' "$DIR/_sema-diff.txt"
+      } > "$DIR/SEMA-FARKLARI.txt"
+      echo "    ✗ SEMA FARKI: $SEMA_FARK satir (ayrinti: SEMA-FARKLARI.txt)"
+    else
+      echo "    sema birebir ayni (sutun + kisit + indeks)"
+    fi
+    rm -f "$DIR/_katalog-geri.txt" "$DIR/_sema-diff.txt"
+  fi
 
   echo "=== 5/6 Satir sayisi VE icerik ozeti karsilastiriliyor ==="
   FAIL=0
@@ -239,8 +349,17 @@ else
     fi
   done < "$DIR/rowcounts.tsv"
   "$PSQL" "$LOCAL_ADMIN" -q -c "DROP DATABASE \"$TMPDB\"" >/dev/null 2>&1 || true
-  if [[ "$FAIL" -eq 0 ]]; then echo "    tum tablolar birebir ayni: $NTAB tablo, $TOTAL satir, icerik ozetleri de eslesti"; VERIFIED=yes
-  else echo "    $FAIL tabloda fark var"; VERIFIED=no; fi
+  # VERIFIED artik VERI **ve** SEMA'yi birlikte olcuyor. Sema farki da basarisizliktir: semasi
+  # eksik bir geri yukleme "calisiyor gibi" gorunup ilk yazmada patlar.
+  if [[ "$FAIL" -eq 0 && "$SEMA_FARK" -eq 0 ]]; then
+    echo "    tum tablolar birebir ayni: $NTAB tablo, $TOTAL satir, icerik ozetleri VE sema eslesti"; VERIFIED=yes
+  elif [[ "$FAIL" -ne 0 ]]; then
+    echo "    $FAIL tabloda VERI farki var"; VERIFIED=no
+  elif [[ "$SEMA_FARK" -eq -1 ]]; then
+    echo "    veri ayni ama SEMA KARSILASTIRILAMADI — kanit eksik"; VERIFIED=no
+  else
+    echo "    veri ayni ama SEMA farkli ($SEMA_FARK satir) — bkz. SEMA-FARKLARI.txt"; VERIFIED=no
+  fi
 fi
 
 # --- 6/6 PAKETLE ---------------------------------------------------------------------------------

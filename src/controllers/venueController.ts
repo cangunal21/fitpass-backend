@@ -324,6 +324,12 @@ export const getVenueMe = async (req: Request, res: Response) => {
         classes: {
           select: {
             id: true, title: true, category: true, basePrice: true, isActive: true,
+            // HOCA: mobil salon paneli dersin hocasını HİÇ göstermiyordu — mobilden açılan ders
+            // hocasız kalıyor ve bu eksiklik ekranda görünmediği için fark edilmiyordu. Yalnız
+            // id+ad seçiliyor: Instructor satırında passwordHash/email/phone var, salonun kendi
+            // hocası olsa bile panel yanıtına taşınmasın (stripInstructorSensitive ile aynı niyet).
+            instructorId: true,
+            instructor: { select: { id: true, fullName: true } },
             sessions: {
               select: {
                 id: true, startsAt: true, endsAt: true, capacity: true,

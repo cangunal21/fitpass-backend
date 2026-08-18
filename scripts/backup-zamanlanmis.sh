@@ -49,8 +49,17 @@ if [[ -z "${PROD_DATABASE_URL:-}" ]]; then
   exit 1
 fi
 
+# PAROLAYI KOMUT SATIRINDAN CIKAR — aşağıdaki prob da `ps` ile okunabilen bir argüman taşıyordu.
+# (Aynı sertleştirme backup-prod.sh ve backup-prod-logical.sh içinde de var.)
+_urldecode() { local s="${1//+/ }"; printf '%b' "${s//%/\\x}"; }
+PROD_URL_GUVENLI="$PROD_DATABASE_URL"
+if [[ "$PROD_DATABASE_URL" =~ ^([a-zA-Z+]+)://([^:@/]+):([^@]+)@(.+)$ ]]; then
+  PGPASSWORD="$(_urldecode "${BASH_REMATCH[3]}")"; export PGPASSWORD
+  PROD_URL_GUVENLI="${BASH_REMATCH[1]}://${BASH_REMATCH[2]}@${BASH_REMATCH[4]}"
+fi
+
 # Ağ yoksa sessizce başarısız olma — DURUM dosyasına yaz ki bayatlık fark edilsin.
-if ! psql "$PROD_DATABASE_URL" -tAc 'SELECT 1' >/dev/null 2>&1; then
+if ! psql "$PROD_URL_GUVENLI" -tAc 'SELECT 1' >/dev/null 2>&1; then
   echo "❌ Prod'a bağlanılamadı (ağ yok ya da URL değişti)."
   printf 'HATA\t%s\tproda baglanilamadi\n' "$(date '+%Y-%m-%d %H:%M')" > "$DURUM"
   exit 1
@@ -77,7 +86,9 @@ echo "→ yedek alınıyor (hedef: $HEDEF)"
 # Koşudan ÖNCEKİ dosya listesi: aşağıda "bu koşunun ürettiği dosya hangisi" sorusunu
 # tarih/saat tahminiyle değil, KÜME FARKIYLA cevaplamak için.
 ONCEKI=$(ls -1d "$HEDEF"/sipsakspor-prod-* 2>/dev/null | sort)
-BACKUP_DIR="$HEDEF" bash "$REPO/scripts/backup-prod.sh" "$PROD_DATABASE_URL"
+# URL ARGUMAN DEGIL ORTAM: komut satirlari makinedeki her yerel surec tarafindan okunabilir
+# (`ps`/`pgrep -f`). 18 Agu 2026'da bu gerceklesti ve prod parolasi bir surec listesinde gorundu.
+BACKUP_DIR="$HEDEF" bash "$REPO/scripts/backup-prod.sh"
 KOD=$?
 
 # ── DOĞRULANMAMIŞ ÜRÜNÜ ADIYLA AYIR ─────────────────────────────────────────────────────────

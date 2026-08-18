@@ -15,12 +15,26 @@
 set -euo pipefail
 
 PROD_URL="${1:-${PROD_DATABASE_URL:-}}"
-if [[ -z "$PROD_URL" ]]; then
+
+# ── PAROLAYI KOMUT SATIRINDAN CIKAR ─────────────────────────────────────────────────────────────
+# `psql "postgresql://kullanici:PAROLA@host/db"` cagrisinda baglanti adresi bir KOMUT SATIRI
+# ARGUMANIDIR; makinedeki her yerel surec `ps`/`pgrep -f` ile onu okuyabilir. 18 Agu 2026'da bu
+# somut olarak gerceklesti: bir surec listesi alindi ve prod parolasi cikti. Parola artik PGPASSWORD
+# ortam degiskeniyle gecirilir (surec ortami, komut satirinin aksine, baska kullanicilara kapalidir);
+# komut satirinda yalnizca kullanici@host/db kalir.
+_urldecode() { local s="${1//+/ }"; printf '%b' "${s//%/\\x}"; }
+PROD_URL_GUVENLI="$PROD_URL"
+if [[ "$PROD_URL" =~ ^([a-zA-Z+]+)://([^:@/]+):([^@]+)@(.+)$ ]]; then
+  PGPASSWORD="$(_urldecode "${BASH_REMATCH[3]}")"; export PGPASSWORD
+  PROD_URL_GUVENLI="${BASH_REMATCH[1]}://${BASH_REMATCH[2]}@${BASH_REMATCH[4]}"
+fi
+
+if [[ -z "$PROD_URL_GUVENLI" ]]; then
   echo "HATA: prod veritabani URL'si gerekli."
   echo "Kullanim: $0 \"postgresql://...\"   (ya da PROD_DATABASE_URL ortam degiskeni)"
   exit 1
 fi
-if [[ "$PROD_URL" != postgres* ]]; then
+if [[ "$PROD_URL_GUVENLI" != postgres* ]]; then
   echo "HATA: URL 'postgresql://' ile baslamali."
   exit 1
 fi
@@ -37,7 +51,7 @@ TMPDB="fitpass_restore_test_${STAMP//-/_}"
 # yedek almaktan iyidir).
 PSQL_ANY="$(command -v psql || true)"
 [[ -z "$PSQL_ANY" ]] && { echo "HATA: psql bulunamadi (PostgreSQL istemcisi kurulu degil)."; exit 1; }
-SRV_FULL="$("$PSQL_ANY" "$PROD_URL" -tAc "SHOW server_version" 2>/dev/null | tr -d '[:space:]')" || true
+SRV_FULL="$("$PSQL_ANY" "$PROD_URL_GUVENLI" -tAc "SHOW server_version" 2>/dev/null | tr -d '[:space:]')" || true
 if [[ -z "$SRV_FULL" ]]; then
   echo "HATA: prod veritabanina baglanilamadi. URL'yi ve ag erisimini kontrol et."
   exit 1
@@ -66,7 +80,9 @@ if [[ -z "$PG_BIN_DIR" ]]; then
   echo "     yedek gercekten geri yuklenip satir sayisi ve icerik ozeti karsilastirilacak."
   echo "     (Istersen yerel istemciyi de kurabilirsin: brew install postgresql@${SRV_MAJOR})"
   echo ""
-  exec bash "$(dirname "$0")/backup-prod-logical.sh" "$PROD_URL"
+  # URL ARGUMAN OLARAK GECIRILMEZ: cocuk surecin komut satiri da `ps` ile okunabilir. Ortamdan
+  # gecirilir (betikler zaten PROD_DATABASE_URL'e dusuyor). Parola ayrica PGPASSWORD'de.
+  PROD_DATABASE_URL="$PROD_URL" exec bash "$(dirname "$0")/backup-prod-logical.sh"
 fi
 PGDUMP="$PG_BIN_DIR/pg_dump"; PGRESTORE="$PG_BIN_DIR/pg_restore"
 PSQL="$PG_BIN_DIR/psql"; CREATEDB="$PG_BIN_DIR/createdb"; DROPDB="$PG_BIN_DIR/dropdb"
@@ -74,7 +90,7 @@ echo "kullanilan istemci: $("$PGDUMP" --version)"
 # ---------------------------------------------------------------------------------------------
 
 echo "=== 1/4 Prod yedegi aliniyor (salt okuma) ==="
-"$PGDUMP" "$PROD_URL" -Fc --no-owner --no-privileges -f "$OUT"
+"$PGDUMP" "$PROD_URL_GUVENLI" -Fc --no-owner --no-privileges -f "$OUT"
 SIZE=$(du -h "$OUT" | cut -f1)
 echo "    dosya: $OUT  ($SIZE)"
 
@@ -122,7 +138,7 @@ COUNT_SQL="SELECT table_name FROM information_schema.tables WHERE table_schema='
 FAIL=0; TOTAL_SRC=0; TOTAL_DST=0
 while read -r t; do
   [[ -z "$t" ]] && continue
-  src=$("$PSQL" "$PROD_URL" -tAc "SELECT count(*) FROM \"$t\"" 2>/dev/null || echo "X")
+  src=$("$PSQL" "$PROD_URL_GUVENLI" -tAc "SELECT count(*) FROM \"$t\"" 2>/dev/null || echo "X")
   dst=$("$PSQL" "$TMPURL"  -tAc "SELECT count(*) FROM \"$t\"" 2>/dev/null || echo "X")
   if [[ "$src" == "X" || "$dst" == "X" ]]; then
     printf "  ?? %-28s kaynak=%s geri=%s\n" "$t" "$src" "$dst"; FAIL=$((FAIL+1)); continue
@@ -131,7 +147,7 @@ while read -r t; do
   if [[ "$src" != "$dst" ]]; then
     printf "  ✗  %-28s kaynak=%s geri=%s\n" "$t" "$src" "$dst"; FAIL=$((FAIL+1))
   fi
-done < <("$PSQL" "$PROD_URL" -tAc "$COUNT_SQL")
+done < <("$PSQL" "$PROD_URL_GUVENLI" -tAc "$COUNT_SQL")
 echo "    toplam satir: kaynak=$TOTAL_SRC geri_yuklenen=$TOTAL_DST"
 
 echo "=== 4/4 Gecici veritabani siliniyor ==="
