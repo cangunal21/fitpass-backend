@@ -292,13 +292,52 @@ let bootTamam = false
 let indexHatalari: string[] = []
 let kapaniyor = false
 
+// ── DB CANLILIK NABZI ───────────────────────────────────────────────────────────────────────
+// 18 Ağu 2026'da ÖLÇÜLDÜ: prod'un veritabanı parolası değişti, uygulama bağlanamaz hale geldi ve
+// HER istek 500 döndü — ama `/health` bir saat boyunca `ok:true` demeye devam etti. Sebep:
+// `bootTamam` açılışta BİR KEZ set edilen bir bayrak; sonradan bozulan bağlantıyı görmüyor.
+// railway.json healthcheckPath="/health" olduğu için Railway de konteyneri sağlıklı sandı,
+// trafiği kesmedi ve deploy'u geri almadı. Doğru sinyali `/health/ready` üretiyordu (ok:false)
+// ama ona bakan yoktu — "yanlış şeyi ölçen yeşil kapı".
+//
+// TOLERANS NEDEN VAR: /health düşünce Railway ON_FAILURE ile konteyneri yeniden başlatabiliyor.
+// Anlık bir takılma yüzünden ayakta olan bir sürümü öldürmek istemiyoruz. Bu yüzden ancak
+// ÜST ÜSTE üç yoklama (≈30 sn) başarısız olursa sağlıksız bildiriyoruz; ilk başarıda anında dönüyor.
+let dbSaglikli = true
+let dbArtArdaHata = 0
+const DB_NABIZ_MS = 10_000
+const DB_TOLERANS = 3
+
+const dbNabzi = setInterval(async () => {
+  if (kapaniyor) return
+  try {
+    await Promise.race([
+      prisma.$queryRaw`SELECT 1`,
+      new Promise((_, rej) => setTimeout(() => rej(new Error('db nabiz timeout')), 3000)),
+    ])
+    if (!dbSaglikli) console.log('✅ DB yeniden erişilebilir — /health tekrar SAĞLIKLI bildiriyor')
+    dbSaglikli = true
+    dbArtArdaHata = 0
+  } catch (e: any) {
+    dbArtArdaHata++
+    if (dbArtArdaHata === DB_TOLERANS) {
+      dbSaglikli = false
+      console.error(`❌ DB ${DB_TOLERANS} ardışık yoklamada erişilemedi — /health SAĞLIKSIZ bildiriyor: ${e?.message || e}`)
+    }
+  }
+}, DB_NABIZ_MS)
+dbNabzi.unref?.()   // SIGTERM'de temiz çıkışı bekletmesin
+
 app.get('/health', (req, res) => {
   if (kapaniyor) return res.status(503).json({ ok: false, state: 'shutting_down' })
   if (!bootTamam) return res.status(503).json({ ok: false, state: 'booting' })
+  // Açılıştan SONRA kopan bağlantı da sağlıksızlıktır: "bir zamanlar açılabildim" yeterli değil.
+  if (!dbSaglikli) return res.status(503).json({ ok: false, state: 'db_unreachable', dbArtArdaHata })
   res.json({
     ok: true,
     uptime: Math.round(process.uptime()),
     release: process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 7) || null,
+    db: 'ok',
   })
 })
 

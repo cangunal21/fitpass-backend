@@ -2564,6 +2564,23 @@ async function run() {
     }
   })
 
+  await check('Deploy: /health DB canlılığını yansıtır ve /health/ready ile ÇELİŞMEZ', async () => {
+    // 18 Ağu 2026 CANLI OLAY: prod DB parolası değişti, uygulama bağlanamaz oldu, HER istek 500
+    // döndü — ama /health bir saat boyunca ok:true dedi. `bootTamam` açılışta bir kez set edilen
+    // bir bayrak olduğu için sonradan kopan bağlantıyı görmüyordu. railway.json healthcheckPath
+    // "/health" olduğundan Railway de konteyneri sağlıklı sandı ve trafiği kesmedi.
+    const h = await http('/health')
+    if (h.status !== 200) throw new Error(`/health ${h.status} (200 bekleniyor)`)
+    if (h.json?.db !== 'ok') throw new Error(`/health db alanı '${h.json?.db}' (DB canlılığı raporlanmıyor)`)
+
+    const r = await http('/health/ready')
+    // DEĞİŞMEZ: hazır-olma ucu "DB erişilemiyor" derken sağlık ucu "iyiyim" DİYEMEZ.
+    // Bugünkü olayın tam olarak ihlal ettiği kural bu.
+    if (r.json?.ok === false && h.json?.ok === true) {
+      throw new Error('/health/ready DB sorunlu diyor ama /health hâlâ ok:true — iki kapı çelişiyor')
+    }
+  })
+
   // ================== HATA YOLLARI REGRESYONLARI (denetim turu 15) ==================
   await check('Hata yolu: şifre değişince TÜM refresh oturumları iptal edilir (atomik)', async () => {
     const CU = 990901

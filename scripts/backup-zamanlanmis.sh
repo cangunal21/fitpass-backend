@@ -65,8 +65,15 @@ if [[ ! -f "$GIZLI" ]]; then
   printf 'HATA\t%s\tgizli ayar dosyasi yok\n' "$(date '+%Y-%m-%d %H:%M')" > "$DURUM"
   exit 1
 fi
-# shellcheck disable=SC1090
-set -a; . "$GIZLI"; set +a
+# ── GİZLİ DOSYAYI `source` ETME, AYRIŞTIR ───────────────────────────────────────────────────
+# `. "$GIZLI"` dosyayı KABUK KODU olarak çalıştırır. İçinde `ANAHTAR=değer` biçiminde OLMAYAN bir
+# satır varsa (ör. kullanıcı adresi öneksiz yeni bir satıra yapıştırdıysa) kabuk onu komut sanar,
+# çalıştırmaya kalkar ve hata mesajında SATIRIN TAMAMINI — yani parolayı — günlüğe basar.
+# 18 Ağu 2026'da tam olarak bu oldu ve prod parolası açığa çıktı. Üstelik bu, yedeğin HER
+# koşusunda tekrarlanabilecek yapısal bir kusurdu: gizli değer `yedek.log`a düşerdi.
+# Artık yalnızca istenen anahtar okunuyor; dosyanın geri kalanı asla yorumlanmıyor.
+PROD_DATABASE_URL="$(sed -n 's/^[[:space:]]*PROD_DATABASE_URL=//p' "$GIZLI" | head -1)"
+export PROD_DATABASE_URL
 if [[ -z "${PROD_DATABASE_URL:-}" ]]; then
   echo "❌ PROD_DATABASE_URL boş."
   printf 'HATA\t%s\tPROD_DATABASE_URL bos\n' "$(date '+%Y-%m-%d %H:%M')" > "$DURUM"
