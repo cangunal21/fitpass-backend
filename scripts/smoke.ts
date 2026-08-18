@@ -1657,7 +1657,12 @@ async function run() {
     const cScat = await temelKategori()
     await prisma.class.upsert({ where: { id: 990151 }, update: {}, create: { id: 990151, venueId: V, title: 'KuponDers', category: catName, sportCategoryId: cScat?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     await prisma.class_Session.upsert({ where: { id: 990151 }, update: { startsAt: new Date(Date.now() + 2 * 86400000), status: 'open' }, create: { id: 990151, classId: 990151, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), capacity: 20, status: 'open' } })
-    await prisma.class_Session.upsert({ where: { id: 990152 }, update: { startsAt: new Date(Date.now() + 2 * 86400000), status: 'open' }, create: { id: 990152, classId: 990151, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), capacity: 20, status: 'open' } })
+    // FARKLI GÜN ŞART: iki seans da AYNI derse bağlı ve startsAt ikisinde de `Date.now() + 2 gün`
+    // ile hesaplanıyordu. ensureIndexes (classId, startsAt) üzerinde TEKİLLİK index'i kuruyor;
+    // iki upsert aynı milisaniyede tamamlanırsa (CI'da yerel Postgres ile olağan) ikincisi
+    // "Unique constraint failed" ile düşüyordu — yerelde geçen, CI'da düşen bir KARARSIZLIK.
+    // Testin kendisi için zamanların aynı olması gerekmiyor; yalnız ikisi de gelecekte ve açık olmalı.
+    await prisma.class_Session.upsert({ where: { id: 990152 }, update: { startsAt: new Date(Date.now() + 3 * 86400000), status: 'open' }, create: { id: 990152, classId: 990151, startsAt: new Date(Date.now() + 3 * 86400000), endsAt: new Date(Date.now() + 3 * 86400000 + 3600000), capacity: 20, status: 'open' } })
     await prisma.booking.deleteMany({ where: { session: { classId: 990151 } } })
     await prisma.coupon.deleteMany({ where: { code: 'PERUSER1' } })
     await prisma.coupon.create({ data: { venueId: V, code: 'PERUSER1', discountType: 'fixed', discountValue: 100, perUserLimit: 1, isActive: true } })
