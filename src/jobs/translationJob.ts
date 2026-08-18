@@ -71,7 +71,7 @@ export async function fillMissingTranslations(): Promise<number> {
 
     // ── Eğitmen biyografisi ────────────────────────────────────────────────────────
     const bios = await prisma.instructor.findMany({
-      where: { bioEn: null, bio: { not: null } },
+      where: { bioEn: null, bio: { not: null }, NOT: { bio: '' } },
       select: { id: true, bio: true, createdAt: true },
       orderBy: { id: 'desc' }, // bkz. ders başlıkları — takılmış eski kayıt yenileri engellemesin
       take: PARTI,
@@ -92,7 +92,7 @@ export async function fillMissingTranslations(): Promise<number> {
 
     // ── Eğitmen uzmanlığı ──────────────────────────────────────────────────────────
     const uzmanliklar = await prisma.instructor.findMany({
-      where: { specialtyEn: null, specialty: { not: null } },
+      where: { specialtyEn: null, specialty: { not: null }, NOT: { specialty: '' } },
       select: { id: true, specialty: true, createdAt: true },
       orderBy: { id: 'desc' }, // bkz. ders başlıkları — takılmış eski kayıt yenileri engellemesin
       take: PARTI,

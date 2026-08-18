@@ -34,7 +34,7 @@ import favoriteRoutes from './routes/favorites'
 import referralRoutes from './routes/referral'
 import { chat, getChatHistory } from './controllers/chatController'
 import { authMiddleware, optionalAuthMiddleware } from './middlewares/auth'
-import { epostaSagligi } from './utils/email'
+import { epostaSagligi, epostaYapilandirildi } from './utils/email'
 
 // GÜVENLİK: kritik secret'lar YOKSA sunucuyu HİÇ BAŞLATMA — ortamdan BAĞIMSIZ.
 // Eski hali `NODE_ENV === 'production'` tam eşitliğine bağlıydı: NODE_ENV set edilmemişse (ki
@@ -204,9 +204,22 @@ app.use('/api/instructor/login', authLimiter)
 app.use('/api/instructor/forgot-password', authLimiter)
 app.use('/api/instructor/set-password', authLimiter)
 // Şikayet/iletişim uçları (biri auth'suz) — admin posta kutusu/şikayet listesi flood'una karşı
-app.use('/api/public/complaint', authLimiter)
+// ŞİKAYET/İHBAR: giriş kovasından AYRI. Bu iki uç kaba-kuvvet hedefi DEĞİL (biri kimlik bile
+// istemiyor) ama authLimiter'ı paylaşıyorlardı: aynı IP'den 10 şikayet, o IP'nin GİRİŞ hakkını da
+// bitiriyordu. CANLI ÖLÇÜLDÜ: 12 şikayet sonrası aynı IP'den login → "Çok fazla giriş denemesi."
+// Kötüye kullanımı yine sınırlıyoruz, ama kendi kovasında — bir uçtaki gürültü diğerini kilitlemesin.
+const sikayetLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: express.Request) => 'ip:' + ipKeyGenerator(req.ip || req.socket?.remoteAddress || 'unknown'),
+  skip: skipRateLimit,
+  message: { error: 'Çok fazla şikayet gönderildi. Lütfen bir dakika bekleyin.' },
+})
+app.use('/api/public/complaint', sikayetLimiter)
 app.use('/api/public/validate-coupon', couponLimiter)
-app.use('/api/social/report', authLimiter)
+app.use('/api/social/report', sikayetLimiter)   // bkz. sikayetLimiter — giriş kovasından ayrı
 app.use('/api/auth/resend-verification', authLimiter) // self-servis doğrulama-maili seli engeli
 // Kod deneme uçları: 6 hane = 1.000.000 olasılık. Kod başına 5 deneme sınırı var (utils/
 // verificationCode.ts) ama IP başına da sınır olmalı — saldırgan sürekli yeni kod isteyip
@@ -221,7 +234,24 @@ app.use('/api/chat', chatLimiter)
 // Admin: gizli anahtar tahminini yavaşlat. /api/admin yalnız generalLimiter (200/dk) altındaydı;
 // x-admin-secret sabit bir sır olduğu için dakikada 200 deneme brute-force'a kapı açıyordu.
 // Diğer tüm auth uçlarıyla aynı 10/dk. (Anahtar zaten timing-safe karşılaştırılıyor, adminAuth.ts.)
-app.use('/api/admin', authLimiter)
+// ADMIN: kaba-kuvvet koruması BAŞARISIZ denemeyi sayar, başarılıyı SAYMAZ.
+// Eskiden burada doğrudan `authLimiter` vardı (10/dk, IP bazlı, başarılı istekler DAHİL). Admin
+// kimliği bir paylaşılan başlık sırrı (x-admin-secret) olduğu için panelin HER isteği bu kovaya
+// düşüyordu — panel açılışta 11 istek atıyor, yani 11'incisi 429 alıyordu. ÖLÇÜLDÜ: panel ilk
+// yüklemede kendini kilitliyordu; lansman günü moderatör paneli açamazdı.
+// skipSuccessfulRequests ile doğru sırrı bilen sınırsız (yalnız generalLimiter'ın 200/dk'sı geçerli),
+// sırrı TAHMİN EDEN dakikada 10 denemede duruyor. Koruma aynı, kilitlenme yok.
+const adminLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  skipSuccessfulRequests: true,   // 2xx/3xx kovaya yazılmaz; yalnız 4xx/5xx sayılır
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: express.Request) => 'ip:' + ipKeyGenerator(req.ip || req.socket?.remoteAddress || 'unknown'),
+  skip: skipRateLimit,
+  message: { error: 'Çok fazla başarısız admin denemesi. Lütfen bir dakika bekleyin.' },
+})
+app.use('/api/admin', adminLimiter)
 
 // Routes
 app.use('/api/auth', authRoutes)
@@ -290,11 +320,15 @@ app.get('/health/ready', async (req, res) => {
     // E-POSTA SAĞLIĞI: Resend bozulursa (kota, domain doğrulaması, 5xx) kayıt hunisi SESSİZCE
     // ölür — kullanıcı doğrulama kodunu hiç almaz. Hatalar loglanıyordu ama log okuyan yok;
     // burada tek istekle görünür. Ayrıntı DEĞİL, durum: 'ok' | 'bozuk' | 'kullanilmadi'.
+    // YAPILANDIRMA da denetlenir — sayaç yalnız TRAFİĞİ görür. RESEND_API_KEY hiç yokken sayaç
+    // boş kalır ve durum sonsuza dek 'kullanilmadi' der; bu "henüz posta gitmedi" ile "posta HİÇ
+    // gidemez"i AYIRT ETMEZ. uploads alanı CLOUDINARY_URL'i zaten denetliyordu — aynı ölçü.
+    const epostaHazir = epostaYapilandirildi()   // tek kaynak: utils/email
     const eposta = epostaSagligi()
     res.json({
       ok: true,
       uploads: yuklemeHazir ? 'ok' : 'yapilandirilmamis',
-      email: eposta.durum,
+      email: epostaHazir ? eposta.durum : 'yapilandirilmamis',
       ...(eposta.durum === 'bozuk' ? { emailBasarisiz: eposta.basarisiz, emailGonderilen: eposta.gonderilen } : {}),
       ...(indexHatalari.length ? { indexUyarisi: indexHatalari } : {}),
     })
@@ -342,25 +376,38 @@ process.on('uncaughtException', (err) => {
   console.error('UncaughtException (yakalandı, sunucu ayakta):', err)
 })
 
+// ── AÇILIŞ İŞLERİ: TEK TANIM, İKİ ÇAĞIRAN ────────────────────────────────────────────────────
+// İlk açılış ve gecikmeli yeniden deneme AYNI fonksiyonu çağırır; ikisinin ayrışması artık yapısal
+// olarak imkânsız. (Eskiden ilk açılış dört iş + prob, yeniden deneme YALNIZ prob koşuyordu.)
+// ensureTiers/ensureGeo de artık AWAIT'li: beklenmediklerinde açılış "tamam" derken hâlâ sürüyor
+// olabiliyorlardı.
+async function acilisIsleri(): Promise<void> {
+  await ensureTiers()
+  await ensureGeo()
+  // ensureIndexes ÖNCE ve await'li: rozet çift-veriş koruması YALNIZCA bu ifade-index'i sayesinde
+  // çalışıyor; kurulmadan gelen istek/job rozet yazarsa skipDuplicates hiçbir şey engellemez.
+  indexHatalari = await ensureIndexes()
+  await ensureBadges()
+  // DB CANLILIK PROBU — hazır-olma kapısının asıl dayanağı. Yukarıdaki işlerin hepsi kendi
+  // hatalarını yutuyor, dolayısıyla DB erişilemezken bile buraya kadar gelinebilir. Bu satır
+  // invariant'ı açıkça ifade eder: veritabanına ulaşamayan konteyner trafik ALMAMALI.
+  // EN SONDA olmalı — fırlatırsa bootTamam set edilmez ve yeniden deneme turu devreye girer.
+  await prisma.$queryRaw`SELECT 1`
+}
+
 const server = app.listen(PORT, async () => {
   console.log(`✅ Fitpass sunucusu http://localhost:${PORT} adresinde çalışıyor (açılış işleri sürüyor)`)
   // Seviye (Tier) yapılandırmasını kanonik değerlere hizala (Aday %1 → Olimpik %5)
-  ensureTiers()
-  // İl + ilçe verisini garanti et (İstanbul seed'li; 4 yeni il + tüm ilçeleri idempotent ekle)
-  ensureGeo()
   try {
     // DB-seviyesi tekillik index'leri — ÖNCE ve AWAIT'li olmalı: rozet çift-veriş koruması YALNIZCA bu
     // ifade-index'i sayesinde çalışıyor. Beklenmeden başlatılırsa, index kurulmadan önce gelen istek/job
     // rozet yazabilir ve skipDuplicates hiçbir şey engellemez (çift rozet + çift bildirim).
-    indexHatalari = await ensureIndexes()
-    // Kanonik rozetleri (sezon şampiyonu) garanti et
-    await ensureBadges()
+    await acilisIsleri()
     // DB CANLILIK PROBU — HAZIR-OLMA KAPISININ ASIL DAYANAĞI. Yukarıdaki açılış işlerinin
     // hepsi kendi hatalarını yutuyor (ensureIndexes artık liste döndürüyor ama fırlatmıyor),
     // dolayısıyla DB tamamen erişilemezken bile buraya kadar gelinip "hazır" denebiliyordu:
     // kapı vardı ama hiçbir şeyi tutmuyordu. Bu tek satır invariant'ı açıkça ifade eder —
     // veritabanına ulaşamayan bir konteyner trafik ALMAMALI.
-    await prisma.$queryRaw`SELECT 1`
     // BURADAN İTİBAREN TRAFİK ALABİLİR. /health bu bayrağa bakıyor; Railway healthcheck'i de
     // /health'e baktığı için yeni konteyner ancak index'ler kurulduktan sonra trafik alır.
     // Bayrak set EDİLMEZSE (açılış hatası) healthcheck geçmez ve Railway ESKİ sürümü ayakta
@@ -390,10 +437,15 @@ const server = app.listen(PORT, async () => {
         return
       }
       try {
-        await prisma.$queryRaw`SELECT 1`
+        // TÜM AÇILIŞ İŞLERİ, sadece canlılık probu değil. Eskiden burada yalnız `SELECT 1` vardı:
+        // DB gecikmeli geldiğinde tier/geo/index/rozet işleri BİR DAHA KOŞMUYOR, sunucu yine de
+        // "hazır" diyordu. CANLI SİMÜLE EDİLDİ (150sn bağlantı reddeden TCP proxy): loglar
+        // ensureTiers/ensureGeo/6-6 index/ensureBadges hatası bastı, ardından sunucu trafiğe
+        // açıldı — yani tekillik index'leri KURULMAMIŞ hâlde rozet yazılabilir durumdaydı.
+        await acilisIsleri()
         bootTamam = true
         clearInterval(yenidenDene)
-        console.log('✅ DB yeniden erişilebilir — sunucu trafiğe hazır (gecikmeli açılış)')
+        console.log('✅ DB yeniden erişilebilir — açılış işleri koştu, sunucu trafiğe hazır (gecikmeli açılış)')
       } catch { /* bir sonraki turda yine denenecek */ }
     }, TEKRAR_ARALIGI_MS)
     // Süreç kapanışını bu zamanlayıcı BEKLETMESİN (SIGTERM'de temiz çıkış şart).

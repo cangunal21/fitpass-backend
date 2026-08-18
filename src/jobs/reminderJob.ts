@@ -1,5 +1,5 @@
 import prisma from '../utils/prisma'
-import { sendReminderEmail } from '../utils/email'
+import { sendReminderEmail, epostaYapilandirildi } from '../utils/email'
 import { sendPushNotification } from '../utils/push'
 import { trDate, trDateShort, trTime, trYmd } from "../utils/trFormat"
 import { notifyPush, notifyText } from '../utils/notifyText'
@@ -62,7 +62,11 @@ export const sendRemindersJob = async () => {
         let teslim = 0
 
         const rLoc = (booking.user?.locale || 'tr') as Locale
-        if (booking.user?.email && booking.user.emailReminders !== false) {
+        // epostaYapilandirildi(): anahtar hiç yoksa e-posta bir KANAL DEĞİLDİR. Sarmalayıcı bu
+        // durumda (haklı olarak) hata döndürüyor; ama onu "başarısız gönderim" sayarsak aşağıdaki
+        // geri-alma her taramada tetiklenir ve iş sonsuza dek çaresizce yeniden dener. Kodun kendi
+        // kuralı zaten bunu söylüyor: "kanal hiç yoksa bayrak true kalır — denenecek bir şey yok."
+        if (booking.user?.email && booking.user.emailReminders !== false && epostaYapilandirildi()) {
           denenen++
           const mailRes: any = await sendReminderEmail(booking.user.email, booking.user.fullName, classTitle, date, time, venueName, rLoc)
           // Sarmalayıcı hata FIRLATMAZ, { data: null, error } DÖNDÜRÜR (Resend SDK davranışı).

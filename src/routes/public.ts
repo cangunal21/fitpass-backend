@@ -37,7 +37,9 @@ router.get('/cities', getCities)
 router.get('/users/:username', optionalAuthMiddleware, getUserActivities)
 router.post('/complaint', submitComplaint)
 router.get('/users-search', searchUsers)
-router.post('/validate-coupon', validateCoupon)
+// optionalAuthMiddleware: uç herkese açık kalır ama token varsa kullanıcı kimliği dolar →
+// validateCoupon kişi-başı limiti ölçebilir (aksi halde "geçerli" der, rezervasyon reddederdi).
+router.post('/validate-coupon', optionalAuthMiddleware, validateCoupon)
 router.get('/instructors/:id', optionalAuthMiddleware, getInstructorById)
 
 export default router

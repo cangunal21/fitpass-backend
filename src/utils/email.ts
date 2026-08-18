@@ -1,13 +1,24 @@
 import { Resend } from 'resend'
 import { Locale } from './locale'
 
+// E-posta kanalı YAPILANDIRILDI mı? "Yapılandırılmamış" ile "gönderim başarısız" farklı şeylerdir:
+// ilki KALICI (tekrar denemek çare değil), ikincisi geçici olabilir. Çağıranlar bu ayrımı yapabilsin.
+export const epostaYapilandirildi = (): boolean => !!(process.env.RESEND_API_KEY || '').trim()
+
 let _resend: Resend | null = null
 const resend = {
   emails: {
     send: async (opts: any) => {
       if (!process.env.RESEND_API_KEY) {
-        console.log('[email skip] RESEND_API_KEY yok:', opts.subject)
-        return
+        // ESKİDEN `return` (undefined) İDİ — ve bu, dürüst-hata zincirinin KÖKÜNDEKİ kopuktu.
+        // Çağıranlar `!(sonuc as any)?.error` ile başarı ölçüyor; `undefined?.error` → undefined →
+        // `!undefined` → HER ZAMAN true. Yani anahtar hiç yokken bile "e-posta gönderildi" deniyordu.
+        // Yapılandırma eksikliği de bir HATADIR; hata nesnesi olarak döner ve sağlık sayacına yazılır.
+        // 'FAIL' değil 'YAPILANDIRILMAMIS': gönderim denenip düşmedi, kanal hiç kurulmamış.
+        // İki durumu log'da da ayırmak, sağlık ucundaki ayrımla ('yapilandirilmamis' vs 'bozuk') tutarlı.
+        console.error('[email YAPILANDIRILMAMIS] RESEND_API_KEY yok:', opts.subject)
+        epostaHatasiKaydet('RESEND_API_KEY yapılandırılmamış')
+        return { data: null, error: { message: 'RESEND_API_KEY yapılandırılmamış' } }
       }
       if (!_resend) _resend = new Resend(process.env.RESEND_API_KEY)
       // TIMEOUT: createBooking gibi uclar rezervasyon isteginin ICINDE 3-4 Resend cagrisini SIRAYLA
@@ -134,7 +145,7 @@ export const sendWelcomeEmail = async (to: string, fullName: string, locale?: Lo
       cta: 'Start Finding Classes →',
     },
   })
-  await resend.emails.send({
+  return await resend.emails.send({
     from: FROM_EMAIL,
     to,
     subject: T.subject,
@@ -178,7 +189,7 @@ export const sendPasswordResetEmail = async (to: string, fullName: string, reset
       warning: "⚠️ This link is valid for 1 hour. If you didn't request this, you can safely ignore this email.",
     },
   })
-  await resend.emails.send({
+  return await resend.emails.send({
     from: FROM_EMAIL,
     to,
     subject: T.subject,
@@ -200,7 +211,7 @@ export const sendPasswordResetEmail = async (to: string, fullName: string, reset
 export const sendVenuePasswordResetEmail = async (to: string, venueName: string, resetToken: string) => {
   const resetUrl = `${SITE_URL}/salon-sifre-sifirla?token=${resetToken}`
 
-  await resend.emails.send({
+  return await resend.emails.send({
     from: FROM_EMAIL,
     to,
     subject: 'Şipşakspor Salon Paneli — Şifre Sıfırlama',
@@ -222,7 +233,7 @@ export const sendVenuePasswordResetEmail = async (to: string, venueName: string,
 // Eğitmen daveti: salon sahibi eğitmene giriş verince → şifre belirleme linki
 export const sendInstructorInviteEmail = async (to: string, instructorName: string, venueName: string, token: string) => {
   const url = `${SITE_URL}/egitmen-sifre-belirle?token=${token}`
-  await resend.emails.send({
+  return await resend.emails.send({
     from: FROM_EMAIL,
     to,
     subject: 'Şipşakspor — Eğitmen Girişi Daveti',
@@ -244,7 +255,7 @@ export const sendInstructorInviteEmail = async (to: string, instructorName: stri
 // Eğitmen şifre sıfırlama (davet ile aynı "şifre belirle" sayfasına gider)
 export const sendInstructorPasswordResetEmail = async (to: string, instructorName: string, token: string) => {
   const url = `${SITE_URL}/egitmen-sifre-belirle?token=${token}`
-  await resend.emails.send({
+  return await resend.emails.send({
     from: FROM_EMAIL,
     to,
     subject: 'Şipşakspor Eğitmen — Şifre Sıfırlama',
@@ -281,7 +292,7 @@ export const sendBookingConfirmationEmail = async (
           lblDate: 'Date', lblTime: 'Time', lblPrice: 'Price',
           note: '🔒 Cancellation: full refund 24h+ before · half refund 12-24h · no cancellation in the last 12h.', cta: 'View My Bookings →' },
   })
-  await resend.emails.send({
+  return await resend.emails.send({
     from: FROM_EMAIL,
     to,
     subject: loc === 'en' ? `Booking Confirmed: ${classTitle}` : `Rezervasyon Onaylandı: ${classTitle}`,
@@ -337,7 +348,7 @@ export const sendCancellationEmail = async (
     en: { heading: 'Booking Cancelled', body1: `Hi ${esc(fullName)}, the booking below has been cancelled.`,
           lblDate: 'Date', lblTime: 'Time', note: 'Hop back on the platform anytime to join another class.', cta: 'Find a Class →' },
   })
-  await resend.emails.send({
+  return await resend.emails.send({
     from: FROM_EMAIL,
     to,
     subject: loc === 'en' ? `Booking Cancelled: ${classTitle}` : `Rezervasyon İptal Edildi: ${classTitle}`,
@@ -382,7 +393,7 @@ export const sendVenueCancellationEmail = async (
   date: string,
   time: string,
 ) => {
-  await resend.emails.send({
+  return await resend.emails.send({
     from: FROM_EMAIL,
     to,
     subject: `Rezervasyon İptal: ${classTitle}`,
@@ -438,7 +449,7 @@ export const sendVenueBookingNotificationEmail = async (
         <p style="font-size: 13px; color: #166534; margin: 0;">✅ Bu seans için <strong>${spotsLeft} yer kaldı.</strong></p>
       </div>`
 
-  await resend.emails.send({
+  return await resend.emails.send({
     from: FROM_EMAIL,
     to,
     subject: `Yeni Rezervasyon: ${classTitle}`,
@@ -482,7 +493,7 @@ export const sendVenueRegistrationAdminEmail = async (
   sportCategories: string[]
 ) => {
   const adminEmail = process.env.ADMIN_EMAIL || 'admin@sipsakspor.com'
-  await resend.emails.send({
+  return await resend.emails.send({
     from: FROM_EMAIL,
     to: adminEmail,
     subject: `Yeni Salon Başvurusu: ${venueName}`,
@@ -566,7 +577,7 @@ export const sendWaitlistNotificationEmail = async (to: string, fullName: string
           body1: `Hi <strong>${esc(fullName)}</strong>, a spot just opened up in the class you were waiting for!`,
           note: 'Book now, before the spot is gone!', cta: 'Book Now' },
   })
-  await resend.emails.send({
+  return await resend.emails.send({
     from: FROM_EMAIL,
     to,
     subject: T.subject,
@@ -594,7 +605,7 @@ export const sendComplaintEmail = async (
   message: string
 ) => {
   const adminEmail = process.env.ADMIN_EMAIL || 'admin@sipsakspor.com'
-  await resend.emails.send({
+  return await resend.emails.send({
     from: FROM_EMAIL,
     to: adminEmail,
     replyTo: email,
@@ -628,7 +639,7 @@ export const sendReportNotificationEmail = async (
 ) => {
   // Şikayetler her zaman sabit admin adresine gider
   const adminEmail = 'admin@sipsakspor.com'
-  await resend.emails.send({
+  return await resend.emails.send({
     from: FROM_EMAIL,
     to: adminEmail,
     subject: `[Şikayet] @${escSubject(reportedUsername)} kullanıcısı şikayet edildi`,
@@ -674,7 +685,7 @@ export const sendCashbackEmail = async (
           body1: `Hi ${esc(fullName)}, you earned <strong>${amount} points</strong> from your <strong>${esc(classTitle)}</strong> booking. Collect your points and spend them on rewards.`,
           balance: 'Your current points', cta: 'View My Points →' },
   })
-  await resend.emails.send({
+  return await resend.emails.send({
     from: FROM_EMAIL,
     to,
     subject: T.subject,
@@ -720,7 +731,7 @@ export const sendTransferEmail = async (
           refund: `💰 The <strong>₺${priceRefund}</strong> price difference will be refunded to you.`,
           cta: 'View My Bookings →' },
   })
-  await resend.emails.send({
+  return await resend.emails.send({
     from: FROM_EMAIL,
     to,
     subject: T.subject,
@@ -783,7 +794,7 @@ export const sendStreakNudgeEmail = async (
     },
   })
   const { subject, headline, body, unit } = T
-  await resend.emails.send({
+  return await resend.emails.send({
     from: FROM_EMAIL,
     to,
     subject,
@@ -824,7 +835,7 @@ export const sendBadgeEmail = async (
           heading: single ? 'You Earned a New Badge!' : `${badgeNames.length} New Badges!`,
           body1: `Hi ${esc(fullName)}, congrats! You just earned these badges:`, cta: 'View My Badges →' },
   })
-  await resend.emails.send({
+  return await resend.emails.send({
     from: FROM_EMAIL,
     to,
     subject: T.subject,
@@ -850,7 +861,7 @@ export const sendVenueApprovedEmail = async (
   to: string,
   venueName: string
 ) => {
-  await resend.emails.send({
+  return await resend.emails.send({
     from: FROM_EMAIL,
     to,
     subject: `Salonunuz Onaylandı! 🎉`,
@@ -900,7 +911,7 @@ export const sendGroupTagNotificationEmail = async (
           body1: `Hi ${esc(taggedName)}, <strong>${esc(bookerName)}</strong> added you to a group booking.`,
           lblDate: 'Date', lblTime: 'Time', cta: 'Go to Şipşakspor →' },
   })
-  await resend.emails.send({
+  return await resend.emails.send({
     from: FROM_EMAIL,
     to,
     subject: T.subject,
@@ -958,7 +969,7 @@ export const sendGroupInviteEmail = async (
           lblDate: 'Date', lblTime: 'Time',
           body2: 'Join Şipşakspor and discover sports together!', cta: 'Sign Up →' },
   })
-  await resend.emails.send({
+  return await resend.emails.send({
     from: FROM_EMAIL,
     to,
     subject: T.subject,
@@ -1013,7 +1024,7 @@ export const sendEmailVerificationEmail = async (to: string, fullName: string, k
       warning: "⚠️ This code is valid for 15 minutes. If you didn't request this, you can ignore this email — the account stays inactive.",
     },
   })
-  await resend.emails.send({
+  return await resend.emails.send({
     from: FROM_EMAIL,
     to,
     subject: T.subject,

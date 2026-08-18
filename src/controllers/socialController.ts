@@ -40,9 +40,20 @@ export const followUser = async (req: Request, res: Response) => {
     const loc = (target.locale || 'tr') as Locale
     const key = isPrivate ? 'follow_request' : 'follow'
     const params = { username: me?.username || '' }
-    await prisma.notification.create({ data: { userId: target.id, type: key, ...notifyFields(loc, key, params), relatedUserId: followerId } }).catch(() => {})
-    const push = notifyPush(loc, key, params)
-    if (target.pushToken && push) sendPushNotification(target.pushToken, push.title, push.body).catch(() => {})
+    // DEDUP — beğeni yolundaki (likeActivity) kuralın AYNISI, orada yazılmış burada uygulanmamıştı.
+    // takip→bırak→takip döngüsü "zaten takip ediyorsunuz" kapısını her turda geçiyor (unfollow kaydı
+    // siliyor), dolayısıyla dedup olmadan kurbanın bildirim listesi boğuluyor ve cihazına push seli
+    // gidiyordu. socialWriteLimiter (30/dk) yalnız yavaşlatır; getNotifications take:50 olduğu için
+    // birkaç turda gerçek bildirimler listeden düşüyor. ÖLÇÜLDÜ: 10 tur → 10 bildirim.
+    const sonTakip = await prisma.notification.findFirst({
+      where: { userId: target.id, type: key, relatedUserId: followerId, createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) } },
+      select: { id: true },
+    })
+    if (!sonTakip) {
+      await prisma.notification.create({ data: { userId: target.id, type: key, ...notifyFields(loc, key, params), relatedUserId: followerId } }).catch(() => {})
+      const push = notifyPush(loc, key, params)
+      if (target.pushToken && push) sendPushNotification(target.pushToken, push.title, push.body).catch(() => {})
+    }
 
     return res.json({ message: isPrivate ? 'Takip isteği gönderildi.' : 'Takip edildi.', status })
   } catch (err: any) {
@@ -635,7 +646,7 @@ export const getFeed = async (req: Request, res: Response) => {
 // feedKey -> aktivite sahibi + gizlilik; aktivite yoksa null.
 // Var olmayan/gizli aktiviteye like/yorum yapılmasını (orphan satır, sahte sayaç, gizli kullanıcıya
 // istenmeyen bildirim/push) engellemek için kullanılır. 'bg' (rozet) dahil tüm feed türlerini tanır.
-const resolveFeedActivity = async (feedKey: string): Promise<{ ownerId: number; privacy: string } | null> => {
+const resolveFeedActivity = async (feedKey: string): Promise<{ ownerId: number; privacy: string; profilePrivacy: string | null } | null> => {
   const dash = feedKey.indexOf('-')
   if (dash < 0) return null
   const prefix = feedKey.slice(0, dash)
@@ -650,18 +661,47 @@ const resolveFeedActivity = async (feedKey: string): Promise<{ ownerId: number; 
   // banned kontrolü: banlı sahibin aktivitesi feed'den zaten eleniyor ama feedKey enumerasyonuyla
   // like/comment edilip banlı sahibe bildirim/push gidebiliyordu → banlı sahibe null dön (etkileşim 404).
   if (prefix === 'b') {
-    const b = await prisma.booking.findUnique({ where: { id }, select: { user: { select: { id: true, activityPrivacy: true, banned: true } } } })
-    return b?.user && !b.user.banned ? { ownerId: b.user.id, privacy: b.user.activityPrivacy } : null
+    const b = await prisma.booking.findUnique({ where: { id }, select: { user: { select: { id: true, activityPrivacy: true, profilePrivacy: true, banned: true } } } })
+    return b?.user && !b.user.banned ? { ownerId: b.user.id, privacy: b.user.activityPrivacy, profilePrivacy: b.user.profilePrivacy } : null
   }
   if (prefix === 'd') {
-    const d = await prisma.dropInParticipant.findUnique({ where: { id }, select: { user: { select: { id: true, activityPrivacy: true, banned: true } } } })
-    return d?.user && !d.user.banned ? { ownerId: d.user.id, privacy: d.user.activityPrivacy } : null
+    const d = await prisma.dropInParticipant.findUnique({ where: { id }, select: { user: { select: { id: true, activityPrivacy: true, profilePrivacy: true, banned: true } } } })
+    return d?.user && !d.user.banned ? { ownerId: d.user.id, privacy: d.user.activityPrivacy, profilePrivacy: d.user.profilePrivacy } : null
   }
   if (prefix === 'bg') {
-    const bg = await prisma.userBadge.findUnique({ where: { id }, select: { user: { select: { id: true, activityPrivacy: true, banned: true } } } })
-    return bg?.user && !bg.user.banned ? { ownerId: bg.user.id, privacy: bg.user.activityPrivacy } : null
+    const bg = await prisma.userBadge.findUnique({ where: { id }, select: { user: { select: { id: true, activityPrivacy: true, profilePrivacy: true, banned: true } } } })
+    return bg?.user && !bg.user.banned ? { ownerId: bg.user.id, privacy: bg.user.activityPrivacy, profilePrivacy: bg.user.profilePrivacy } : null
   }
   return null
+}
+
+// ── FEED AKTİVİTESİNE ERİŞİM: TEK KARAR NOKTASI ───────────────────────────────────────────────
+// Üç kapı (like, yorum okuma, yorum yazma) eskiden YALNIZ `activityPrivacy`ye bakıyordu ve
+// `profilePrivacy`yi HİÇ sormuyordu. Oysa onaylı gizlilik modelinde (Instagram mantığı) bunlar
+// BAĞIMSIZ iki ayar: "profilimi gizle" diyen kullanıcının activityPrivacy'si `public` KALIYOR.
+// Yani gizli profil, istisna değil VARSAYILAN olarak feed etkileşimine açıktı: yabancı beğeniyor,
+// yorum yazıyor (bildirim metnini saldırgan seçiyor), jetonsuz ziyaretçi yorumları ve yorumcuların
+// tam adlarını okuyabiliyordu. Booking id'leri ardışık olduğu için feedKey tahmini bile gerekmiyor.
+//
+// Kural (bkz. onaylı model — profilePrivacy vs activityPrivacy):
+//   · sahip her zaman görür
+//   · activityPrivacy='private' → aktivite TAKİPÇİDEN BİLE gizli (yalnız sahip)
+//   · profilePrivacy='private'  → yalnız sahip + ONAYLI TAKİPÇİ (canViewProfile ile aynı kural)
+// Reddedilen her durumda çağıran taraf 403 değil 404 döner: "var ama gizli" ile "hiç yok"
+// ayırt edilmemeli (mevcut existence-oracle gerekçesiyle tutarlı).
+async function feedErisimiVarMi(
+  viewerId: number | undefined,
+  activity: { ownerId: number; privacy: string; profilePrivacy: string | null },
+): Promise<boolean> {
+  if (viewerId && viewerId === activity.ownerId) return true
+  if (activity.privacy === 'private') return false
+  if (activity.profilePrivacy !== 'private') return true
+  if (!viewerId) return false
+  const f = await prisma.follow.findUnique({
+    where: { followerId_followingId: { followerId: viewerId, followingId: activity.ownerId } },
+    select: { status: true },
+  })
+  return f?.status === 'accepted'
 }
 
 // POST /api/social/feed/:feedKey/like
@@ -673,8 +713,8 @@ export const likeActivity = async (req: Request, res: Response) => {
     // Aktivite gerçekten var mı + erişebilir miyim (gizli değilse/kendiminse)
     const activity = await resolveFeedActivity(feedKey)
     if (!activity) return res.status(404).json({ error: 'Aktivite bulunamadı.' })
-    // Gizli aktivite: 403 DEĞİL 404 — "var ama gizli" ile "hiç yok" ayırt edilmemeli (existence-oracle).
-    if (activity.privacy === 'private' && activity.ownerId !== userId) {
+    // Tek karar noktası: aktivite gizliliği + PROFİL gizliliği + takip durumu (bkz. feedErisimiVarMi).
+    if (!(await feedErisimiVarMi(userId, activity))) {
       return res.status(404).json({ error: 'Aktivite bulunamadı.' })
     }
 
@@ -742,7 +782,9 @@ export const getActivityComments = async (req: Request, res: Response) => {
     const viewerId = (req as any).userId
     const activity = await resolveFeedActivity(feedKey)
     if (!activity) return res.status(404).json({ error: 'Aktivite bulunamadı.' })
-    if (activity.privacy === 'private' && activity.ownerId !== viewerId) {
+    // viewerId ANONİM olabilir (bu uç token istemiyor) — feedErisimiVarMi bunu da kapsar:
+    // gizli profilin yorumları ve yorumcuların tam adları jetonsuz okunabiliyordu.
+    if (!(await feedErisimiVarMi(viewerId, activity))) {
       return res.status(404).json({ error: 'Aktivite bulunamadı.' })
     }
     const all = await prisma.activityComment.findMany({
@@ -778,8 +820,8 @@ export const addActivityComment = async (req: Request, res: Response) => {
     // Aktivite gerçekten var mı + erişebilir miyim (gizli değilse/kendiminse)
     const activity = await resolveFeedActivity(feedKey)
     if (!activity) return res.status(404).json({ error: 'Aktivite bulunamadı.' })
-    // Gizli aktivite: 403 DEĞİL 404 — "var ama gizli" ile "hiç yok" ayırt edilmemeli (existence-oracle).
-    if (activity.privacy === 'private' && activity.ownerId !== userId) {
+    // Tek karar noktası: aktivite gizliliği + PROFİL gizliliği + takip durumu (bkz. feedErisimiVarMi).
+    if (!(await feedErisimiVarMi(userId, activity))) {
       return res.status(404).json({ error: 'Aktivite bulunamadı.' })
     }
 

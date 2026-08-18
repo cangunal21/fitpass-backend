@@ -267,4 +267,15 @@ echo "   Icerik: $NTAB tablo / $TOTAL satir  |  prod PostgreSQL $SRV"
 echo ""
 echo "   SIMDI BU DOSYAYI SIFRELI HARICI DISKE KOPYALA. Ayni diskteki yedek, yedek degildir."
 echo "   Dosya TUM kullanici verisini icerir (e-posta, passwordHash) -> buluta/git'e KOYMA."
-[[ "$VERIFIED" == "no" ]] && exit 2 || exit 0
+# BELIRSIZ SONUC = BASARISIZLIK. Eskiden `no` disindaki HER durum exit 0 donuyordu — ozellikle
+# `VERIFIED=skipped`, yani YEREL PostgreSQL bulunamadigi icin geri yukleme testinin HIC KOSMADIGI
+# durum. Sarmalayici da exit 0'i "kanitlanmis (geri yukleme testi gecti)" diye SON-DURUM.txt'ye
+# yaziyordu. Sonuc: yerel Postgres durursa (brew upgrade, reboot, disk baskisi) is her gun yedegi
+# alir ve her gun "kanitlanmis" der — OYSA TEST HIC KOSMAMISTIR. Railway'de otomatik yedek
+# olmadigi icin bu klasor TEK yedek hatti; yanlis "kanitlandi" raporu, yedeksizlikten kotudur:
+# insan guvenir ve kontrol etmez.
+case "$VERIFIED" in
+  yes) exit 0 ;;   # geri yukleme testi KOSTU ve GECTI
+  no)  exit 2 ;;   # KOSTU ve DUSTU
+  *)   exit 3 ;;   # KOSMADI (skipped) ya da bilinmeyen -> BASARI SAYILMAZ
+esac

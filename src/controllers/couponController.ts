@@ -101,7 +101,8 @@ export const validateCoupon = async (req: Request, res: Response) => {
     const { code, venueId } = req.body
     if (!code || !venueId) return res.status(400).json({ error: 'Kod ve salon gerekli.' })
 
-    const coupon = await prisma.coupon.findUnique({ where: { code: String(code).toUpperCase() } })
+    // TRIM: mobil kırpıyordu, sunucu ve web salon paneli KIRPMIYORDU (bkz. bookingController'daki eşi).
+    const coupon = await prisma.coupon.findUnique({ where: { code: String(code).trim().toUpperCase() } })
 
     // ENUMERASYON/ORACLE ENGELİ: kod-yok · yanlış-salon · süresi-dolmuş · limit-dolmuş AYIRT EDİLMEZ →
     // hepsi tek "geçersiz" döner. Aksi halde 404-vs-400 farkı platform-genelinde "bu kod var mı?" oracle'ı
@@ -111,6 +112,23 @@ export const validateCoupon = async (req: Request, res: Response) => {
     if (coupon.venueId !== parseInt(venueId)) return invalid()
     if (coupon.expiresAt && coupon.expiresAt < new Date()) return invalid()
     if (coupon.maxUses && coupon.usedCount >= coupon.maxUses) return invalid()
+
+    // KİŞİ BAŞI LİMİT — burada da kontrol edilmeli. Eskiden YALNIZ rezervasyon anında bakılıyordu:
+    // bu uç "geçerli, %20 indirim" diyor, kullanıcı ödemeye gidiyor, rezervasyon reddediyordu.
+    // Yani VAAT EDEN kod ile UYGULAYAN kod farklı kurallar işletiyordu.
+    // Uç herkese açık (token zorunlu değil); kimlik varsa optionalAuthMiddleware doldurur. Kimlik yoksa
+    // kişi-başı limit ölçülemez — o durumda sessizce geçilir, nihai kararı rezervasyon yolu verir.
+    // Bu dalın mesajı bilinçli olarak AÇIK: yalnız kuponu daha önce kullanmış kişide çalışır,
+    // dolayısıyla kodun varlığı hakkında yeni bilgi sızdırmaz.
+    const viewerId = (req as any).userId as number | undefined
+    if (viewerId && coupon.perUserLimit != null) {
+      const myUses = await prisma.booking.count({
+        where: { couponId: coupon.id, userId: viewerId, status: { not: 'cancelled' } },
+      })
+      if (myUses >= coupon.perUserLimit) {
+        return res.status(400).json({ valid: false, error: 'Bu kuponu daha fazla kullanamazsınız (kişi başı limit doldu).' })
+      }
+    }
 
     return res.json({
       valid: true,

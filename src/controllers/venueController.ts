@@ -505,11 +505,33 @@ export const updateClass = async (req: Request, res: Response) => {
   try {
     const venueId = (req as any).venueId
     const classId = parseInt(req.params.id as string)
-    const { title, description, category, basePrice, duration, capacity, isActive } = req.body
+    const { title, description, category, basePrice, duration, capacity, isActive, instructorId } = req.body
 
     const existing = await prisma.class.findUnique({ where: { id: classId } })
     if (!existing || existing.venueId !== venueId) {
       return res.status(403).json({ error: 'Bu dersi düzenleme yetkiniz yok.' })
+    }
+
+    // HOCA ATAMA/DEĞİŞTİRME — eskiden `instructorId` bu uçta ne OKUNUYOR ne YAZILIYORDU. Sonuç:
+    // hocasız oluşturulmuş bir ders (ör. mobil salon panelinden eklenen; orada seçici yok) KALICI
+    // olarak hocasız kalıyordu — telafi yolu hiçbir istemcide değil, backend'de de yoktu. Zinciri:
+    // hoca portalında ders görünmez (instructorPortalController:137 → 403) ve hoca puanlanamaz
+    // (reviewController:80 `instructorId != null` şartı).
+    // Sahiplik doğrulaması createClass'takiyle AYNI: başka salonun hocası iliştirilemez (aksi halde
+    // rakip salonun puanı kirlenir ve o salon kendi portalından bu dersi görüp seans ekleyebilirdi).
+    let yeniHocaId: number | null | undefined = undefined
+    if (instructorId !== undefined) {
+      if (instructorId === null || instructorId === '') {
+        yeniHocaId = null                       // hocayı KALDIR (açıkça boşaltma)
+      } else {
+        const instId = parseInt(String(instructorId), 10)
+        if (isNaN(instId)) return res.status(400).json({ error: 'Geçersiz hoca.' })
+        const inst = await prisma.instructor.findUnique({ where: { id: instId }, select: { venueId: true } })
+        if (!inst || inst.venueId !== venueId) {
+          return res.status(403).json({ error: 'Bu hocayı dersinize ekleme yetkiniz yok.' })
+        }
+        yeniHocaId = instId
+      }
     }
 
     // Kategori değiştiyse sportCategoryId'yi de güncelle
@@ -545,6 +567,7 @@ export const updateClass = async (req: Request, res: Response) => {
         duration: duration ? parseInt(duration) : undefined,
         durationMinutes: duration ? parseInt(duration) : undefined,
         capacity: capacity ? parseInt(capacity) : undefined,
+        ...(yeniHocaId !== undefined ? { instructorId: yeniHocaId } : {}),
         isActive,
       }
     })

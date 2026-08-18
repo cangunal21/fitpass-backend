@@ -89,6 +89,10 @@ const kismiAtlananlar: string[] = []
 const lines: string[] = []
 
 async function check(name: string, fn: () => Promise<void>) {
+  // İLERLEME İZİ: sonuçlar yalnız en sonda basıldığı için, koşu ortada takılırsa HANGİ kontrolde
+  // takıldığı görünmüyordu (bu oturumda gerçekten yaşandı — teşhis için tahmin yürütmek gerekti).
+  // SMOKE_IZ=1 ile her kontrolün adı BAŞLAMADAN önce stderr'e düşer; normal koşuda sessiz.
+  if (process.env.SMOKE_IZ) process.stderr.write(`→ ${name}\n`)
   try { await fn(); pass++; lines.push(`  ✅ ${name}`) }
   catch (e: any) {
     // `atla()` özel bir işaret fırlatır: bu bir BAŞARISIZLIK değil, KOŞMAMA durumudur.
@@ -121,10 +125,28 @@ async function expectOk(path: string, opts: any = {}) {
   return r
 }
 
+// ── TEMEL KATEGORİ SEÇİMİ: TEK YER ──────────────────────────────────────────────────────────
+// Sırasız `findFirst({})` Postgres'in döndürdüğü RASTGELE satırı alıyordu. Önceki koşulardan kalan
+// 'Smoke...' kategorisi seçilince drop-in slotları ve rozetler ona bağlanıyor, kategori-silme guard
+// testi kendi kurulumunda patlıyordu — kod sağlamken KALICI sahte kırmızı (ölçüldü: "0 ders, 0 salon,
+// 2 drop-in, 1 rozet"). seed()'de düzeltmek YETMEDİ: aynı kalıptan 12 çağrı yeri daha vardı.
+// Kural: test verisi asla TEMEL kategori olamaz + sıra deterministik.
+const temelKategori = async (): Promise<{ id: number; name: string } | null> =>
+  prisma.sportCategory.findFirst({
+    where: { NOT: { name: { startsWith: 'Smoke' } } },
+    orderBy: { id: 'asc' },
+    select: { id: true, name: true },
+  })
+
 async function seed() {
   await prisma.city.upsert({ where: { id: 1 }, update: {}, create: { id: 1, name: 'İstanbul' } })
   await prisma.neighborhood.upsert({ where: { id: V }, update: {}, create: { id: V, name: 'SmokeMahalle', latitude: 41, longitude: 29, cityId: 1 } })
-  const cat = await prisma.sportCategory.findFirst({ where: {} })
+  // SIRALAMA VE FİLTRE ŞART. Eskiden `findFirst({ where: {} })` idi: ORDER BY yok, dolayısıyla
+  // Postgres herhangi bir satırı döndürebiliyordu. Önceki koşulardan artakalan 'Smoke...' kategorisi
+  // seçildiğinde suite'in TEMEL kategorisi test kalıntısı oluyor, drop-in slotları ona bağlanıyor ve
+  // kategori-silme guard testi KENDİ kurulumunda patlıyordu — kod sağlamken KALICI sahte kırmızı.
+  // (Ölçüldü: SportCategory 502/503 yerelde artakalmış, DropInSlot her koşuda 5→6→7 büyüyordu.)
+  const cat = await temelKategori()
   const catName = cat?.name || 'Yoga'
   await prisma.venue.upsert({ where: { id: V }, update: {}, create: { id: V, name: 'Smoke Venue', email: `smoke${V}@x.com`, passwordHash: 'x', address: 'Adres', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
   await prisma.class.upsert({ where: { id: C }, update: {}, create: { id: C, venueId: V, title: 'Smoke Class', category: catName, sportCategoryId: cat?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
@@ -234,6 +256,10 @@ async function cleanup() {
   await prisma.dropInSlot.deleteMany({ where: { id: 990392 } }).catch(() => {})
   await prisma.venue.deleteMany({ where: { id: { in: [990391, 990392] } } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990381 } }).catch(() => {})
+  // Drop-in kalıntıları — kategori silmelerinden ÖNCE gitmeli, yoksa FK ihlali `.catch(()=>{})`
+  // ile SESSİZCE yutuluyor ve kategori satırı kalıcı olarak birikiyor.
+  await prisma.dropInParticipant.deleteMany({ where: { slot: { venueId: { gte: 990000 } } } }).catch(() => {})
+  await prisma.dropInSlot.deleteMany({ where: { venueId: { gte: 990000 } } }).catch(() => {})
   // Kategori silme guard testi kalıntısı (990401 + SmokeKatSil)
   await prisma.userBadge.deleteMany({ where: { userId: 990401 } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990401 } }).catch(() => {})
@@ -838,7 +864,7 @@ async function run() {
   await check('Gizlilik/IDOR: eğitmen PII + salon finansal + yabancı-hoca + private-agregat', async () => {
     const GV = 990301, GV2 = 990302, GI = 990301, GI2 = 990302, GC = 990301, GS = 990301, GU = 990301
     const nb = await prisma.neighborhood.findFirst({ select: { id: true, cityId: true } })
-    const anyCat = await prisma.sportCategory.findFirst({ select: { id: true, name: true } })
+    const anyCat = await temelKategori()
     if (!nb || !anyCat) throw new Error('seed (neighborhood/sportCategory) yok')
     const email = `greg_${GU}@x.com`
     const INSTR_SECRET = { passwordHash: 'HASH-SIZMAMALI', email: 'hoca-gizli@x.com', phone: '5551234567' }
@@ -1438,7 +1464,7 @@ async function run() {
   // YENİ GİZLİLİK MODELİ: aktivite-gizli kullanıcı da LİDERLİKTE görünür (Instagram sıralama mantığı — yalnız banlı hariç)
   await check('Liderlik: aktivite-gizli kullanıcı da sıralamada görünür (yeni model)', async () => {
     const N = 990350, PU = 990350, SS = 990350
-    const scat = await prisma.sportCategory.findFirst({ select: { id: true } })
+    const scat = await temelKategori()
     await prisma.neighborhood.upsert({ where: { id: N }, update: {}, create: { id: N, name: 'LbGizliMah', latitude: 41, longitude: 29, cityId: 1 } })
     await prisma.class.upsert({ where: { id: N }, update: { sportCategoryId: scat?.id ?? null }, create: { id: N, venueId: V, title: 'LbGizliDers', category: catName, sportCategoryId: scat?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     const past = new Date(Date.now() - 86400000) // güncel sezon içi + geçmiş → liderlik sayar
@@ -1576,7 +1602,7 @@ async function run() {
     await prisma.neighborhood.upsert({ where: { id: 990163 }, update: {}, create: { id: 990163, name: 'NbFar', latitude: 40.0, longitude: 28.0, cityId: 1 } })
     await prisma.venue.upsert({ where: { id: 990161 }, update: { isApproved: true, isActive: true }, create: { id: 990161, name: 'YakinSalon', email: 'nvn@x.com', passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: 990162, cityId: 1 } })
     await prisma.venue.upsert({ where: { id: 990162 }, update: { isApproved: true, isActive: true }, create: { id: 990162, name: 'UzakSalon', email: 'nvf@x.com', passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: 990163, cityId: 1 } })
-    const scat2 = await prisma.sportCategory.findFirst({})
+    const scat2 = await temelKategori()
     await prisma.class.upsert({ where: { id: 990161 }, update: {}, create: { id: 990161, venueId: 990161, title: 'NEARBYTEST Yakin', category: catName, sportCategoryId: scat2?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     await prisma.class.upsert({ where: { id: 990162 }, update: {}, create: { id: 990162, venueId: 990162, title: 'NEARBYTEST Uzak', category: catName, sportCategoryId: scat2?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     await prisma.class_Session.upsert({ where: { id: 990161 }, update: { startsAt: new Date(Date.now() + 5 * 86400000), status: 'open' }, create: { id: 990161, classId: 990161, startsAt: new Date(Date.now() + 5 * 86400000), endsAt: new Date(Date.now() + 5 * 86400000 + 3600000), capacity: 20, status: 'open' } })
@@ -1608,7 +1634,7 @@ async function run() {
   // false" durumu artık ULAŞILAMAZ bir durumdu; beklenti bakiyenin DEĞİŞMEMESİ olarak düzeltildi.
   await check('Transfer: ucuz derse geçişte pointsEarned tazelenir, BAKİYE değişmez', async () => {
     const TV = 990141, TU = 990141
-    const scat = await prisma.sportCategory.findFirst({})
+    const scat = await temelKategori()
     await prisma.venue.upsert({ where: { id: TV }, update: { isApproved: true, isActive: true }, create: { id: TV, name: 'Transfer Salon', email: `trf${TV}@x.com`, passwordHash: 'x', address: 'Adres', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.class.upsert({ where: { id: TV }, update: {}, create: { id: TV, venueId: TV, title: 'Pahalı', category: catName, sportCategoryId: scat?.id ?? null, basePrice: 200, durationMinutes: 60, capacity: 20, isActive: true } })
     await prisma.class.upsert({ where: { id: TV + 1 }, update: {}, create: { id: TV + 1, venueId: TV, title: 'Ucuz', category: catName, sportCategoryId: scat?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
@@ -1628,7 +1654,7 @@ async function run() {
   })
 
   await check('Kupon: kişi başı limit ikinci kullanımı engeller (400)', async () => {
-    const cScat = await prisma.sportCategory.findFirst({})
+    const cScat = await temelKategori()
     await prisma.class.upsert({ where: { id: 990151 }, update: {}, create: { id: 990151, venueId: V, title: 'KuponDers', category: catName, sportCategoryId: cScat?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
     await prisma.class_Session.upsert({ where: { id: 990151 }, update: { startsAt: new Date(Date.now() + 2 * 86400000), status: 'open' }, create: { id: 990151, classId: 990151, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), capacity: 20, status: 'open' } })
     await prisma.class_Session.upsert({ where: { id: 990152 }, update: { startsAt: new Date(Date.now() + 2 * 86400000), status: 'open' }, create: { id: 990152, classId: 990151, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), capacity: 20, status: 'open' } })
@@ -1643,7 +1669,7 @@ async function run() {
 
   await check('Salon istatistik: doluluk groupSize (koltuk) sayar, kayıt değil', async () => {
     const SV = 990181, SU = 990181
-    const sScat = await prisma.sportCategory.findFirst({})
+    const sScat = await temelKategori()
     await prisma.venue.upsert({ where: { id: SV }, update: { isApproved: true, isActive: true }, create: { id: SV, name: 'Stat Salon', email: `stat${SV}@x.com`, passwordHash: 'x', address: 'Adres', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
     await prisma.class.upsert({ where: { id: SV }, update: {}, create: { id: SV, venueId: SV, title: 'StatDers', category: catName, sportCategoryId: sScat?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 10, isActive: true } })
     // 2 gün sonra → 'upcoming' (7 gün) penceresine düşer; capacity: 10
@@ -1812,7 +1838,7 @@ async function run() {
     const testNow = new Date(2026, 11, 15) // 15 Ara 2026 → biten sezon Güz 2026 (lansman zemini geçer)
     const cur = seasonInfo(testNow)
     const prev = seasonInfo(new Date(cur.start.getTime() - 86400000))
-    const scat = await prisma.sportCategory.findFirst({})
+    const scat = await temelKategori()
     await ensureBadges()
     const champB = await prisma.badge.findUnique({ where: { key: 'season_champion' }, select: { id: true } })
     if (!champB) throw new Error('season_champion rozeti yok (ensureBadges)')
@@ -1851,7 +1877,7 @@ async function run() {
     const testNow = new Date(2026, 11, 15)
     const cur = seasonInfo(testNow)
     const prev = seasonInfo(new Date(cur.start.getTime() - 86400000))
-    const scat = await prisma.sportCategory.findFirst({})
+    const scat = await temelKategori()
     await ensureBadges()
     const champB = await prisma.badge.findUnique({ where: { key: 'season_champion' }, select: { id: true } })
     if (!champB) throw new Error('season_champion yok')
@@ -2443,6 +2469,50 @@ async function run() {
     await prisma.user.deleteMany({ where: { id: XU } }).catch(() => {})
   })
 
+  await check('Gizlilik: profili GİZLİ kullanıcının aktivitesine yabancı beğeni/yorum YAPAMAZ, anonim OKUYAMAZ', async () => {
+    // REGRESYON (17 Ağu 2026 denetimi): üç kapı (like, yorum okuma, yorum yazma) yalnız
+    // `activityPrivacy`ye bakıyor, `profilePrivacy`yi HİÇ sormuyordu. İki ayar BAĞIMSIZ olduğu için
+    // "profilimi gizle" diyen kullanıcının activityPrivacy'si public KALIYOR → gizli profil, istisna
+    // değil VARSAYILAN olarak yabancıya açıktı. Bu test tam O KOMBİNASYONU kurar.
+    const PO = 991020, PS = 991021, PF = 991022
+    await testPrisma.user.upsert({ where: { id: PO }, update: { profilePrivacy: 'private', activityPrivacy: 'public', banned: false }, create: { id: PO, username: `pv_${PO}`, email: `pv_${PO}@x.com`, passwordHash: 'x', fullName: 'Gizli Sahip', profilePrivacy: 'private', activityPrivacy: 'public' } })
+    await testPrisma.user.upsert({ where: { id: PS }, update: { banned: false }, create: { id: PS, username: `pv_${PS}`, email: `pv_${PS}@x.com`, passwordHash: 'x', fullName: 'Yabanci' } })
+    await testPrisma.user.upsert({ where: { id: PF }, update: { banned: false }, create: { id: PF, username: `pv_${PF}`, email: `pv_${PF}@x.com`, passwordHash: 'x', fullName: 'Takipci' } })
+    const bk = await prisma.booking.create({ data: { userId: PO, sessionId: S, status: 'confirmed', bookingType: 'class', baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, bookingNumber: `PRV-${Date.now()}` } })
+    const fk = `b-${bk.id}`
+    const sahipTok = jwt.sign({ userId: PO, email: `pv_${PO}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const yabanciTok = jwt.sign({ userId: PS, email: `pv_${PS}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const takipciTok = jwt.sign({ userId: PF, email: `pv_${PF}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    try {
+      // 1) YABANCI beğeni → 404 (403 değil: existence-oracle kapalı kalmalı)
+      const like = await http(`/api/social/feed/${fk}/like`, { method: 'POST', token: yabanciTok })
+      if (like.status !== 404) throw new Error(`yabancı gizli profili beğendi: ${like.status} (404 bekleniyor)`)
+      if (await prisma.activityLike.count({ where: { feedKey: fk } }) !== 0) throw new Error('yabancı beğenisi satır yazdı')
+      // 2) YABANCI yorum → 404 (bildirim metnini saldırgan yazıyordu)
+      const yaz = await http(`/api/social/feed/${fk}/comments`, { method: 'POST', token: yabanciTok, body: { content: 'taciz' } })
+      if (yaz.status !== 404) throw new Error(`yabancı gizli profile yorum yazdı: ${yaz.status} (404 bekleniyor)`)
+      if (await prisma.activityComment.count({ where: { feedKey: fk } }) !== 0) throw new Error('yabancı yorumu satır yazdı')
+      if (await prisma.notification.count({ where: { userId: PO, relatedUserId: PS } }) !== 0) throw new Error('yabancı, gizli sahibe bildirim gönderdi')
+      // 3) ANONİM (jetonsuz) yorum okuma → 404 (yorumcuların TAM ADLARI dönüyordu)
+      const anon = await http(`/api/social/feed/${fk}/comments`, { method: 'GET' })
+      if (anon.status !== 404) throw new Error(`anonim gizli profilin yorumlarını okudu: ${anon.status} (404 bekleniyor)`)
+      // 4) AŞIRI-GİZLEME KORUMASI — SAHİBİ kendi aktivitesini beğenebilmeli (onaylı model)
+      const kendi = await http(`/api/social/feed/${fk}/like`, { method: 'POST', token: sahipTok })
+      if (kendi.status !== 201 && kendi.status !== 200) throw new Error(`sahip kendi aktivitesini beğenemedi: ${kendi.status}`)
+      // 5) AŞIRI-GİZLEME KORUMASI — ONAYLI TAKİPÇİ görebilmeli (onaylı model kural 2)
+      await prisma.follow.upsert({ where: { followerId_followingId: { followerId: PF, followingId: PO } }, update: { status: 'accepted' }, create: { followerId: PF, followingId: PO, status: 'accepted' } })
+      const takipci = await http(`/api/social/feed/${fk}/comments`, { method: 'GET', token: takipciTok })
+      if (takipci.status !== 200) throw new Error(`onaylı takipçi yorumları göremedi: ${takipci.status} (aşırı-gizleme!)`)
+    } finally {
+      await prisma.activityLike.deleteMany({ where: { feedKey: fk } }).catch(() => {})
+      await prisma.activityComment.deleteMany({ where: { feedKey: fk } }).catch(() => {})
+      await prisma.notification.deleteMany({ where: { userId: { in: [PO, PS, PF] } } }).catch(() => {})
+      await prisma.follow.deleteMany({ where: { followingId: PO } }).catch(() => {})
+      await prisma.booking.deleteMany({ where: { id: bk.id } }).catch(() => {})
+      await prisma.user.deleteMany({ where: { id: { in: [PO, PS, PF] } } }).catch(() => {})
+    }
+  })
+
   // ================== HATA YOLLARI REGRESYONLARI (denetim turu 15) ==================
   await check('Hata yolu: şifre değişince TÜM refresh oturumları iptal edilir (atomik)', async () => {
     const CU = 990901
@@ -2962,7 +3032,7 @@ async function run() {
   // Askıya alınmış salonun drop-in ilanı public listede GÖRÜNMEMELİ (kardeş public uçlarla simetri)
   await check('Gizlilik: askıya alınmış salonun drop-in ilanı public listede yok', async () => {
     const DV = 990392, DS = 990392
-    const cat = await prisma.sportCategory.findFirst({})
+    const cat = await temelKategori()
     if (!cat) throw new Error('kurulum: sportCategory yok')
     await prisma.dropInParticipant.deleteMany({ where: { slotId: DS } }).catch(() => {})
     await prisma.dropInSlot.deleteMany({ where: { id: DS } }).catch(() => {})
@@ -3204,7 +3274,7 @@ async function run() {
   await check('Liderlik: drop-in katılımı kullanıcı liderliğine sayılır', async () => {
     const uid = 990367, slotId = 990367, nb = 990368
     const season = seasonInfo()
-    const cat = await prisma.sportCategory.findFirst({})
+    const cat = await temelKategori()
     if (!cat) throw new Error('kurulum: sportCategory yok')
     await prisma.neighborhood.upsert({ where: { id: nb }, update: {}, create: { id: nb, name: 'DIMah', latitude: 41, longitude: 29, cityId: 1 } })
     await testPrisma.user.upsert({ where: { id: uid }, update: { neighborhoodId: nb }, create: { id: uid, username: `di_${uid}`, email: `di_${uid}@x.com`, passwordHash: 'x', fullName: 'DI', neighborhoodId: nb } })
@@ -4502,7 +4572,7 @@ async function run() {
   // ama davetli 404/403 alıyordu (özellik tamamen ölü). Bu test sözleşmenin iki ucunu da sabitler.
   await check('Drop-in: özel slot kodla görüntülenir ve kodla katılınır, kodsuz kapalı', async () => {
     const PV = 990471, PS = 990471, PU = 990471
-    const cat = await prisma.sportCategory.findFirst({})
+    const cat = await temelKategori()
     if (!cat) throw new Error('kurulum: sportCategory yok')
     await prisma.dropInParticipant.deleteMany({ where: { slotId: PS } }).catch(() => {})
     await prisma.dropInSlot.deleteMany({ where: { id: PS } }).catch(() => {})
@@ -4660,7 +4730,7 @@ async function run() {
     const testNow = new Date(2026, 11, 15) // biten sezon Güz 2026 (lansman zeminini geçer)
     const cur = seasonInfo(testNow)
     const prev = seasonInfo(new Date(cur.start.getTime() - 86400000))
-    const scat = await prisma.sportCategory.findFirst({})
+    const scat = await temelKategori()
     await ensureBadges()
     const champB = await prisma.badge.findUnique({ where: { key: 'season_champion' }, select: { id: true } })
     if (!champB) throw new Error('season_champion rozeti yok (ensureBadges)')
@@ -4785,6 +4855,18 @@ async function main() {
       env: { ...process.env, PORT: String(PORT), DISABLE_RATE_LIMIT: 'true', ADMIN_SECRET, CRON_SECRET, CLOUDINARY_URL: process.env.CLOUDINARY_URL || TEST_CLOUDINARY_URL },
       detached: true,
     })
+    // ── HAYALET SUNUCU KORUMASI ────────────────────────────────────────────────────────────
+    // Sunucu `detached: true` ile başlatılıyor ve yalnız aşağıdaki `finally` bloğu onu öldürüyor.
+    // Koşucu DIŞARIDAN öldürülürse (SIGTERM/SIGINT/Ctrl-C, CI iptali) `finally` HİÇ çalışmaz ve
+    // ayrık sunucu 3199'u tutmaya devam eder. Sonucu sinsi: bir sonraki koşunun kendi sunucusu
+    // porta bağlanamaz; testler ya "Sunucu başlamadı" der ya da FARKINDA OLMADAN eski koddaki
+    // hayalete karşı koşar — yani kapı yanlış şeyi ölçer. (Bu oturumda gerçekten yaşandı.)
+    const oldur = () => { if (server?.pid) { try { process.kill(-server.pid, 'SIGKILL') } catch { try { server.kill('SIGKILL') } catch {} } } }
+    process.on('SIGTERM', () => { oldur(); process.exit(143) })
+    process.on('SIGINT', () => { oldur(); process.exit(130) })
+    process.on('uncaughtException', (e) => { console.error(e); oldur(); process.exit(1) })
+    process.on('exit', oldur)
+
     server.stdout?.on('data', d => { serverLog += d })
     server.stderr?.on('data', d => { serverLog += d })
     try { await waitForServer() } catch (e) { console.error('Sunucu log:\n', serverLog.slice(0, 1000)); throw e }

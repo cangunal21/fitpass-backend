@@ -119,14 +119,29 @@ export const createBooking = async (req: Request, res: Response) => {
           // rezervasyon+iptal döngüsel beklemeye (40P01 deadlock) giriyor, kurban istek
           // "Sunucu hatası" alıyordu.
           await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`
-          await tx.$executeRaw`SELECT id FROM "Coupon" WHERE code = ${String(couponCode).toUpperCase()} FOR UPDATE`
-          const found = await tx.coupon.findUnique({ where: { code: String(couponCode).toUpperCase() } })
-          if (!found || !found.isActive) throw new BookingError('Geçersiz kupon kodu.', 400)
-          if (found.venueId !== session.class!.venueId) throw new BookingError('Bu kupon bu salona ait değil.', 400)
-          if (found.expiresAt && found.expiresAt < new Date()) throw new BookingError('Kupon süresi dolmuş.', 400)
-          if (found.maxUses && found.usedCount >= found.maxUses) throw new BookingError('Kupon kullanım limiti dolmuş.', 400)
+          // TRIM: mobil istemci kodu kırpıyor, web ve sunucu KIRPMIYORDU. Kopyala-yapıştırda sona
+          // eklenen tek boşluk "geçersiz kupon" demeye yetiyordu. Normalizasyon tek yerde.
+          const kuponKodu = String(couponCode).trim().toUpperCase()
+          await tx.$executeRaw`SELECT id FROM "Coupon" WHERE code = ${kuponKodu} FOR UPDATE`
+          const found = await tx.coupon.findUnique({ where: { code: kuponKodu } })
+
+          // ENUMERASYON/ORACLE ENGELİ — validateCoupon ile AYNI politika.
+          // Buradaki dört red eskiden DÖRT AYRI mesaj veriyordu ('Geçersiz kupon kodu.' /
+          // 'Bu kupon bu salona ait değil.' / 'Kupon süresi dolmuş.' / 'Kupon kullanım limiti dolmuş.').
+          // couponController'daki sertleştirme bu yüzden fiilen işlevsizdi: saldırgan aynı bilgiyi
+          // /api/bookings üzerinden alıyordu — üstelik couponLimiter (15/dk) YALNIZ
+          // /api/public/validate-coupon'a bağlı olduğu için hız sınırı da yoktu.
+          // ÖLÇÜLDÜ (17 Ağu 2026): 40 ardışık tahmin → validate-coupon'da 25'i limitlendi,
+          // /api/bookings'te 40/40 geçti. Başarısız tahmin tx'i geri aldığı için iz de bırakmıyordu.
+          const gecersiz = () => new BookingError('Geçersiz veya kullanılamaz kupon kodu.', 400)
+          if (!found || !found.isActive) throw gecersiz()
+          if (found.venueId !== session.class!.venueId) throw gecersiz()
+          if (found.expiresAt && found.expiresAt < new Date()) throw gecersiz()
+          if (found.maxUses && found.usedCount >= found.maxUses) throw gecersiz()
           // Kişi başı limit: bu kullanıcının bu kuponu kaç aktif (iptal edilmemiş) rezervasyonda kullandığını say.
           // Kupon satırı FOR UPDATE ile kilitli → eşzamanlı ikinci kullanım da bu kontrolde yakalanır.
+          // perUserLimit mesajı BİLİNÇLİ olarak bilgilendirici: bu dal ancak kullanıcı kuponu DAHA ÖNCE
+          // başarıyla kullandıysa çalışır — yani kodun varlığını zaten biliyor. Sızdırdığı yeni bilgi yok.
           if (found.perUserLimit != null) {
             const myUses = await tx.booking.count({ where: { couponId: found.id, userId, status: { not: 'cancelled' } } })
             if (myUses >= found.perUserLimit) throw new BookingError('Bu kuponu daha fazla kullanamazsınız (kişi başı limit doldu).', 400)
@@ -746,8 +761,17 @@ export const getTransferOptions = async (req: Request, res: Response) => {
     if (booking.status !== 'confirmed') return res.status(400).json({ error: 'Sadece aktif rezervasyonlar transfer edilebilir.' })
 
     const venueId = booking.session.class.venueId
-    const oldBasePrice = booking.session.class.basePrice
     const groupSize = booking.groupSize
+    // ── TEK KAYNAK: DONMUŞ baseAmount ────────────────────────────────────────────────────────
+    // Burası eskiden CANLI ders fiyatını (`booking.session.class.basePrice`) kullanıyordu; gerçek
+    // transfer ise (aşağıda, transferBooking içinde) rezervasyon anında DONMUŞ `booking.baseAmount`ı.
+    // Salon dersin fiyatını sonradan değiştirdiğinde (updateClass'ta buna karşı bir kapı YOK) iki
+    // taraf ayrışıyordu: ÖLÇÜLDÜ — aynı rezervasyon için liste "iade 150₺" derken işlem 0₺ ödüyordu;
+    // ters yönde de listede çıkan seans işlem kapısında 400 ile reddedilebiliyor.
+    // `transferIadesiHesapla` 15 Ağu'da ortaklaştırılmıştı ama ARGÜMANLARI ayrı üretildiği için
+    // ayrışma aynı yerden geri döndü — ortak fonksiyon, ortak GİRDİ olmadan yetmiyor.
+    const oldBaseToplam = booking.baseAmount                                  // işlem tarafıyla AYNI
+    const oldBasePrice = groupSize > 0 ? oldBaseToplam / groupSize : oldBaseToplam  // birim fiyata indir
     // Kuponu BURADA da oku: iade vaadi gerçek transferle AYNI hesaptan çıkmalı (bkz.
     // transferIadesiHesapla). Eskiden liste ham fiyat farkını vaat ediyor, işlem kuponu
     // hesaba katıyordu ve yüzde kuponlu kullanıcı vaat edilenin YARISINI alıyordu.
@@ -794,8 +818,9 @@ export const getTransferOptions = async (req: Request, res: Response) => {
           priceRefund: transferIadesiHesapla({
             finalAmount: booking.finalAmount,
             venuePayout: booking.venuePayout,
-            oldBase: oldBasePrice * groupSize,
-            newBase: s.class.basePrice * groupSize,
+            oldBase: oldBaseToplam,
+            // newBase de işlem tarafındaki gibi money() ile yuvarlanır (:936 ile simetrik)
+            newBase: money(s.class.basePrice * groupSize),
             kupon: transferKuponu,
           }).iade,
         })

@@ -30,25 +30,28 @@ export async function reconcileAttendancePoints(): Promise<number> {
     // Check-in yapılmış ama 'attendance' defter satırı OLMAYAN rezervasyonlar.
     // (İlişkisel NOT EXISTS: rewardPoints ilişkisi Booking üzerinde tanımlı değil, o yüzden
     // iki adımda — önce adaylar, sonra defterde olanları çıkar.)
-    const adaylar = await prisma.booking.findMany({
-      where: {
-        checkedIn: true,
-        status: { in: ['confirmed', 'pending'] },
-        checkedInAt: { gte: sinir },
-      },
-      select: { id: true },
-      take: 500, // güvenlik sınırı; kalanlar sonraki turda
-    })
-    if (adaylar.length === 0) return 0
-
-    const ids = adaylar.map(a => a.id)
-    const kredili = await prisma.rewardPoint.findMany({
-      where: { bookingId: { in: ids }, source: 'attendance' },
-      select: { bookingId: true },
-    })
-    const krediliSet = new Set(kredili.map(k => k.bookingId))
-    const eksik = ids.filter(id => !krediliSet.has(id))
+    // SINIR, ELEMEDEN SONRA UYGULANMALI. Eskiden `take: 500` TÜM check-in'lilere uygulanıyor,
+    // "defterde satırı var mı" elemesi ise o dilimin üzerinde BELLEKTE yapılıyordu. orderBy da yoktu.
+    // Sonuç: kredilenmiş 500 kayıt dilimi doldurunca kredisizler pencereye hiç giremiyor ve
+    // GERIYE_GUN=7 dolunca kalıcı düşüyorlardı — mutabakat işi mutabakatı yapamıyor.
+    // ÖLÇÜLDÜ: 600 check-in (550 kredili / 50 kredisiz) → 5 turun HEPSİNDE tamamlanan=0.
+    // Booking üzerinde rewardPoints ilişkisi tanımlı olmadığı için eleme SQL'de NOT EXISTS ile
+    // yapılıyor; böylece LIMIT "eksik olanlara" uygulanıyor. En eskiden başla ki birikmiş iş boşalsın.
+    const eksikSatirlar = await prisma.$queryRaw<{ id: number }[]>`
+      SELECT b.id FROM "Booking" b
+      WHERE b."checkedIn" = true
+        AND b.status IN ('confirmed', 'pending')
+        AND b."checkedInAt" >= ${sinir}
+        AND NOT EXISTS (
+          SELECT 1 FROM "RewardPoint" rp
+          WHERE rp."bookingId" = b.id AND rp.source = 'attendance'
+        )
+      ORDER BY b."checkedInAt" ASC
+      LIMIT 500
+    `
+    const eksik = eksikSatirlar.map(r => Number(r.id))
     if (eksik.length === 0) return 0
+    console.log(`🧾 Mutabakat: ${eksik.length} kredilenmemiş check-in bulundu, işleniyor…`)
 
     let tamamlanan = 0
     for (const id of eksik) {

@@ -74,8 +74,25 @@ for d in "$HEDEF"/sipsakspor-prod-*/; do
 done
 
 echo "→ yedek alınıyor (hedef: $HEDEF)"
+# Koşudan ÖNCEKİ dosya listesi: aşağıda "bu koşunun ürettiği dosya hangisi" sorusunu
+# tarih/saat tahminiyle değil, KÜME FARKIYLA cevaplamak için.
+ONCEKI=$(ls -1d "$HEDEF"/sipsakspor-prod-* 2>/dev/null | sort)
 BACKUP_DIR="$HEDEF" bash "$REPO/scripts/backup-prod.sh" "$PROD_DATABASE_URL"
 KOD=$?
+
+# ── DOĞRULANMAMIŞ ÜRÜNÜ ADIYLA AYIR ─────────────────────────────────────────────────────────
+# Doğrulama koşmadığında (3) ya da düştüğünde (2) de ortada bir arşiv KALIYOR — ve adı
+# kanıtlanmış bir yedekten AYIRT EDİLEMİYORDU. İki sonucu vardı: (1) felaket anında insan
+# en yeni dosyayı alır, geri yüklenemediğini orada öğrenir; (2) 14'lük saklama kotasında yer
+# kaplayıp KANITLANMIŞ bir yedeği emekliye ayırır — yani kötü yedek iyisini kovar.
+if [[ "$KOD" -ne 0 ]]; then
+  SONRAKI=$(ls -1d "$HEDEF"/sipsakspor-prod-* 2>/dev/null | sort)
+  comm -13 <(printf '%s\n' "$ONCEKI") <(printf '%s\n' "$SONRAKI") | while read -r yeni; do
+    [[ -e "$yeni" ]] || continue
+    mv "$yeni" "$HEDEF/DOGRULANMAMIS-$(basename "$yeni")" 2>/dev/null || true
+    echo "⚠️  doğrulanmamış ürün işaretlendi: DOGRULANMAMIS-$(basename "$yeni")"
+  done
+fi
 
 # ── EMEKLİLİK: eski yedekleri sil, disk dolmasın ─────────────────────────────────────────────
 # En yeni $SAKLANACAK tanesi kalır. `backup-prod.sh` hem .dump hem klasör üretebiliyor
@@ -85,29 +102,48 @@ ls -1dt sipsakspor-prod-* 2>/dev/null | tail -n +$((SAKLANACAK + 1)) | while rea
   echo "  emeklilik: $eski siliniyor"
   rm -rf "$eski"
 done
-# EKSIK-* olanları daha kısa tut: bunlar yedek DEĞİL, yalnız teşhis için duruyorlar.
-ls -1dt EKSIK-* 2>/dev/null | tail -n +4 | while read -r eski; do
-  echo "  emeklilik (eksik): $eski siliniyor"
+# EKSIK-* ve DOGRULANMAMIS-* olanları daha kısa tut: bunlar yedek DEĞİL, yalnız teşhis için
+# duruyorlar. Saklama kotasını (14) yemesinler diye ayrı ve kısa bir kuyrukları var.
+ls -1dt EKSIK-* DOGRULANMAMIS-* 2>/dev/null | tail -n +4 | while read -r eski; do
+  echo "  emeklilik (yedek değil): $eski siliniyor"
   rm -rf "$eski"
 done
 
 SAYI=$(ls -1dt sipsakspor-prod-* 2>/dev/null | wc -l | tr -d ' ')   # EKSIK-* sayılmaz: onlar yedek değil
-if [[ "$KOD" -eq 0 ]]; then
-  echo "✅ BAŞARILI — kanıtlanmış yedek alındı. Klasördeki yedek sayısı: $SAYI"
-  {
-    printf 'BASARILI\t%s\tkanitlanmis (geri yukleme testi gecti)\n' "$(date '+%Y-%m-%d %H:%M')"
-    printf '\n'
-    printf '⚠️  BU DOSYALARI ŞİFRELİ HARİCİ DİSKE KOPYALA.\n'
-    printf '    Railway planında otomatik yedek YOK — şu an TEK yedek hattı bu klasör.\n'
-    printf '    Bu Mac kaybolursa/bozulursa veri de gider. Aynı diskteki yedek, yedek değildir.\n'
-    printf '\n'
-    printf 'Klasör: %s\n' "$HEDEF"
-  } > "$DURUM"
-elif [[ "$KOD" -eq 3 ]]; then
-  echo "⚠️  Yedek alındı ama DOĞRULANMADI (yerel PostgreSQL sunucusu uyumsuz)."
-  printf 'DOGRULANMADI\t%s\tdosya var ama geri yukleme testi kosmadi\n' "$(date '+%Y-%m-%d %H:%M')" > "$DURUM"
-else
-  echo "❌ BAŞARISIZ (çıkış kodu $KOD) — yukarıdaki çıktıya bak."
-  printf 'HATA\t%s\tcikis kodu %s\n' "$(date '+%Y-%m-%d %H:%M')" "$KOD" > "$DURUM"
-fi
+# ── BİLİNMEYEN ÇIKIŞ KODU ASLA BAŞARI SAYILMAZ ──────────────────────────────────────────────
+# Bu blok eskiden `if 0 / elif 3 / else` idi ve **3 dalı bu makinede erişilemezdi**: prod
+# PostgreSQL 18.4, yereldeki istemci 16 — sürüm uyuşmazlığı yüzünden `backup-prod.sh` her zaman
+# `backup-prod-logical.sh`e düşüyor (kanıt: klasörde `.dump` değil `.tgz` var). Mantıksal betik
+# ise doğrulama KOŞMADIĞINDA da `exit 0` dönüyordu. Yani "geri yükleme testi hiç koşmadı" hâli
+# sessizce "BASARILI — kanıtlanmış" olarak raporlanıyordu. 17 Ağu 2026 denetiminde bulundu.
+case "$KOD" in
+  0)
+    echo "✅ BAŞARILI — kanıtlanmış yedek alındı. Klasördeki yedek sayısı: $SAYI"
+    {
+      printf 'BASARILI\t%s\tkanitlanmis (geri yukleme testi KOSTU ve GECTI)\n' "$(date '+%Y-%m-%d %H:%M')"
+      printf '\n'
+      printf '⚠️  BU DOSYALARI ŞİFRELİ HARİCİ DİSKE KOPYALA.\n'
+      printf '    Railway planında otomatik yedek YOK — şu an TEK yedek hattı bu klasör.\n'
+      printf '    Bu Mac kaybolursa/bozulursa veri de gider. Aynı diskteki yedek, yedek değildir.\n'
+      printf '\n'
+      printf 'Klasör: %s\n' "$HEDEF"
+    } > "$DURUM"
+    ;;
+  3)
+    echo "⚠️  Yedek alındı ama DOĞRULANMADI — geri yükleme testi KOŞMADI."
+    {
+      printf 'DOGRULANMADI\t%s\tdosya var ama geri yukleme testi KOSMADI\n' "$(date '+%Y-%m-%d %H:%M')"
+      printf '\n'
+      printf '⚠️  BU YEDEGE GUVENME. Dosya duruyor ama geri yuklenebildigi KANITLANMADI.\n'
+      printf '    En sik sebep: yerel PostgreSQL sunucusu calismiyor.\n'
+      printf '      kontrol : brew services list | grep postgres\n'
+      printf '      baslat  : brew services start postgresql@16\n'
+      printf '      tekrar  : launchctl kickstart -p gui/$(id -u)/com.sipsakspor.yedek\n'
+    } > "$DURUM"
+    ;;
+  *)
+    echo "❌ BAŞARISIZ (çıkış kodu $KOD) — yukarıdaki çıktıya bak."
+    printf 'HATA\t%s\tcikis kodu %s\n' "$(date '+%Y-%m-%d %H:%M')" "$KOD" > "$DURUM"
+    ;;
+esac
 exit "$KOD"

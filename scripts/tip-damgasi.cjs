@@ -47,6 +47,27 @@ function main() {
   const mevcut = eslesme[1]
 
   if (process.argv.includes('--yaz')) {
+    // ── DAMGAYI YALNIZ SÖZLEŞME SAHİBİ (backend) YAZABİLİR ────────────────────────────────────
+    // Kapı eskiden çapraz-repo KÖRDÜ: her repo kendi dosyasını hash'leyip kendi damgasıyla
+    // karşılaştırıyordu. Dolayısıyla web'in api.ts'ine bir alan eklenip `--yaz` çalıştırılınca o
+    // repo kendi damgasını TAZELİYOR ve üç kapı da yeşil kalıyordu — üç repo farklı sözleşme
+    // taşırken hiçbir şey ötmüyordu. (Kapı kırma deneyi bunu gösterdi: ÜÇ REPODA DA exit 0.)
+    // Çözüm cross-repo CI erişimi gerektirmiyor: yazma hakkı tek repoda. İstemciler sözleşmeyi
+    // yalnız KOPYALAR; kopya değiştirilirse gömülü damga artık içerikle uyuşmaz ve o reponun
+    // kendi `types:check`i kırılır.
+    const pkg = path.join(__dirname, '..', 'package.json')
+    const ad = JSON.parse(fs.readFileSync(pkg, 'utf8')).name
+    if (ad !== 'fitpass') {
+      console.error(
+        `✗ Damga bu repoda YAZILAMAZ (${ad}).\n\n` +
+        `  Sözleşmenin sahibi backend (fitpass). Sıra:\n` +
+        `    1) ~/fitpass içinde düzenle ve: node scripts/tip-damgasi.cjs --yaz\n` +
+        `    2) src/types/api.ts dosyasını BU repoya olduğu gibi kopyala\n\n` +
+        `  Sebep: damga her repoda tazelenebilseydi, sürüklenmiş bir kopya kendi damgasını\n` +
+        `  yenileyip yeşil kalırdı — kapı tam da bunu yakalamak için var.`
+      )
+      process.exit(1)
+    }
     if (mevcut === beklenen) {
       console.log(`✓ damga zaten güncel: ${beklenen}`)
       return

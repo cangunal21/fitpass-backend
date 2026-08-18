@@ -8,8 +8,14 @@ export const isValidEmail = (e: unknown): boolean =>
 export const MIN_PASSWORD = 8
 
 // String alanları üst sınıra kırp (DoS/şişirme önlemi). undefined ise dokunma.
+// TRIM ÖNCE: yalnız boşluktan oluşan girdi ('   ') eskiden aynen kaydediliyordu ve her yerde
+// "dolu ama anlamsız" bir değer gibi davranıyordu. Somut zarar: translationJob'ın `bio != null`
+// filtresi böyle kayıtları seçiyor, çevirmen boş girdide null döndüğü için kayıt bir daha ASLA
+// tamamlanmıyor ve 5'lik parti kalıcı tıkanıyordu (ölçüldü: gerçek eğitmenin bio'su 3 turda da
+// çevrilmedi + her turda yanlış "Groq kotası" uyarısı). Trim, sınıfı kaynağında kapatır.
+// Kırpma trim'den SONRA: önce kırpıp sonra trim'lemek sınırı aşan boşlukları geri getirirdi.
 export const clampStr = (v: unknown, max: number): string | undefined =>
-  v === undefined || v === null ? undefined : String(v).slice(0, max)
+  v === undefined || v === null ? undefined : String(v).trim().slice(0, max)
 
 // Geçerli, Postgres int4 aralığında pozitif tamsayı ise döndürür; değilse undefined.
 // query/body'den gelen ID'ler için: "abc"/taşan sayı → undefined → Prisma'ya NaN/overflow gitmez (500 önlenir).

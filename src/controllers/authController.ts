@@ -599,6 +599,27 @@ export const deleteAccount = async (req: Request, res: Response) => {
       await tx.referral.deleteMany({ where: { OR: [{ referrerId: userId }, { referredId: userId }] } })
       await tx.report.deleteMany({ where: { OR: [{ reporterUserId: userId }, { reportedUserId: userId }] } })
 
+      // KUPON HAKKI İADE — bu transaction referral sayacını ve referral puanını bilinçle geri alıyor
+      // ama kuponu ATLIYORDU: hesap silinince booking'ler hard-delete ediliyor, kuponun yaktığı
+      // usedCount ise kalıyordu. Salonun kampanya kotası kalıcı yanıyor ve booking satırı silindiği
+      // için hiçbir veriden türetilemiyor (maxUses=1 kupon kalıcı tükeniyor).
+      // Kural venueController'daki 'KUPON HAKKI İADE' bloğuyla AYNI: yalnız hakkı hâlâ TUTAN
+      // (confirmed/pending) rezervasyonlar sayılır — 'cancelled' olanların kuponu iptalde iade edildi,
+      // ikinci kez iade edilirse usedCount olduğundan düşük kalır.
+      const silinecekler = await tx.booking.findMany({
+        where: { userId, couponId: { not: null }, status: { in: ['confirmed', 'pending'] } },
+        select: { couponId: true },
+      })
+      const kuponSayaci = new Map<number, number>()
+      for (const b of silinecekler) {
+        if (b.couponId) kuponSayaci.set(b.couponId, (kuponSayaci.get(b.couponId) || 0) + 1)
+      }
+      for (const [couponId, n] of kuponSayaci) {
+        const c = await tx.coupon.findUnique({ where: { id: couponId }, select: { usedCount: true } })
+        const dec = Math.min(n, c?.usedCount || 0) // 0'ın altına inmesin (aynı invariant)
+        if (dec > 0) await tx.coupon.update({ where: { id: couponId }, data: { usedCount: { decrement: dec } } })
+      }
+
       // Booking'leri sil, sahip olunan salonların owner bağını boşalt, en son kullanıcıyı sil
       await tx.booking.deleteMany({ where: { userId } })
       await tx.venue.updateMany({ where: { ownerUserId: userId }, data: { ownerUserId: null } })
@@ -732,7 +753,15 @@ export const resendVerification = async (req: Request & { userId?: number }, res
     if (recent) return res.json({ message: 'Doğrulama emaili yakın zamanda gönderildi. Birkaç dakika sonra tekrar deneyin.' })
 
     const kod = await dogrulamaKoduUret(req.userId!)
-    sendEmailVerificationEmail(user.email, user.fullName, kod, localeFromReq(req)).catch(err => console.error('Verify mail gönderilemedi:', err))
+    // ATEŞLE-UNUT DEĞİL: eskiden sonuç beklenmeden KOŞULSUZ "Yeni doğrulama kodu gönderildi."
+    // dönülüyordu. Kullanıcı gelmeyen postayı bekliyor, 2 dakikalık cooldown da devreye girdiği için
+    // tekrar denemesi de "yakın zamanda gönderildi" ile karşılanıyordu — çıkışsız döngü.
+    // Burada bekleme maliyeti kabul edilebilir: uç zaten insan tetikli ve tek postalık.
+    const sonuc: any = await sendEmailVerificationEmail(user.email, user.fullName, kod, localeFromReq(req))
+      .catch((err: any) => { console.error('Verify mail gönderilemedi:', err); return { error: { message: String(err?.message || err) } } })
+    if (sonuc?.error) {
+      return res.status(502).json({ error: 'Doğrulama e-postası şu an gönderilemiyor. Lütfen birazdan tekrar deneyin.' })
+    }
 
     return res.json({ message: 'Yeni doğrulama kodu gönderildi.' })
   } catch (error) {

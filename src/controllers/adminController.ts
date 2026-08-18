@@ -249,6 +249,10 @@ export const deleteVenue = async (req: Request, res: Response) => {
       await tx.venueSportCategory.deleteMany({ where: { venueId } })
       await tx.venuePasswordResetToken.deleteMany({ where: { venueId } })
       // Salon
+      // Panel oturumlarını salondan ÖNCE sil. FK'ler ON DELETE SET NULL olduğu için salon silinince
+      // bu satırların venueId'si NULL'a düşüyor, yetim kalıyor ve `venueId` filtresiyle silen hiçbir
+      // temizlik onlara BİR DAHA ulaşamıyor (silme sonrasına konan bir temizlik de hiçbir şey bulmaz).
+      await tx.panelRefreshToken.deleteMany({ where: { venueId } })
       await tx.venue.delete({ where: { id: venueId } })
       return [...affected]
     }, { timeout: 30000 })
@@ -266,6 +270,11 @@ export const deleteVenue = async (req: Request, res: Response) => {
       }
     }
 
+    // CACHE DÜŞÜR — suspendVenue bunu yapıyor (:149), deleteVenue YAPMIYORDU. venueAuthMiddleware
+    // salon durumunu 60 sn cache'liyor; silinen salonun elindeki panel token'ı o pencere boyunca
+    // çalışmaya devam ediyordu. CANLI DOĞRULANDI: salon silindikten sonra eski token ile
+    // GET /api/venue/revenue → 200. Askıya almadan daha yıkıcı bir işlemin daha zayıf olması saçma.
+    invalidate(`venueState:${venueId}`)
     return res.json({ message: 'Salon ve tüm bağlı kayıtları silindi.' })
   } catch (err) {
     if (handlePrismaErr(err, res)) return
@@ -551,12 +560,17 @@ export const resolveComplaint = async (req: Request, res: Response) => {
 // Hocayı doğrula / doğrulamayı kaldır (admin) — "doğrulanmış hoca" mavi tiki
 export const verifyInstructor = async (req: Request, res: Response) => {
   try {
+    // BOOLEAN KAPISI — kardeş uçlarda (approveVenue, suspendVenue, banUser) VAR, burada YOKTU.
+    // `!!verified` her girdiyi sessizce yorumluyordu: boş gövde → sessiz UNVERIFY + 200,
+    // {"verified":"false"} (string) → truthy → VERIFY + 200. Doğrulama rozeti kullanıcıya
+    // gösterilen bir güven işareti; kazayla verilmesi/alınması sessiz olmamalı.
+    const { verified } = req.body
+    if (typeof verified !== 'boolean') return res.status(400).json({ error: 'verified alanı boolean olmalı.' })
     const instructorId = parseInt(req.params.id as string)
     if (!instructorId || isNaN(instructorId)) return res.status(400).json({ error: 'Geçersiz hoca.' })
-    const { verified } = req.body
     const instructor = await prisma.instructor.update({
       where: { id: instructorId },
-      data: { verified: !!verified },
+      data: { verified },
       select: { id: true, fullName: true, verified: true },
     })
     return res.json({ message: verified ? 'Hoca doğrulandı.' : 'Doğrulama kaldırıldı.', instructor })
