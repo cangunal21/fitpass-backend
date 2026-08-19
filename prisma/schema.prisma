@@ -215,6 +215,7 @@ model User {
   reportsMade             Report[]                 @relation("ReportsMade")
   reportsAgainst          Report[]                 @relation("ReportsAgainst")
   refreshTokens           RefreshToken[]
+
   // registerPushToken ayni token'i baska hesaptan koparirken updateMany yapiyor -> indekssiz tam tablo taramasi
   @@index([pushToken])
 }
@@ -263,20 +264,20 @@ model Complaint {
 // ─────────────────────────────────────────────
 
 model Venue {
-  id                   Int           @id @default(autoincrement())
+  id                   Int                 @id @default(autoincrement())
   name                 String
   description          String?
-  owner                User?         @relation(fields: [ownerUserId], references: [id])
+  owner                User?               @relation(fields: [ownerUserId], references: [id])
   ownerUserId          Int?
   address              String
-  neighborhood         Neighborhood? @relation(fields: [neighborhoodId], references: [id])
+  neighborhood         Neighborhood?       @relation(fields: [neighborhoodId], references: [id])
   neighborhoodId       Int?
-  city                 City?         @relation(fields: [cityId], references: [id])
+  city                 City?               @relation(fields: [cityId], references: [id])
   cityId               Int?
   latitude             Float?
   longitude            Float?
   phone                String?
-  email                String?       @unique
+  email                String?             @unique
   passwordHash         String?
   // Parola en son ne zaman değişti. Salon/eğitmen token'ları 7 gün geçerli ve refresh-token
   // tablosu YOK → parola değişince eski JWT'leri iptal edecek başka bir kanca yoktu: ele
@@ -286,17 +287,17 @@ model Venue {
   panelRefreshTokens   PanelRefreshToken[]
   website              String?
   coverImageUrl        String?
-  images               Json          @default("[]")
+  images               Json                @default("[]")
   pendingCoverImageUrl String? // admin onayı bekleyen kapak
-  pendingImages        Json          @default("[]") // admin onayı bekleyen galeri
-  imagesPendingReview  Boolean       @default(false) // onay bekleyen resim var mı
-  isActive             Boolean       @default(true)
-  isVerified           Boolean       @default(false)
-  isApproved           Boolean       @default(false)
-  isSuspended          Boolean       @default(false)
-  avgRating            Float         @default(0)
-  totalReviews         Int           @default(0)
-  createdAt            DateTime      @default(now())
+  pendingImages        Json                @default("[]") // admin onayı bekleyen galeri
+  imagesPendingReview  Boolean             @default(false) // onay bekleyen resim var mı
+  isActive             Boolean             @default(true)
+  isVerified           Boolean             @default(false)
+  isApproved           Boolean             @default(false)
+  isSuspended          Boolean             @default(false)
+  avgRating            Float               @default(0)
+  totalReviews         Int                 @default(0)
+  createdAt            DateTime            @default(now())
 
   // İyzico Pazaryeri alt-üye (sub-merchant) alanları
   subMerchantType        String? // PERSONAL | PRIVATE_COMPANY | LIMITED_OR_JOINT_STOCK_COMPANY
@@ -337,34 +338,48 @@ model VenueSportCategory {
 }
 
 model Instructor {
-  id           Int      @id @default(autoincrement())
-  user         User?    @relation(fields: [userId], references: [id])
-  userId       Int?     @unique
-  venue        Venue    @relation(fields: [venueId], references: [id])
-  venueId      Int
-  fullName     String
-  specialty    String?
-  specialtyEn  String?
-  bio          String?
-  bioEn        String?
-  avatarUrl    String?
-  phone        String? // salon kaydında girilebilir (createInstructor bunu yazıyordu — kolon eklendi)
+  id                 Int                 @id @default(autoincrement())
+  user               User?               @relation(fields: [userId], references: [id])
+  userId             Int?                @unique
+  // MEKÂNSIZ (bireysel) HOCA — venueId NULLABLE. Bugüne kadar her eğitmen bir salona aitti ve
+  // salon tarafından davet ediliyordu; venueId=null olan eğitmen KENDİ kaydolur, kendi adına
+  // online ders satar. Bkz. Class.venueId ve src/utils/seller.ts.
+  venue              Venue?              @relation(fields: [venueId], references: [id], onDelete: Restrict)
+  venueId            Int?
+  fullName           String
+  specialty          String?
+  specialtyEn        String?
+  bio                String?
+  bioEn              String?
+  avatarUrl          String?
+  phone              String? // salon kaydında girilebilir (createInstructor bunu yazıyordu — kolon eklendi)
   // email tekilliği @unique yerine UYGULAMA düzeyinde (invite/create'te kontrol) → prod db push
   // veri-kaybı uyarısına takılmaz (salon-kontrollü, düşük hacimli oluşturma). Login findFirst kullanır.
-  email        String? // eğitmen girişi + davet e-postası
-  passwordHash String? // eğitmen kendi şifresini belirleyince (davet/reset) dolar
-  passwordChangedAt DateTime? // bkz. Venue.passwordChangedAt — eski JWT'leri iptal eder
+  email              String? // eğitmen girişi + davet e-postası
+  passwordHash       String? // eğitmen kendi şifresini belirleyince (davet/reset) dolar
+  passwordChangedAt  DateTime? // bkz. Venue.passwordChangedAt — eski JWT'leri iptal eder
   panelRefreshTokens PanelRefreshToken[]
-  inviteStatus String   @default("none") // none | pending (davet gönderildi) | active (giriş kurdu)
-  avgRating    Float    @default(0)
-  totalReviews Int      @default(0)
-  isActive     Boolean  @default(true)
-  verified     Boolean  @default(false) // admin onaylı "doğrulanmış hoca" tiki
-  createdAt    DateTime @default(now())
+  inviteStatus       String              @default("none") // none | pending (davet gönderildi) | active (giriş kurdu)
+  avgRating          Float               @default(0)
+  totalReviews       Int                 @default(0)
+  isActive           Boolean             @default(true)
+  verified           Boolean             @default(false) // admin onaylı "doğrulanmış hoca" tiki (KALİTE işareti)
+  // SATIŞ KAPISI — `verified` ile KARIŞTIRMA. `verified` mavi tiktir, görünürlüğü etkilemez;
+  // `isApproved` mekânsız (venueId=null) eğitmenin dersinin yayına çıkıp çıkmadığını belirler ve
+  // salonun `isApproved`'ının birebir karşılığıdır. Salona bağlı eğitmende bu alan OKUNMAZ —
+  // orada kapı salonun durumudur (bkz. src/utils/seller.ts).
+  isApproved         Boolean             @default(false)
+  approvedAt         DateTime?
+  rejectionReason    String?
+  // Kendi kaydolan eğitmenin başvuruyu tamamladığı an. venueId=null && submittedAt=null olan
+  // kayıt "yarım başvuru"dur, admin listesinde beklemez.
+  submittedAt        DateTime?
+  createdAt          DateTime            @default(now())
 
   classes             Class[]
   reviews             Review[]
   passwordResetTokens InstructorPasswordResetToken[]
+
   @@index([venueId])
 }
 
@@ -387,8 +402,13 @@ model InstructorPasswordResetToken {
 
 model Class {
   id              Int            @id @default(autoincrement())
-  venue           Venue          @relation(fields: [venueId], references: [id])
-  venueId         Int
+  // MEKÂNSIZ (bireysel) HOCA — venueId artık NULLABLE.
+  // Salona bağlı derste satıcı SALONDUR ve görünürlük kapısı salonun durumudur; mekânsız hoca
+  // dersinde satıcı EĞİTMENDİR ve kapı eğitmenin kendi onayıdır. Bu iki kaynağı her çağrı
+  // yerinde ayrı ayrı yorumlamak, denetimlerin "KALIP B — tek örneği düzelt, sınıfı kapatma"
+  // hatasının davetiyesidir → TEK yardımcıdan geç: src/utils/seller.ts.
+  venue           Venue?         @relation(fields: [venueId], references: [id], onDelete: Restrict)
+  venueId         Int?
   instructor      Instructor?    @relation(fields: [instructorId], references: [id])
   instructorId    Int?
   sportCategory   SportCategory? @relation(fields: [sportCategoryId], references: [id])
@@ -402,6 +422,13 @@ model Class {
   basePrice       Float
   capacity        Int
   classType       String         @default("regular")
+  // TESLİM BİÇİMİ: 'in_person' | 'online'. Online = programlı CANLI ders; kayıtlı video değil
+  // (ürün kararı). Mekânsız hoca (venueId=null) yalnız 'online' ders açabilir — adresi yok.
+  deliveryMode    String         @default("in_person")
+  // Online dersin canlı bağlantısı. HASSAS ALAN: rezervasyonu olmayan biri görürse derse
+  // bedavaya girer. Public yanıtlardan strip edilir; yalnız rezervasyon sahibine ve dersin
+  // sahibine (salon/eğitmen) döner. Bkz. utils/sanitize.ts.
+  meetingUrl      String?
   recurrence      Json?
   isActive        Boolean        @default(true)
   createdAt       DateTime       @default(now())
@@ -423,6 +450,11 @@ model Class_Session {
   // kaldığı için @map ile eşleniyor: isim yalan söylüyordu ("kalan yer" sanılıp
   // üç istemcide de öyle gösteriliyordu), kolonu taşımadan alan adı düzeltildi.
   capacity        Int      @map("availableSpots")
+  // ONLINE SEANS BAĞLANTISI — Class.meetingUrl'i EZER. İki seviye gerekiyor çünkü tekrarlayan
+  // Zoom/Meet toplantısı tek link üretir (ders seviyesi yeter) ama tek seferlik toplantı her
+  // seans için ayrı link üretir. Boşsa dersin linkine düşülür. HASSAS: yalnız rezervasyon
+  // sahibine ve dersin sahibine döner.
+  meetingUrl      String?
   status          String   @default("open")
   cancelledReason String?
   createdAt       DateTime @default(now())
@@ -430,14 +462,14 @@ model Class_Session {
   bookings Booking[]
   waitlist Waitlist[]
 
-  @@index([classId])
-  @@index([startsAt])
   // (classId, startsAt) TEKİL — index'i ensureIndexes ham SQL ile yaratıyordu ama şemada
   // TANIMLI DEĞİLDİ. Bu bir SÜRÜKLENMEDİR: Prisma index'i "fazlalık" görür; `db push`
   // döneminde onu düşürebilir, migration döneminde ise `migrate dev` her seferinde
   // "veritabanını sıfırlamam lazım" der. map: mevcut index ADIYLA eşleşir → prod'da yeni
   // index yaratılmaz, sadece Prisma'ya "bu zaten var" denmiş olur.
   @@unique([classId, startsAt], map: "class_session_class_startsat_unique")
+  @@index([classId])
+  @@index([startsAt])
 }
 
 // ─────────────────────────────────────────────
@@ -466,6 +498,7 @@ model DropInSlot {
 
   participants DropInParticipant[]
   bookings     Booking[]
+
   // public drop-in listesi (status+visibility+startsAt) ve salon paneli (venueId) -- model hic indekssizdi
   @@index([venueId])
   @@index([status, visibility, startsAt])
@@ -874,15 +907,15 @@ model PanelRefreshToken {
 }
 
 model RefreshToken {
-  id        Int      @id @default(autoincrement())
-  token     String   @unique
-  user      User     @relation(fields: [userId], references: [id])
+  id        Int       @id @default(autoincrement())
+  token     String    @unique
+  user      User      @relation(fields: [userId], references: [id])
   userId    Int
   expiresAt DateTime
-  revoked   Boolean  @default(false)
+  revoked   Boolean   @default(false)
   rotatedAt DateTime? // bkz. PanelRefreshToken.rotatedAt — replay tespiti
-  family    String   @default(uuid()) // bkz. PanelRefreshToken.family — oturum zinciri
-  createdAt DateTime @default(now())
+  family    String    @default(uuid()) // bkz. PanelRefreshToken.family — oturum zinciri
+  createdAt DateTime  @default(now())
 
   @@index([userId])
   @@index([rotatedAt])

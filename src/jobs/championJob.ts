@@ -37,7 +37,13 @@ export async function awardSeasonChampions(now: Date = new Date()) {
       prisma.booking.findMany({
         // GAMING ÖNLEME: kalıcı şampiyon rozeti yalnızca GERÇEKTEN gidilen (checkedIn) derslerden —
         // no-show/ücretsiz booking ile küçük bir ilçede sahte şampiyonluk kazanılmasın (liderlikle aynı).
-        where: { status: 'confirmed', checkedIn: true, session: { startsAt: { gte: windowStart, lt: windowEnd } } },
+        // ONLINE DERS ŞAMPİYON ROZETİNE SAYILMAZ — getUserLeaderboard ile AYNI kural (ürün kararı).
+        // İkisi ayrışırsa liderlikte görünmeyen biri sezon şampiyonu ilan edilir.
+        where: {
+          status: 'confirmed',
+          checkedIn: true,
+          session: { startsAt: { gte: windowStart, lt: windowEnd }, class: { deliveryMode: 'in_person' } },
+        },
         select: {
           userId: true,
           user: { select: userSelect },

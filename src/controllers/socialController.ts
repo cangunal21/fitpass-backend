@@ -208,7 +208,13 @@ export const getUserLeaderboard = async (req: Request, res: Response) => {
         checkedIn: true,
         session: {
           startsAt: { gte: seasonStart, lt: now },
-          ...(branch ? { class: { sportCategory: { name: branch as string } } } : {}), // KANONIK FK (championJob ile ayni); serbest-metin class.category case-sensitive drift uretiyordu
+          // ONLINE DERS SEZON LİDERLİĞİNE SAYILMAZ (ürün kararı). Puan, tier ve kişisel seri
+          // online derse de yazılır — kesişmeyen iki kural, karıştırma. Filtre `class` üzerinde
+          // olduğu için branş filtresiyle AYNI nesnede birleşiyor.
+          class: {
+            deliveryMode: 'in_person',
+            ...(branch ? { sportCategory: { name: branch as string } } : {}), // KANONIK FK (championJob ile ayni); serbest-metin class.category case-sensitive drift uretiyordu
+          },
         },
       }
       // GAMING ÖNLEME: liderlik yalnızca GERÇEKTEN gidilen (checkedIn) + geçmiş aktiviteleri sayar.

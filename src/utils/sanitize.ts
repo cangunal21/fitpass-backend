@@ -84,3 +84,20 @@ export function gorselUrlGecerliMi(url: unknown): boolean {
   if (u.protocol !== 'https:') return false // http/javascript:/data: reddedilir
   return IZINLI_GORSEL_HOSTLARI.some(h => u.hostname === h || u.hostname.endsWith('.' + h))
 }
+
+/**
+ * ONLINE DERS BAĞLANTISI doğrulaması.
+ *
+ * Görsel URL'inden farklı olarak host BEYAZ LİSTESİ YOK: hoca Zoom, Meet, Teams, Whereby ya da
+ * kendi kurduğu bir Jitsi'yi kullanabilir; listeyi biz tutarsak her yeni araçta kod değişir.
+ * Buna karşılık şema KATI: yalnız `https:` — `javascript:`/`data:` XSS'e, düz `http:` ise
+ * bağlantının ağda okunmasına açıktır ve online derste o bağlantı fiilen BİLETTİR.
+ */
+export function toplantiUrlGecerliMi(url: unknown): boolean {
+  if (url === null || url === undefined || url === '') return true // seans linki zorunlu değil
+  if (typeof url !== 'string') return false
+  if (url.length > 500) return false
+  let u: URL
+  try { u = new URL(url) } catch { return false }
+  return u.protocol === 'https:'
+}

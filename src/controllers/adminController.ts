@@ -1,5 +1,6 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
+import { clampStr } from '../utils/validate'
 import { sendVenueApprovedEmail } from '../utils/email'
 import { invalidate } from '../utils/cache'
 import { purgeUserReviews, purgeUserComments, applyUserBan } from '../utils/moderation'
@@ -606,6 +607,52 @@ export const verifyInstructor = async (req: Request, res: Response) => {
       select: { id: true, fullName: true, verified: true },
     })
     return res.json({ message: verified ? 'Hoca doğrulandı.' : 'Doğrulama kaldırıldı.', instructor })
+  } catch (err) {
+    if (handlePrismaErr(err, res)) return
+    console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+// PUT /api/admin/instructors/:id/approve — MEKÂNSIZ (bireysel) eğitmenin yayın onayı.
+//
+// `verified` (mavi tik) ile KARIŞTIRMA: o bir KALİTE işareti ve görünürlüğü etkilemez;
+// `isApproved` salonun `isApproved`'ının birebir karşılığıdır ve mekânsız hocanın derslerinin
+// yayına çıkıp çıkmayacağını belirler. Salona bağlı eğitmende bu alan okunmaz (kapı salondur).
+export const approveInstructor = async (req: Request, res: Response) => {
+  try {
+    // Boolean kapısı — bkz. verifyInstructor: boş gövde SESSİZCE onayı kaldırıyordu.
+    const { approved } = req.body
+    if (typeof approved !== 'boolean') return res.status(400).json({ error: 'approved alanı boolean olmalı.' })
+    const instructorId = parseInt(req.params.id as string)
+    if (!instructorId || isNaN(instructorId)) return res.status(400).json({ error: 'Geçersiz hoca.' })
+
+    const reason = typeof req.body.reason === 'string' ? clampStr(req.body.reason, 500) : null
+
+    const existing = await prisma.instructor.findUnique({
+      where: { id: instructorId },
+      select: { venueId: true },
+    })
+    if (!existing) return res.status(404).json({ error: 'Hoca bulunamadı.' })
+    // Salona bağlı eğitmende bu alan hiçbir kapıyı açıp kapatmıyor. Yazılmasına izin vermek,
+    // panelde "onayladım ama hiçbir şey değişmedi" yanılsaması üretirdi.
+    if (existing.venueId != null) {
+      return res.status(400).json({ error: 'Bu eğitmen bir salona bağlı; görünürlüğü salonun onayına tabidir.' })
+    }
+
+    const instructor = await prisma.instructor.update({
+      where: { id: instructorId },
+      data: {
+        isApproved: approved,
+        approvedAt: approved ? new Date() : null,
+        rejectionReason: approved ? null : reason,
+      },
+      select: { id: true, fullName: true, email: true, isApproved: true, approvedAt: true, rejectionReason: true },
+    })
+    return res.json({
+      message: approved ? 'Eğitmen onaylandı; dersleri yayına çıkabilir.' : 'Onay kaldırıldı; dersleri yayından düştü.',
+      instructor,
+    })
   } catch (err) {
     if (handlePrismaErr(err, res)) return
     console.error(err)

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
+import { sellerBlocked } from '../utils/seller'
 import { sendWaitlistNotificationEmail } from '../utils/email'
 import { sendPushNotification } from '../utils/push'
 import { trDate, trTime } from "../utils/trFormat"
@@ -16,7 +17,14 @@ export const joinWaitlist = async (req: Request, res: Response<WaitlistActionRes
 
     const session = await prisma.class_Session.findUnique({
       where: { id: sessionId },
-      include: { class: { include: { venue: { select: { isApproved: true, isActive: true, isSuspended: true } } } } }
+      include: {
+        class: {
+          include: {
+            venue: { select: { isApproved: true, isActive: true, isSuspended: true } },
+            instructor: { select: { isApproved: true, isActive: true } },
+          },
+        },
+      }
     })
     if (!session) return res.status(404).json({ error: 'Seans bulunamadı.' })
     // DURUM KAPILARI: createBooking hedef seans için bunları kontrol ediyor, joinWaitlist ETMİYORDU
@@ -25,8 +33,10 @@ export const joinWaitlist = async (req: Request, res: Response<WaitlistActionRes
     if (session.status !== 'open') return res.status(400).json({ error: 'Bu seans rezervasyona kapalı.' })
     if (new Date(session.startsAt) <= new Date()) return res.status(400).json({ error: 'Geçmiş bir seans için bekleme listesine girilemez.' })
     if (!session.class?.isActive) return res.status(400).json({ error: 'Bu ders şu anda kapalı.' })
-    const wv = session.class?.venue
-    if (!wv || !wv.isApproved || !wv.isActive || wv.isSuspended) return res.status(400).json({ error: 'Salon şu anda aktif değil.' })
+    // SATICI KAPISI (salon ya da mekânsız hoca) — createBooking ile AYNI yardımcıdan geçer ki
+    // ikisi ayrışmasın: rezervasyona kapalı bir dersin bekleme listesi de kapalı olmalı.
+    const wBlocked = sellerBlocked(session.class)
+    if (wBlocked) return res.status(400).json({ error: wBlocked })
 
     // Zaten kayıtlı mı?
     const existingBooking = await prisma.booking.findFirst({

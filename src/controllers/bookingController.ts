@@ -1,5 +1,7 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
+// SATICI KAPISI — salon ya da mekânsız hoca; kapıyı elle yazma (bkz. utils/seller.ts).
+import { sellerBlocked, SELLER_SELECT } from '../utils/seller'
 import crypto from 'crypto'
 import { sendVenueBookingNotificationEmail, sendCancellationEmail, sendVenueCancellationEmail, sendBookingConfirmationEmail, sendGroupTagNotificationEmail, sendGroupInviteEmail, sendCashbackEmail, sendTransferEmail } from '../utils/email'
 import { sendPushNotification } from '../utils/push'
@@ -73,7 +75,14 @@ export const createBooking = async (req: Request, res: Response) => {
 
         const session = await tx.class_Session.findUnique({
           where: { id: sessionId },
-          include: { class: { include: { venue: { select: { isActive: true, isApproved: true } } } } },
+          include: {
+            class: {
+              include: {
+                venue: { select: { isActive: true, isApproved: true, isSuspended: true } },
+                instructor: { select: { isApproved: true, isActive: true } },
+              },
+            },
+          },
         })
 
         if (!session) throw new BookingError('Ders seansı bulunamadı.', 404)
@@ -82,10 +91,10 @@ export const createBooking = async (req: Request, res: Response) => {
         if (new Date(session.startsAt) <= new Date()) {
           throw new BookingError('Bu seans başlamış, rezervasyon yapılamaz.', 400)
         }
-        // Donmuş/onaysız salonun seansına (eski linkle) rezervasyon yapılamaz
-        if (!session.class.venue || !session.class.venue.isActive || !session.class.venue.isApproved) {
-          throw new BookingError('Bu salon şu anda rezervasyona kapalı.', 400)
-        }
+        // Donmuş/onaysız SATICININ seansına (eski linkle) rezervasyon yapılamaz. Satıcı salon da
+        // olabilir mekânsız hoca da → kapı tek yardımcıdan (bkz. utils/seller.ts).
+        const blocked = sellerBlocked(session.class)
+        if (blocked) throw new BookingError(blocked, 400)
         // Salon KAPATTIĞI ders (isActive=false) ya da kapalı seans hâlâ ayakta olan sessionId'siyle booklanamaz —
         // aksi halde tüm listelerden gizlenen ders eski/enumerate edilmiş linkle rezerve edilir (kapasite yanar + puan kazanılır).
         if (!session.class.isActive) throw new BookingError('Bu ders şu anda rezervasyona kapalı.', 400)
@@ -424,13 +433,26 @@ export const getMyBookings = async (req: Request, res: Response<MyBookingsRespon
       // şekilde Omit<...> olur. `any` burada yalnızca sözleşmenin üretici tarafını körleştiriyordu.
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { commissionAmount, venueCommission, userCommission, venuePayout, ...bSafe } = b
+      // ONLINE DERS BAĞLANTISI — bu uç rezervasyon SAHİBİNE cevap verdiği için bağlantıyı
+      // görmesi doğru; ama `where` iptal edilmiş rezervasyonları da getiriyor. Yayılan ham
+      // nesneler bırakılsaydı, dersi İPTAL EDEN kullanıcı linki elinde tutup derse yine
+      // girerdi (ücret ödemeden). Bu yüzden: ham alanlar nesnelerden ÇIKARILIR ve yalnız
+      // 'confirmed' rezervasyonda tek bir hesaplanmış alan olarak döner.
+      // Öncelik: seansın kendi linki → dersin varsayılan linki (Class_Session.meetingUrl ezer).
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { meetingUrl: _sMeet, ...sessionSafe } = b.session ?? ({} as any)
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { meetingUrl: _cMeet, ...classSafe } = b.session?.class ?? ({} as any)
+      const meetingUrl =
+        b.status === 'confirmed' ? (b.session?.meetingUrl || b.session?.class?.meetingUrl || null) : null
       return {
       ...bSafe,
+      meetingUrl,
       createdAt: b.createdAt.toISOString(),
       session: b.session ? {
-        ...b.session,
+        ...sessionSafe,
         class: b.session.class ? {
-          ...b.session.class,
+          ...classSafe,
           // ÖNCEDEN yalnız passwordHash siliniyordu → IBAN/TCKN/vergi no/İyzico alt-üye anahtarı/KYC
           // müşteriye SIZIYORDU. stripVenueSensitive TÜM ödeme/KYC alanlarını temizler.
           venue: b.session.class.venue ? stripVenueSensitive(b.session.class.venue) : null,
@@ -927,12 +949,26 @@ export const transferBooking = async (req: Request, res: Response) => {
         // ETMİYORDU → kullanıcı, salonun kapattığı (isActive=false) bir derse ya da askıya alınmış/
         // onayı geri alınmış salonun seansına transfer olabiliyordu. Aynı kapılar burada da olmalı.
         if (!target.class.isActive) throw new BookingError('Hedef ders şu anda rezervasyona kapalı.', 400)
-        const tVenue = await tx.venue.findUnique({ where: { id: target.class.venueId }, select: { isActive: true, isApproved: true } })
-        if (!tVenue || !tVenue.isActive || !tVenue.isApproved) throw new BookingError('Hedef salon şu anda aktif değil.', 400)
+        // SATICI KAPISI — hedef ders salonlu da olabilir mekânsız hoca dersi de; kapı tek yerden.
+        const tGate = await tx.class.findUnique({ where: { id: target.classId }, select: SELLER_SELECT })
+        if (sellerBlocked(tGate)) throw new BookingError('Hedef ders şu anda rezervasyona kapalı.', 400)
 
-        // Aynı salon kontrolü
-        if (target.class.venueId !== booking.session.class.venueId) {
-          throw new BookingError('Sadece aynı salon içinde transfer yapılabilir.', 400)
+        // AYNI SATICI KONTROLÜ.
+        // Salonlu derste "aynı salon", mekânsız derste "aynı EĞİTMEN" demek. Yalnız venueId
+        // karşılaştırmak yetmez: iki mekânsız derste de venueId null olduğu için `null !== null`
+        // FALSE döner ve İKİ FARKLI hocanın online dersleri arasında transfer sessizce serbest
+        // kalırdı (para kuralı delinir, üstelik hata da vermez).
+        const srcVenueId = booking.session.class.venueId
+        const dstVenueId = target.class.venueId
+        if (srcVenueId != null || dstVenueId != null) {
+          if (srcVenueId !== dstVenueId) {
+            throw new BookingError('Sadece aynı salon içinde transfer yapılabilir.', 400)
+          }
+        } else if (
+          target.class.instructorId == null ||
+          target.class.instructorId !== booking.session.class.instructorId
+        ) {
+          throw new BookingError('Sadece aynı eğitmenin dersleri arasında transfer yapılabilir.', 400)
         }
 
         const groupSize = booking.groupSize

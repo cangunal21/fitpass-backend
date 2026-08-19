@@ -52,7 +52,7 @@
 // Bu satır dosyanın geri kalanının SHA-256 ön ekidir. Sözleşmeyi değiştirdiysen:
 //   1) diğer İKİ repodaki kopyayı da güncelle,  2) üç kopyada da damgayı yenile
 //   (`node scripts/tip-damgasi.cjs` doğrusunu yazar).
-export const TIP_SOZLESMESI_SURUMU = '2112ddf925aca'
+export const TIP_SOZLESMESI_SURUMU = '0216841c19076'
 
 // ── ORTAK ───────────────────────────────────────────────────────────────────────────────────
 
@@ -97,12 +97,24 @@ export interface SessionSummary {
   title: string
   /** İngilizce başlık; çeviri işi henüz doldurmadıysa `null`. İstemci `title`'a düşer. */
   titleEn: string | null
-  venueId: number
-  venueName: string
+  /**
+   * MEKÂNSIZ (bireysel) HOCA DERSİNDE `null`. Salon yoksa satıcı eğitmendir ve dersin
+   * bir adresi/konumu yoktur — istemci bu durumda salon satırını ÇİZMEMELİ, eğitmeni
+   * göstermeli. `venueId === null` ⇒ `deliveryMode === 'online'` (DB'de CHECK ile garanti).
+   */
+  venueId: number | null
+  venueName: string | null
   venueAddress: string | null
   instructorId: number | null
   /** Hoca adı — yoksa `null`. Rezervasyon ve puanlama akışları buna bakar. */
   instructorName: string | null
+  /**
+   * TESLİM BİÇİMİ. `'online'` = programlı CANLI ders (kayıtlı video YOK, ürün kararı).
+   * Online derste konum alanları (`venueAddress`, `neighborhood`, mesafe) anlamsızdır ve
+   * istemci mesafe/harita yüzeylerini çizmemelidir.
+   */
+  deliveryMode: 'in_person' | 'online'
+
   /** Spor dalı adı; kategori atanmamışsa boş dizge (asla `null` değil). */
   category: string
   categoryColor: string | null

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
+import { instructorBlocked } from '../utils/seller'
 import { clampStr, parseIntSafe } from '../utils/validate'
 import { sanitizeReview, hidePrivateReply } from '../utils/reviews'
 // API SÖZLEŞMESİ — üç repoda birebir aynı dosya (bkz. scripts/tip-damgasi.cjs).
@@ -303,12 +304,11 @@ export const getInstructorReviews = async (req: Request, res: Response) => {
     // salona bağlı eğitmenin yorumları public'te kalmaya devam ediyordu.
     const iGate = await prisma.instructor.findUnique({
       where: { id: instructorId },
-      select: { isActive: true, venue: { select: { isApproved: true, isActive: true, isSuspended: true } } },
+      select: { isActive: true, isApproved: true, venueId: true, venue: { select: { isApproved: true, isActive: true, isSuspended: true } } },
     })
-    if (!iGate || iGate.isActive === false) {
-      return res.status(404).json({ error: 'Eğitmen bulunamadı.' })
-    }
-    if (iGate.venue && (!iGate.venue.isApproved || !iGate.venue.isActive || iGate.venue.isSuspended)) {
+    // Mekânsız eğitmende `venue` null olduğu için eski iki dallı kontrol onu HİÇ elemiyordu
+    // (onaysız hocanın yorumları public kalırdı). Kapı tek yardımcıdan.
+    if (instructorBlocked(iGate)) {
       return res.status(404).json({ error: 'Eğitmen bulunamadı.' })
     }
 

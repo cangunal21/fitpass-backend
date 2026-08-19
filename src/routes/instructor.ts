@@ -2,6 +2,7 @@ import { registerNumericParams } from '../middlewares/numericParams'
 import { Router } from 'express'
 import {
   instructorLogin,
+  instructorRegister,
   instructorForgotPassword,
   instructorSetPassword,
   getInstructorMe,
@@ -28,6 +29,9 @@ registerNumericParams(router)
 
 // Public (rate-limit index.ts'te)
 router.post('/login', instructorLogin)
+// MEKÂNSIZ (bireysel) eğitmen kaydı. Salona bağlı eğitmen buradan GELMEZ — onu salon davet eder.
+// Rate limit index.ts'teki authLimiter kovasında (aynı /api/instructor öneki).
+router.post('/register', instructorRegister)
 router.post('/forgot-password', instructorForgotPassword)
 router.post('/set-password', instructorSetPassword) // davet + reset aynı uç
 // Access token 1 saat → client sessizce yeniler; çıkışta jeton iptal edilir.

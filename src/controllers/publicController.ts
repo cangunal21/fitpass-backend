@@ -9,6 +9,8 @@ import { seasonLabelsFromKey } from '../utils/season'
 import { stripVenueSensitive, stripInstructorSensitive } from '../utils/sanitize'
 import { trInstant, trAddDays } from '../utils/trFormat'
 import { getOccupancyMap, getOccupancy, spotsLeftOf } from '../utils/occupancy'
+// SATICI KAPISI — salonlu ve mekânsız hoca dersini birlikte kapsar; kapıyı elle yazma.
+import { classLiveWhere, deliveryWhere, parseDeliveryMode, sellerBlocked, sellerCardFields, IN_PERSON_ONLY, instructorLiveWhere } from '../utils/seller'
 // API SÖZLEŞMESİ — üç repoda birebir aynı dosya. Yanıt tipini imzaya yazmak, sunucunun
 // gerçekten o şekli döndürdüğünü tsc'ye DOĞRULATIR (alan silinir/tipi değişirse build kırılır).
 import type { SessionListResponse, SessionDetailResponse, ForYouResponse, VenueListResponse, VenueDetailResponse, ApiError } from '../types/api'
@@ -16,7 +18,7 @@ import type { SessionListResponse, SessionDetailResponse, ForYouResponse, VenueL
 // GET /api/public/sessions
 export const getSessions = async (req: Request, res: Response<SessionListResponse | ApiError>) => {
   try {
-    const { category, date, dateFrom, dateTo, venueId, neighborhoodId, cityId, search, sort, userNeighborhoodId, page, limit } = req.query
+    const { category, date, dateFrom, dateTo, venueId, neighborhoodId, cityId, search, sort, userNeighborhoodId, page, limit, mode } = req.query
     const pageNum = Math.max(1, parseIntSafe(page) || 1)
     const pageSize = Math.min(50, Math.max(1, parseIntSafe(limit) || 24))
     // "Bana yakın": mesafe bellekte hesaplanır. DB startsAt'a göre sayfalarsa yalnızca sayfa-içi
@@ -67,21 +69,48 @@ export const getSessions = async (req: Request, res: Response<SessionListRespons
     if (vId) classWhere.venueId = vId
     const nId = parseIntSafe(neighborhoodId)
     const cId = parseIntSafe(cityId)
-    // Salon onaylı + aktif olmalı — askıya alınan/henüz onaylanmamış salonun dersleri listede çıkmasın
-    classWhere.venue = { isApproved: true, isActive: true, ...(nId ? { neighborhoodId: nId } : {}), ...(cId ? { cityId: cId } : {}) }
-    if (searchStr) {
-      classWhere.OR = [
-        { title: { contains: searchStr, mode: 'insensitive' } },
-        { venue: { name: { contains: searchStr, mode: 'insensitive' } } },
-        { venue: { neighborhood: { name: { contains: searchStr, mode: 'insensitive' } } } },
-        { venue: { address: { contains: searchStr, mode: 'insensitive' } } },
-        { sportCategory: { name: { contains: searchStr, mode: 'insensitive' } } },
-      ]
+
+    // TESLİM BİÇİMİ — mode verilmezse VARSAYILAN 'in_person'.
+    // Bilerek "hepsi" DEĞİL: mobil ve web ayrı ayrı yayına çıkıyor, güncellenmemiş bir istemci
+    // mode göndermediğinde online dersler mesafe/harita yüzeylerine karışırdı. Online opt-in
+    // olsun ki sunucu önden çıkabilsin, istemciler arkadan yetişsin.
+    const deliveryMode = parseDeliveryMode(mode) ?? 'in_person'
+
+    // Kapılar ve arama AND altında toplanır: `classLiveWhere()` kendi içinde OR kullanıyor,
+    // aramanın OR'u ile aynı nesnede buluşursa biri diğerini SESSİZCE ezerdi.
+    const and: any[] = [classLiveWhere(), deliveryWhere(deliveryMode)]
+
+    // Konum filtresi YALNIZ salonlu dersleri kapsar: mekânsız/online dersin mahallesi yoktur,
+    // `venue.is` null salonda eşleşmediği için bu filtre seçiliyken online dersler doğal olarak
+    // listeden düşer — istenen davranış budur (kullanıcı "Kadıköy" diyorsa online istemiyordur).
+    if (nId || cId) {
+      and.push({ venue: { is: { ...(nId ? { neighborhoodId: nId } : {}), ...(cId ? { cityId: cId } : {}) } } })
     }
+
+    if (searchStr) {
+      and.push({
+        OR: [
+          { title: { contains: searchStr, mode: 'insensitive' } },
+          { venue: { is: { name: { contains: searchStr, mode: 'insensitive' } } } },
+          { venue: { is: { neighborhood: { name: { contains: searchStr, mode: 'insensitive' } } } } },
+          { venue: { is: { address: { contains: searchStr, mode: 'insensitive' } } } },
+          // Mekânsız hoca dersinde aranacak tek isim EĞİTMENİNKİDİR — salon adı yok.
+          { instructor: { is: { fullName: { contains: searchStr, mode: 'insensitive' } } } },
+          { sportCategory: { name: { contains: searchStr, mode: 'insensitive' } } },
+        ],
+      })
+    }
+    classWhere.AND = and
     if (Object.keys(classWhere).length > 0) where.class = classWhere
 
+    // PUANA GÖRE SIRALAMA iki kaynaklı: salonlu derste salonun puanı, online (mekânsız) derste
+    // EĞİTMENİN puanı. Tek kaynağa bakmak hata vermez ama sessizce anlamsız bir sıra üretir —
+    // online modda tüm satırların sıralama anahtarı NULL olurdu (kart puan gösterirken sıra
+    // rastgele; kullanıcı "puana göre" dediğini sanır).
     const orderBy: any = sort === 'rating'
-      ? [{ class: { venue: { avgRating: 'desc' } } }]
+      ? (deliveryMode === 'online'
+          ? [{ class: { instructor: { avgRating: 'desc' } } }]
+          : [{ class: { venue: { avgRating: 'desc' } } }])
       : [{ startsAt: 'asc' }]
 
     const [sessions, total] = await Promise.all([
@@ -113,11 +142,12 @@ export const getSessions = async (req: Request, res: Response<SessionListRespons
       id: s.id,
       title: s.class.title,
       titleEn: s.class.titleEn ?? null,
-      venueId: s.class.venueId,
-      venueName: s.class.venue.name,
-      venueAddress: s.class.venue.address,
+      // Salon/konum/puan alanları TEK yardımcıdan: mekânsız hoca dersinde salon null'lanır ve
+      // puan eğitmenden gelir (bkz. utils/seller.ts — üç uçta kopyalanmasın diye).
+      ...sellerCardFields(s.class),
       instructorId: s.class.instructorId ?? null,
       instructorName: s.class.instructor?.fullName ?? null,
+      deliveryMode: s.class.deliveryMode === 'online' ? ('online' as const) : ('in_person' as const),
       category: s.class.sportCategory?.name ?? s.class.category ?? '',
       categoryColor: s.class.sportCategory?.colorHex ?? null,
       startsAt: s.startsAt.toISOString(),
@@ -131,12 +161,7 @@ export const getSessions = async (req: Request, res: Response<SessionListRespons
       // Seansın kendi kapasitesi (eskiden ders varsayılanı dönüyordu; seans
       // kapasitesi düzenlenebildiği için ikisi ayrışabiliyordu).
       capacity: s.capacity,
-      neighborhood: s.class.venue.neighborhood?.name ?? null,
-      neighborhoodId: s.class.venue.neighborhoodId ?? null,
-      neighborhoodLat: (s.class.venue.neighborhood as any)?.latitude ?? null,
-      neighborhoodLng: (s.class.venue.neighborhood as any)?.longitude ?? null,
-      rating: s.class.venue.avgRating,
-      totalReviews: s.class.venue.totalReviews,
+      // neighborhood* / rating / totalReviews yukarıdaki sellerCardFields yayılımından geliyor.
     }))
 
     // Nearby sort
@@ -211,7 +236,11 @@ export const getForYouSessions = async (req: Request, res: Response<ForYouRespon
       where: {
         status: 'open',
         startsAt: { gte: new Date() },
-        class: { isActive: true, venue: { isApproved: true, isActive: true }, OR: orClauses },
+        // "Senin İçin" ŞİMDİLİK YALNIZ YÜZ YÜZE. Kişiselleştirmenin iki ayağından biri mahalle
+        // ve online dersin mahallesi yok — yalnız spor eşleşmesiyle girip şeridi doldururdu.
+        // Online'ın kendi yüzeyi ana sayfadaki "Online dersler" şeridi; burada ikinci kez
+        // göstermek aynı dersi iki yerde tekrarlardı. Açmak istenirse: IN_PERSON_ONLY'yi kaldır.
+        class: { isActive: true, AND: [classLiveWhere(), IN_PERSON_ONLY], OR: orClauses },
       },
       include: {
         class: { include: { sportCategory: true, venue: { include: { neighborhood: { select: { id: true, name: true } } } }, instructor: true } },
@@ -228,18 +257,21 @@ export const getForYouSessions = async (req: Request, res: Response<ForYouRespon
     const scored = sessions.map(s => {
       const cat = s.class.sportCategory?.name ?? s.class.category ?? ''
       const sportMatch = sports.includes(cat)
-      const nbMatch = s.class.venue.neighborhoodId != null && nbIds.includes(s.class.venue.neighborhoodId)
+      const nbId = s.class.venue?.neighborhoodId ?? null
+      const nbMatch = nbId != null && nbIds.includes(nbId)
+      const seller = sellerCardFields(s.class)
       return {
         score: (sportMatch ? 1 : 0) + (nbMatch ? 1 : 0),
         session: {
           id: s.id,
           title: s.class.title,
           titleEn: s.class.titleEn ?? null,
-          venueId: s.class.venueId,
-          venueName: s.class.venue.name,
-          venueAddress: s.class.venue.address,
+          venueId: seller.venueId,
+          venueName: seller.venueName,
+          venueAddress: seller.venueAddress,
           instructorId: s.class.instructorId ?? null,
           instructorName: s.class.instructor?.fullName ?? null,
+          deliveryMode: s.class.deliveryMode === 'online' ? ('online' as const) : ('in_person' as const),
           category: cat,
           categoryColor: s.class.sportCategory?.colorHex ?? null,
           startsAt: s.startsAt.toISOString(),
@@ -248,10 +280,10 @@ export const getForYouSessions = async (req: Request, res: Response<ForYouRespon
           spotsLeft: spotsLeftOf(s.capacity, occMap.get(s.id) || 0),
           availableSpots: spotsLeftOf(s.capacity, occMap.get(s.id) || 0), // DEPRECATED — bkz. getSessions
           capacity: s.capacity,
-          neighborhood: s.class.venue.neighborhood?.name ?? null,
-          neighborhoodId: s.class.venue.neighborhoodId ?? null,
-          rating: s.class.venue.avgRating,
-          totalReviews: s.class.venue.totalReviews,
+          neighborhood: seller.neighborhood,
+          neighborhoodId: seller.neighborhoodId,
+          rating: seller.rating,
+          totalReviews: seller.totalReviews,
         },
       }
     })
@@ -285,12 +317,15 @@ export const getSessionById = async (req: Request, res: Response<SessionDetailRe
       },
     })
 
-    // Donmuş/onaysız salonun seansı public detayda da görünmesin
-    if (!s || !s.class.venue?.isActive || !s.class.venue?.isApproved) {
+    // Donmuş/onaysız SATICININ seansı public detayda da görünmesin. Kapı artık iki kaynaklı
+    // (salon ya da mekânsız hoca) → tek yardımcıdan. 404: "var ama kapalı" ile "yok" ayrımı
+    // numaralandırma sinyalidir, ikisi de 404 döner (önceki turların kuralı).
+    if (!s || sellerBlocked(s.class)) {
       return res.status(404).json({ error: 'Seans bulunamadı.' })
     }
 
     const spotsLeft = spotsLeftOf(s.capacity, await getOccupancy(s.id))
+    const sellerDetail = sellerCardFields(s.class)
 
     return res.json({
       session: {
@@ -298,9 +333,12 @@ export const getSessionById = async (req: Request, res: Response<SessionDetailRe
         title: s.class.title,
         titleEn: s.class.titleEn ?? null,
         description: s.class.description,
-        venueId: s.class.venueId,
-        venueName: s.class.venue.name,
-        venueAddress: s.class.venue.address,
+        venueId: sellerDetail.venueId,
+        venueName: sellerDetail.venueName,
+        venueAddress: sellerDetail.venueAddress,
+        // TESLİM BİÇİMİ. `meetingUrl` BURADA YOK ve olmamalı: bu uç public'tir, bağlantıyı
+        // görebilen rezervasyonsuz derse girer. Bağlantı yalnız rezervasyon uçlarından döner.
+        deliveryMode: s.class.deliveryMode === 'online' ? ('online' as const) : ('in_person' as const),
         instructorId: s.class.instructorId ?? null,
         instructorName: s.class.instructor?.fullName ?? null,
         instructorVerified: s.class.instructor?.verified ?? false,
@@ -316,9 +354,9 @@ export const getSessionById = async (req: Request, res: Response<SessionDetailRe
         availableSpots: spotsLeft, // DEPRECATED — bkz. getSessions
         capacity: s.capacity,
         status: s.status,
-        neighborhood: s.class.venue.neighborhood?.name ?? null,
-        rating: s.class.venue.avgRating,
-        totalReviews: s.class.venue.totalReviews,
+        neighborhood: sellerDetail.neighborhood,
+        rating: sellerDetail.rating,
+        totalReviews: sellerDetail.totalReviews,
       },
     })
   } catch (err) {
@@ -414,10 +452,15 @@ export const getVenueById = async (req: Request, res: Response<VenueDetailRespon
       // stripVenueSensitive YALNIZ üst-düzey venue kolonlarını siler; iç içe eğitmen objeleri
       // TAM SATIR taşır → passwordHash/email/phone SIZAR. Her nested eğitmen ayrıca temizlenir.
       instructors: temiz.instructors.map(stripInstructorSensitive),
-      classes: temiz.classes.map((c) => ({
+      // ONLINE BAĞLANTI PUBLIC'E ÇIKAMAZ. Bu uç ders ve seans satırlarını OLDUĞU GİBİ yayıyor
+      // (`...c` / `...s`); `meetingUrl` eklendiği an salonun online dersinin linki herkese açık
+      // hâle gelirdi ve rezervasyonsuz derse girilirdi — bağlantı burada fiilen BİLETTİR.
+      // Aynı sınıf hata daha önce alt-üye işyeri (IBAN/TCKN) alanlarında yaşandı: select'siz
+      // include + ham yayılım. Bağlantı yalnız rezervasyon sahibine (getMyBookings) döner.
+      classes: temiz.classes.map(({ meetingUrl: _cMeet, ...c }) => ({
         ...c,
         instructor: stripInstructorSensitive(c.instructor),
-        sessions: c.sessions.map((s) => {
+        sessions: c.sessions.map(({ meetingUrl: _sMeet, ...s }) => {
           const left = spotsLeftOf(s.capacity, vOcc.get(s.id) || 0)
           return {
             ...s,
@@ -768,7 +811,9 @@ export const getInstructorById = async (req: Request, res: Response) => {
     // Askıdaki/onaysız salonun eğitmeni + canlı ders programı public görünmesin — diğer public
     // uçlarla (getVenueById/getSessionById/getSessions) aynı kapı. Pasif eğitmen de 404.
     const instructor = await prisma.instructor.findFirst({
-      where: { id: instructorId, isActive: true, venue: { isApproved: true, isActive: true } },
+      // Kapı iki kaynaklı: salona bağlı eğitmende SALONUN durumu, mekânsız eğitmende KENDİ
+      // onayı. Eski hâli `venue: {...}` istiyordu → mekânsız hoca profili herkese 404 olurdu.
+      where: { id: instructorId, ...instructorLiveWhere() },
       include: {
         venue: {
           select: { id: true, name: true, neighborhood: { select: { name: true } } }
@@ -803,8 +848,12 @@ export const getInstructorById = async (req: Request, res: Response) => {
     // "Sıradaki seans"ın KALAN YERİ — burada da kapasite kalan yer sanılıyordu.
     const nextSessions = instructor.classes.flatMap(c => c.sessions)
     const occMap = await getOccupancyMap(nextSessions.map(s => s.id))
-    const classesWithSpots = instructor.classes.map(c => ({
+    // ONLINE BAĞLANTI PUBLIC'E ÇIKAMAZ — getVenueById ile aynı gerekçe. Mekânsız hocanın TÜM
+    // dersleri online olduğu için burada risk daha da yüksek: tek bir profil sayfası o hocanın
+    // bütün derslerinin bağlantısını dağıtırdı.
+    const classesWithSpots = instructor.classes.map(({ meetingUrl: _cMeet, ...c }) => ({
       ...c,
+      // (seanslar burada AÇIK select ile geliyor — id/startsAt/capacity; meetingUrl zaten yok)
       sessions: c.sessions.map(s => {
         const left = spotsLeftOf(s.capacity, occMap.get(s.id) || 0)
         return { ...s, spotsLeft: left, availableSpots: left } // availableSpots DEPRECATED

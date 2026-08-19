@@ -1,6 +1,6 @@
 import { registerNumericParams } from '../middlewares/numericParams'
 import { Router } from 'express'
-import { getStats, getAllVenues, approveVenue, getAllUsers, getAllBookings, suspendVenue, deleteVenue, banUser, getAllCoupons, adminDeleteCoupon, getCategories, createCategory, deleteCategory, updateCategory, getPendingVenueImages, reviewVenueImages, getAllInstructors, verifyInstructor, getComplaints, resolveComplaint } from '../controllers/adminController'
+import { getStats, getAllVenues, approveVenue, getAllUsers, getAllBookings, suspendVenue, deleteVenue, banUser, getAllCoupons, adminDeleteCoupon, getCategories, createCategory, deleteCategory, updateCategory, getPendingVenueImages, reviewVenueImages, getAllInstructors, verifyInstructor, approveInstructor, getComplaints, resolveComplaint } from '../controllers/adminController'
 import { getReports, resolveReport } from '../controllers/reportController'
 import { adminAuthMiddleware } from '../middlewares/adminAuth'
 
@@ -29,6 +29,8 @@ router.put('/categories/:id', updateCategory)
 router.delete('/categories/:id', deleteCategory)
 router.get('/instructors', getAllInstructors)
 router.put('/instructors/:id/verify', verifyInstructor)
+// Mekânsız (bireysel) eğitmenin YAYIN onayı — `verify` (mavi tik) ile ayrı şey.
+router.put('/instructors/:id/approve', approveInstructor)
 router.get('/complaints', getComplaints)
 router.put('/complaints/:id/resolve', resolveComplaint)
 

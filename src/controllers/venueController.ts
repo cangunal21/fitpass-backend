@@ -836,7 +836,11 @@ export const deleteClass = async (req: Request, res: Response) => {
     const venueId = (req as any).venueId
     const classId = parseInt(req.params.id as string)
     const cls = await prisma.class.findUnique({ where: { id: classId } })
-    if (!cls || cls.venueId !== venueId) return res.status(403).json({ error: 'Yetki yok.' })
+    // venueId artık nullable (mekânsız hoca dersi). Böyle bir ders SALON paneline hiç ait
+    // değildir; ayrıca null'ı buradan geçirmek aşağıdaki `FOR UPDATE ... WHERE id = NULL`
+    // sorgusunu SESSİZCE hiçbir satırı kilitlemeyen bir sorguya çevirirdi (kilit yok, hata yok).
+    const ownedVenueId = cls?.venueId ?? null
+    if (!cls || ownedVenueId === null || ownedVenueId !== venueId) return res.status(403).json({ error: 'Yetki yok.' })
     const sessions = await prisma.class_Session.findMany({ where: { classId }, select: { id: true } })
     const sessIds = sessions.map(s => s.id)
     // Aynı kapı ders silmede de geçerli: ders silinince TÜM seansları da silinir, yani
@@ -851,11 +855,11 @@ export const deleteClass = async (req: Request, res: Response) => {
       // createReview ise ÖNCE Venue'yu kilitleyip sonra Booking'e FK'li Review yazıyor → ters sıra,
       // deadlock (40P01). Kurban puanlama tarafı olursa kullanıcının yorumu kaydedilmez ve booking
       // hemen ardından silineceği için o puan bir daha ASLA verilemez. Venue kilidini başa alıyoruz.
-      await tx.$executeRaw`SELECT id FROM "Venue" WHERE id = ${cls.venueId} FOR UPDATE`
+      await tx.$executeRaw`SELECT id FROM "Venue" WHERE id = ${ownedVenueId} FOR UPDATE`
       const a = sessIds.length ? await purgeBookingsForSessions(tx, sessIds) : []
       await tx.class_Session.deleteMany({ where: { classId } })
       await tx.class.delete({ where: { id: classId } })
-      await recomputeVenueRating(tx, cls.venueId) // yorumlar silindi → salon puanını güncelle
+      await recomputeVenueRating(tx, ownedVenueId) // yorumlar silindi → salon puanını güncelle
       return a
     }, { timeout: 30000, maxWait: 10000 })
     // timeout: purge rezervasyon başına birkaç gidiş-dönüş yapıyor; dolu bir dersin silinmesi
@@ -875,17 +879,19 @@ export const deleteSession = async (req: Request, res: Response) => {
     const venueId = (req as any).venueId
     const sessionId = parseInt(req.params.sessionId as string)
     const session = await prisma.class_Session.findUnique({ where: { id: sessionId }, include: { class: true } })
-    if (!session || session.class.venueId !== venueId) return res.status(403).json({ error: 'Yetki yok.' })
+    // bkz. deleteClass — null venueId hem yetkisizdir hem de kilidi sessizce etkisizleştirir.
+    const ownedVenueId = session?.class.venueId ?? null
+    if (!session || ownedVenueId === null || ownedVenueId !== venueId) return res.status(403).json({ error: 'Yetki yok.' })
     if (await gecmisKatilimVarMi([sessionId])) {
       return res.status(400).json({
         error: 'Bu seans yapıldı ve katılım kaydı var; silinemez. Geçmiş katılım, kullanıcıların puan ve istatistiklerinin dayanağıdır.',
       })
     }
     const affected = await prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT id FROM "Venue" WHERE id = ${session.class.venueId} FOR UPDATE` // sıra: Venue → User → Booking (deleteClass ile aynı)
+      await tx.$executeRaw`SELECT id FROM "Venue" WHERE id = ${ownedVenueId} FOR UPDATE` // sıra: Venue → User → Booking (deleteClass ile aynı)
       const a = await purgeBookingsForSessions(tx, [sessionId])
       await tx.class_Session.delete({ where: { id: sessionId } })
-      await recomputeVenueRating(tx, session.class.venueId) // yorumlar silindi → salon puanını güncelle
+      await recomputeVenueRating(tx, ownedVenueId) // yorumlar silindi → salon puanını güncelle
       return a
     }, { timeout: 30000, maxWait: 10000 })
     await notifyRemovedBookings(affected, session.class.title).catch(() => {})

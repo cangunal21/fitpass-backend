@@ -157,6 +157,15 @@ async function seed() {
 }
 
 async function cleanup() {
+  // ONLINE / MEKÂNSIZ HOCA fixture'ları (990401-990402). Sıra FK'ye tabi: booking → seans → ders → hoca.
+  await prisma.booking.deleteMany({ where: { sessionId: { in: [990401, 990402] } } }).catch(() => {})
+  await prisma.waitlist.deleteMany({ where: { sessionId: { in: [990401, 990402] } } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: { in: [990401, 990402] } } }).catch(() => {})
+  await prisma.class.deleteMany({ where: { id: { in: [990401, 990402] } } }).catch(() => {})
+  await prisma.instructor.deleteMany({ where: { id: { in: [990401, 990402] } } }).catch(() => {})
+  await prisma.booking.deleteMany({ where: { userId: 990403 } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: 990403 } }).catch(() => {})
+
   const testUserIds = [990021, 990022, 990023, 990024]
   // Yorumlar bookingId + venueId FK'sına bağlı → booking/venue silmeden ÖNCE temizlenmeli
   await prisma.review.deleteMany({ where: { OR: [{ reviewerUserId: { in: testUserIds } }, { reviewerUserId: U }, { venueId: V }, { venueId: 990011 }] } }).catch(() => {})
@@ -4912,6 +4921,189 @@ async function run() {
     if (esit.status !== 200) throw new Error(`doluluğa eşit kapasite reddedildi: ${esit.status}`)
     const buyut = await http(url, { method: 'PUT', token: tok, body: { date, time: '11:00', capacity: 25 } })
     if (buyut.status !== 200) throw new Error(`kapasite artırma reddedildi: ${buyut.status}`)
+  })
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+  // ONLINE DERS + MEKÂNSIZ (BİREYSEL) HOCA
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+  // Bu blok, venueId'nin nullable yapılmasıyla açılan kapıları test eder. Buradaki her kontrol
+  // GERÇEK bir riske karşılık gelir: satıcı kapısının mekânsız hocada açık kalması, online ders
+  // bağlantısının public'e sızması, iptal edenin bağlantıyı elinde tutması, online dersin sezon
+  // liderliğine karışması ve iki farklı hoca arasında transfer.
+
+  const OI = 990401, OI2 = 990402, OC = 990401, OC2 = 990402, OS = 990401, OS2 = 990402
+
+  // KENDİ KULLANICISI + KENDİ JETONU. İlk denemede global `U`/`token` kullanılmıştı ve iki test
+  // düştü; sebebi kod değil TEST BAĞIMLILIĞIydı: bu blok suite'in SONUNDA koşuyor, o noktaya
+  // gelene kadar (a) "parola değişimi access token'ı geçersiz kılar" testi passwordChangedAt'i
+  // ileri alıyor, (b) hesap-silme testleri smoke kullanıcısını tamamen siliyor. Kendi kullanıcısı
+  // olan bir blok, önündeki testlerin sırasına ve yan etkilerine bağımlı olmaz.
+  const OU = 990403
+  const onlineKullanici = async () => {
+    await testPrisma.user.upsert({
+      where: { id: OU },
+      update: { isEmailVerified: true, passwordChangedAt: null, banned: false },
+      create: { id: OU, username: `smoke_on_${OU}`, email: `smoke_on_${OU}@x.com`, passwordHash: 'x', fullName: 'Smoke Online User', isEmailVerified: true },
+    })
+    return jwt.sign({ userId: OU, email: `smoke_on_${OU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+  }
+
+  await check('Online: mekânsız hoca dersi yalnız ONAYLIYKEN listelenir (kapı eğitmenin kendisi)', async () => {
+    const cat = await temelKategori()
+    await prisma.instructor.upsert({
+      where: { id: OI },
+      update: { isApproved: false, isActive: true, venueId: null },
+      create: { id: OI, fullName: 'Smoke Mekansiz Hoca', email: `smoke_oi${OI}@x.com`, isApproved: false, isActive: true },
+    })
+    await prisma.class.upsert({
+      where: { id: OC },
+      update: { isActive: true, deliveryMode: 'online', venueId: null, instructorId: OI, meetingUrl: 'https://ornek.test/gizli-oda' },
+      create: {
+        id: OC, venueId: null, instructorId: OI, title: 'Smoke Online Ders', category: cat?.name || 'Yoga',
+        sportCategoryId: cat?.id ?? null, basePrice: 200, durationMinutes: 60, capacity: 10,
+        deliveryMode: 'online', meetingUrl: 'https://ornek.test/gizli-oda', isActive: true,
+      },
+    })
+    await prisma.class_Session.upsert({
+      where: { id: OS },
+      update: { startsAt: new Date(Date.now() + 3 * 86400000), endsAt: new Date(Date.now() + 3 * 86400000 + 3600000) },
+      create: { id: OS, classId: OC, startsAt: new Date(Date.now() + 3 * 86400000), endsAt: new Date(Date.now() + 3 * 86400000 + 3600000), capacity: 10, status: 'open' },
+    })
+
+    // ONAYSIZ: online listede GÖRÜNMEMELİ (salonun isApproved'ının birebir karşılığı)
+    const kapali = await expectOk('/api/public/sessions?mode=online&limit=50')
+    if ((kapali.json?.sessions || []).some((x: any) => x.id === OS)) {
+      throw new Error('ONAYSIZ mekânsız hocanın dersi online listede göründü')
+    }
+
+    // ONAYLI: görünmeli, salon alanları null, puan eğitmenden
+    await prisma.instructor.update({ where: { id: OI }, data: { isApproved: true, approvedAt: new Date() } })
+    const acik = await expectOk('/api/public/sessions?mode=online&limit=50')
+    const bulunan = (acik.json?.sessions || []).find((x: any) => x.id === OS)
+    if (!bulunan) throw new Error('ONAYLI mekânsız hocanın dersi online listede YOK')
+    if (bulunan.venueId !== null || bulunan.venueName !== null) {
+      throw new Error(`mekânsız derste salon alanları dolu geldi: ${JSON.stringify({ venueId: bulunan.venueId, venueName: bulunan.venueName })}`)
+    }
+    if (bulunan.deliveryMode !== 'online') throw new Error(`deliveryMode yanlış: ${bulunan.deliveryMode}`)
+  })
+
+  await check('Online: mode VARSAYILANI in_person — güncellenmemiş istemciye online ders karışmaz', async () => {
+    const varsayilan = await expectOk('/api/public/sessions?limit=50')
+    if ((varsayilan.json?.sessions || []).some((x: any) => x.id === OS)) {
+      throw new Error('mode verilmeden yapılan istekte ONLINE ders listeye karıştı (varsayılan in_person olmalı)')
+    }
+    // Ve yüz yüze ders bu listede DURMALI (filtre fazla eleme yapmasın)
+    if (!(varsayilan.json?.sessions || []).some((x: any) => x.id === S)) {
+      throw new Error('varsayılan listede yüz yüze seans kayboldu — filtre fazla eliyor')
+    }
+  })
+
+  await check('Online: ders bağlantısı PUBLIC uçların HİÇBİRİNDE dönmez (bağlantı = bilet)', async () => {
+    const gizli = 'gizli-oda'
+    const detay = await expectOk(`/api/public/sessions/${OS}`)
+    if (detay.text.includes(gizli)) throw new Error('seans detayında meetingUrl sızdı')
+    const hoca = await expectOk(`/api/public/instructors/${OI}`)
+    if (hoca.text.includes(gizli)) throw new Error('eğitmen detayında meetingUrl sızdı')
+    const liste = await expectOk('/api/public/sessions?mode=online&limit=50')
+    if (liste.text.includes(gizli)) throw new Error('seans listesinde meetingUrl sızdı')
+
+    // Salonun online dersi de aynı kapıdan geçmeli (getVenueById ham `...c` yayıyordu)
+    await prisma.class.update({ where: { id: C }, data: { deliveryMode: 'online', meetingUrl: 'https://ornek.test/salon-odasi' } })
+    const salon = await expectOk(`/api/public/venues/${V}`)
+    const sizdi = salon.text.includes('salon-odasi')
+    await prisma.class.update({ where: { id: C }, data: { deliveryMode: 'in_person', meetingUrl: null } })
+    if (sizdi) throw new Error('salon detayında (getVenueById) online ders bağlantısı sızdı')
+  })
+
+  await check('Online: bağlantı yalnız ONAYLI rezervasyonda döner, İPTALDE geri alınır', async () => {
+    const oTok = await onlineKullanici()
+    // FIXTURE'I SIFIRLA. Bu blok kendi seansına sahip ama seans ID'si sabit; önceki koşudan ya da
+    // başka bir testten kalan rezervasyon "seans dolu" hatası veriyordu (ölçüldü). Sahip olduğumuz
+    // fixture'ı kullanmadan önce bilinen bir duruma getirmek, "ilk koşuda geçer sonra kırılır"
+    // sınıfını kapatır — suite'te bunun bedeli daha önce de ödenmişti.
+    await prisma.booking.deleteMany({ where: { sessionId: OS } })
+    await prisma.class_Session.update({
+      where: { id: OS },
+      data: { capacity: 10, status: 'open', startsAt: new Date(Date.now() + 3 * 86400000), endsAt: new Date(Date.now() + 3 * 86400000 + 3600000) },
+    })
+    const rez = await http('/api/bookings', { method: 'POST', token: oTok, body: { sessionId: OS } })
+    if (rez.status !== 201 && rez.status !== 200) {
+      // Teşhis bilgisi mesaja GÖMÜLÜ: aksi halde kırmızı bir satır "neden" demeden kalıyor ve
+      // her tanıda 8 dakikalık yeni bir koşu gerekiyor.
+      const sn = await prisma.class_Session.findUnique({ where: { id: OS }, select: { capacity: true, status: true, startsAt: true } })
+      const dolu = await prisma.booking.aggregate({ where: { sessionId: OS, status: { in: ['confirmed', 'pending'] } }, _sum: { groupSize: true } })
+      throw new Error(`mekânsız hoca dersine rezervasyon yapılamadı: ${rez.status} ${rez.text.slice(0, 120)} — seans=${JSON.stringify(sn)} doluluk=${dolu._sum.groupSize || 0}`)
+    }
+
+    const varken = await expectOk('/api/bookings/my', { token: oTok })
+    const b1 = (varken.json?.bookings || []).find((x: any) => x.sessionId === OS)
+    if (!b1) throw new Error('rezervasyon listede yok')
+    if (b1.meetingUrl !== 'https://ornek.test/gizli-oda') {
+      throw new Error(`onaylı rezervasyonda bağlantı dönmedi: ${b1.meetingUrl}`)
+    }
+
+    await prisma.booking.updateMany({ where: { userId: OU, sessionId: OS }, data: { status: 'cancelled' } })
+    const iptalli = await expectOk('/api/bookings/my', { token: oTok })
+    const b2 = (iptalli.json?.bookings || []).find((x: any) => x.sessionId === OS)
+    if (b2?.meetingUrl) throw new Error('İPTAL EDİLMİŞ rezervasyonda bağlantı hâlâ dönüyor (ücretsiz katılım açığı)')
+    // Ham alanlar da nesnelerin içinde kalmamalı
+    if (iptalli.text.includes('gizli-oda')) throw new Error('iptalli rezervasyon yanıtında ham meetingUrl kaldı')
+    await prisma.booking.deleteMany({ where: { userId: OU, sessionId: OS } })
+  })
+
+  await check('Online: DB mekânsız + yüz yüze dersi KABUL ETMEZ (CHECK kısıtı)', async () => {
+    let hataMesaji = ''
+    try {
+      await prisma.class.update({ where: { id: OC }, data: { deliveryMode: 'in_person' } })
+    } catch (e: any) { hataMesaji = String(e?.message || '') }
+    if (!hataMesaji) {
+      await prisma.class.update({ where: { id: OC }, data: { deliveryMode: 'online' } }) // geri al
+      throw new Error('salonsuz ders yüz yüze yapılabildi — CHECK kısıtı yok/çalışmıyor')
+    }
+    if (!/class_venueless_must_be_online/.test(hataMesaji)) {
+      throw new Error(`beklenen kısıt tetiklenmedi: ${hataMesaji.slice(0, 160)}`)
+    }
+  })
+
+  await check('Online: İKİ FARKLI mekânsız hocanın dersleri arasında transfer ENGELLENİR', async () => {
+    const cat = await temelKategori()
+    await prisma.instructor.upsert({
+      where: { id: OI2 },
+      update: { isApproved: true, isActive: true, venueId: null },
+      create: { id: OI2, fullName: 'Smoke Mekansiz Hoca 2', email: `smoke_oi${OI2}@x.com`, isApproved: true, isActive: true },
+    })
+    await prisma.class.upsert({
+      where: { id: OC2 },
+      update: { isActive: true, deliveryMode: 'online', venueId: null, instructorId: OI2 },
+      create: {
+        id: OC2, venueId: null, instructorId: OI2, title: 'Smoke Online Ders 2', category: cat?.name || 'Yoga',
+        sportCategoryId: cat?.id ?? null, basePrice: 200, durationMinutes: 60, capacity: 10,
+        deliveryMode: 'online', isActive: true,
+      },
+    })
+    await prisma.class_Session.upsert({
+      where: { id: OS2 },
+      update: { startsAt: new Date(Date.now() + 4 * 86400000), endsAt: new Date(Date.now() + 4 * 86400000 + 3600000) },
+      create: { id: OS2, classId: OC2, startsAt: new Date(Date.now() + 4 * 86400000), endsAt: new Date(Date.now() + 4 * 86400000 + 3600000), capacity: 10, status: 'open' },
+    })
+
+    const tTok = await onlineKullanici()
+    await prisma.booking.deleteMany({ where: { sessionId: { in: [OS, OS2] } } })
+    await prisma.class_Session.update({ where: { id: OS }, data: { capacity: 10, status: 'open', startsAt: new Date(Date.now() + 3 * 86400000), endsAt: new Date(Date.now() + 3 * 86400000 + 3600000) } })
+    await prisma.class_Session.update({ where: { id: OS2 }, data: { capacity: 10, status: 'open', startsAt: new Date(Date.now() + 4 * 86400000), endsAt: new Date(Date.now() + 4 * 86400000 + 3600000) } })
+    const rez = await http('/api/bookings', { method: 'POST', token: tTok, body: { sessionId: OS } })
+    if (rez.status >= 400) throw new Error(`kurulum rezervasyonu başarısız: ${rez.status} ${rez.text.slice(0, 140)}`)
+    const bId = rez.json?.booking?.id
+    if (!bId) throw new Error('booking id alınamadı')
+
+    // İki dersin de venueId'si NULL → `venueId !== venueId` karşılaştırması false döner ve
+    // eski kural bu transferi SESSİZCE serbest bırakırdı.
+    // Uç PUT (POST değil) — yanlış metot 404 "Böyle bir uç yok" döner ve test yeşile yakın
+    // bir kırmızı üretir: kural çalışmadığı için değil, uca hiç ulaşılmadığı için.
+    const tr = await http(`/api/bookings/${bId}/transfer`, { method: 'PUT', token: tTok, body: { targetSessionId: OS2 } })
+    if (tr.status !== 400) {
+      throw new Error(`başka bir hocanın dersine transfer ENGELLENMEDİ: ${tr.status} ${tr.text.slice(0, 140)}`)
+    }
+    await prisma.booking.deleteMany({ where: { userId: OU, sessionId: { in: [OS, OS2] } } })
   })
 }
 
