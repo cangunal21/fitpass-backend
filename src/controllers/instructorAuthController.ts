@@ -145,6 +145,10 @@ export const getInstructorMe = async (req: Request, res: Response) => {
         id: true, fullName: true, specialty: true, specialtyEn: true,
         bio: true, bioEn: true, avatarUrl: true, phone: true, email: true,
         avgRating: true, totalReviews: true, verified: true, isActive: true,
+        // MEKÂNSIZ (bireysel) hocanın portalı "onay bekliyor" durumunu çizebilsin diye:
+        // `venueId === null` ise satış kapısı `isApproved`'dır (salon paneliyle simetrik —
+        // orada da venueLogin `isApproved` döndürüp panel bekleme ekranını gösteriyor).
+        venueId: true, isApproved: true, rejectionReason: true,
         venue: { select: { id: true, name: true } },
       },
     })

@@ -546,12 +546,17 @@ export const getAllInstructors = async (req: Request, res: Response) => {
   try {
     const instructors = await prisma.instructor.findMany({
       select: {
-        id: true, fullName: true, specialty: true, avatarUrl: true,
+        id: true, fullName: true, specialty: true, avatarUrl: true, email: true, bio: true,
         verified: true, avgRating: true, totalReviews: true, createdAt: true,
+        // MEKÂNSIZ (bireysel) hocanın YAYIN kapısı: admin panelinin onay/ret butonunu
+        // çizebilmesi için gerekli. `venueId` null ise kapı `isApproved`, değilse salonun durumu.
+        venueId: true, isApproved: true, submittedAt: true, rejectionReason: true,
         venue: { select: { id: true, name: true } },
         _count: { select: { classes: true } },
       },
-      orderBy: [{ verified: 'asc' }, { createdAt: 'desc' }],
+      // ONAY BEKLEYEN MEKÂNSIZ HOCALAR EN ÜSTTE: admin panelinin işi bu; onaylanmış kayıtların
+      // arasında kaybolan bir başvuru günlerce bekler.
+      orderBy: [{ isApproved: 'asc' }, { verified: 'asc' }, { createdAt: 'desc' }],
     })
     return res.json({ instructors })
   } catch (err) {
