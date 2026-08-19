@@ -1,3 +1,8 @@
+-- ALLOW-DESTRUCTIVE: FK'ler ayni kolon uzerinde ayni hedefe YENIDEN kuruluyor (asagida),
+-- amac ON DELETE davranisini SET NULL yerine RESTRICT yapmak. Hicbir satir silinmez/degismez;
+-- kolon NOT NULL'dan nullable'a GENISLETILIYOR (daralma degil). Kapi dogru calisti: bu dosya
+-- isaretsiz gonderilmisti ve deploy Railway'de burada durdu.
+
 -- ONLINE DERS + MEKANSIZ (BIREYSEL) HOCA
 --
 -- Class.venueId ve Instructor.venueId NULLABLE hale geliyor: bugune kadar her ders bir salona,
