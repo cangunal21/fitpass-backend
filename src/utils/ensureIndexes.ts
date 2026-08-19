@@ -150,6 +150,32 @@ export async function ensureIndexes(): Promise<string[]> {
     basarisiz.push('userbadge_award_unique')
   }
 
+  // ── ONLINE DERS INVARYANTLARI (CHECK kısıtları) ────────────────────────────────────────────
+  // NEDEN BURADA: bu iki kısıt migration SQL'inde yazılı ama **Prisma CHECK kısıtını modellemez**.
+  // Şema `prisma db push` ile kurulan her ortamda (CI tam olarak böyle kuruyor) kısıtlar HİÇ
+  // oluşmuyordu — yerelde yeşil, CI'da kırmızı. Bunu CI yakaladı; yakalamasaydı invaryant
+  // "var sanılan ama olmayan" bir korumaya dönüşürdü.
+  //
+  // Postgres CHECK için `IF NOT EXISTS` desteklemiyor → pg_constraint'e bakan DO bloğu.
+  try {
+    await prisma.$executeRawUnsafe(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'class_venueless_must_be_online') THEN
+          ALTER TABLE "Class" ADD CONSTRAINT "class_venueless_must_be_online"
+            CHECK ("venueId" IS NOT NULL OR "deliveryMode" = 'online');
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'class_delivery_mode_valid') THEN
+          ALTER TABLE "Class" ADD CONSTRAINT "class_delivery_mode_valid"
+            CHECK ("deliveryMode" IN ('in_person', 'online'));
+        END IF;
+      END $$;
+    `)
+  } catch (e) {
+    console.error('ensureIndexes (online CHECK) hata (yok sayıldı):', e)
+    basarisiz.push('class_online_checks')
+  }
+
   if (basarisiz.length) {
     console.error('❌ KURULAMAYAN TEKİLLİK INDEX\'LERİ (koruma YOK):', basarisiz.join(', '))
   }
