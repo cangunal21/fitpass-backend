@@ -165,6 +165,12 @@ async function cleanup() {
   await prisma.instructor.deleteMany({ where: { id: { in: [990401, 990402] } } }).catch(() => {})
   await prisma.booking.deleteMany({ where: { userId: 990403 } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990403 } }).catch(() => {})
+  // Liderlik testi fixture'ları (990411-990414)
+  await prisma.booking.deleteMany({ where: { userId: { in: [990413, 990414] } } }).catch(() => {})
+  await prisma.booking.deleteMany({ where: { sessionId: { in: [990411, 990412] } } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: { in: [990411, 990412] } } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: { in: [990413, 990414] } } }).catch(() => {})
+  await prisma.neighborhood.deleteMany({ where: { id: { in: [990411, 990412] } } }).catch(() => {})
 
   const testUserIds = [990021, 990022, 990023, 990024]
   // Yorumlar bookingId + venueId FK'sına bağlı → booking/venue silmeden ÖNCE temizlenmeli
@@ -5104,6 +5110,63 @@ async function run() {
       throw new Error(`başka bir hocanın dersine transfer ENGELLENMEDİ: ${tr.status} ${tr.text.slice(0, 140)}`)
     }
     await prisma.booking.deleteMany({ where: { userId: OU, sessionId: { in: [OS, OS2] } } })
+  })
+
+  await check('Online: sezon liderliğine SAYILMAZ, yüz yüze ders SAYAR', async () => {
+    // ÖNBELLEK SORUNU VE ÇÖZÜMÜ (bu test bir tur "yazılamaz" diye ertelenmişti):
+    // getUserLeaderboard yanıtı 45 sn önbellekli → aynı anahtardan iki kez okuyup "önce yoktu
+    // şimdi var" demek kırılgan olurdu. Önbellek anahtarı `lb-users:<sezon>:<branş>:<mahalle>`.
+    // `branş` doğrulaması 5 dk'lık kategori önbelleğinden geçtiği için yeni kategori GÜVENİLMEZ;
+    // ama `neighborhoodId` HİÇ doğrulanmıyor ve anahtara giriyor. Bu yüzden İKİ AYRI test
+    // mahallesi kullanıyoruz: her okumanın kendi anahtarı var, her anahtar BİR KEZ okunuyor.
+    //   · Mahalle A → yalnız ONLINE check-in'li kullanıcı  → listede GÖRÜNMEMELİ
+    //   · Mahalle B → YÜZ YÜZE check-in'li kullanıcı       → listede GÖRÜNMELİ (testin boş
+    //     geçmediğinin kanıtı; yalnız negatif iddia yazmak "hiç kimse yok"la da geçerdi)
+    const NA = 990411, NB = 990412, UA = 990413, UB = 990414, SA = 990411, SB = 990412
+    const gecmis = new Date(Date.now() - 2 * 3600000) // sezon içinde ve GEÇMİŞTE
+
+    await prisma.neighborhood.upsert({ where: { id: NA }, update: {}, create: { id: NA, name: 'SmokeOnlineA', latitude: 41, longitude: 29, cityId: 1 } })
+    await prisma.neighborhood.upsert({ where: { id: NB }, update: {}, create: { id: NB, name: 'SmokeOnlineB', latitude: 41, longitude: 29, cityId: 1 } })
+
+    await prisma.class_Session.upsert({
+      where: { id: SA },
+      update: { startsAt: gecmis, endsAt: new Date(gecmis.getTime() + 3600000) },
+      create: { id: SA, classId: OC, startsAt: gecmis, endsAt: new Date(gecmis.getTime() + 3600000), capacity: 10, status: 'open' },
+    })
+    await prisma.class_Session.upsert({
+      where: { id: SB },
+      update: { startsAt: gecmis, endsAt: new Date(gecmis.getTime() + 3600000) },
+      create: { id: SB, classId: C, startsAt: gecmis, endsAt: new Date(gecmis.getTime() + 3600000), capacity: 10, status: 'open' },
+    })
+
+    for (const [uid, nid, sid] of [[UA, NA, SA], [UB, NB, SB]] as const) {
+      await testPrisma.user.upsert({
+        where: { id: uid },
+        update: { neighborhoodId: nid, banned: false },
+        create: { id: uid, username: `smoke_lb_${uid}`, email: `smoke_lb_${uid}@x.com`, passwordHash: 'x', fullName: 'Smoke LB', neighborhoodId: nid },
+      })
+      await prisma.booking.deleteMany({ where: { userId: uid } })
+      await prisma.booking.create({
+        data: {
+          userId: uid, sessionId: sid, bookingType: 'class', status: 'confirmed', checkedIn: true,
+          checkedInAt: new Date(), baseAmount: 100, commissionAmount: 0, venueCommission: 0,
+          finalAmount: 100, venuePayout: 0, bookingNumber: `SMOKELB${uid}`,
+        },
+      })
+    }
+
+    const onlineLb = await expectOk(`/api/social/leaderboard/users?neighborhoodId=${NA}`)
+    const onlineListe = onlineLb.json?.leaderboard || []
+    if (onlineListe.some((u: any) => u.id === UA)) {
+      throw new Error('ONLINE dersle check-in yapan kullanıcı sezon liderliğinde göründü (sayılmamalıydı)')
+    }
+
+    const yuzyuzeLb = await expectOk(`/api/social/leaderboard/users?neighborhoodId=${NB}`)
+    const yuzyuzeListe = yuzyuzeLb.json?.leaderboard || []
+    if (!yuzyuzeListe.some((u: any) => u.id === UB)) {
+      // Bu dal DÜŞERSE testin negatif iddiası da değersizdir: kurulum hiç çalışmıyor demektir.
+      throw new Error('YÜZ YÜZE dersle check-in yapan kullanıcı liderlikte YOK — kurulum çalışmıyor, negatif iddia da anlamsız')
+    }
   })
 }
 

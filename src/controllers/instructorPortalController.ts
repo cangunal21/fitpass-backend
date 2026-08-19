@@ -245,10 +245,14 @@ export const getMyInstructorClasses = async (req: Request, res: Response) => {
       select: {
         id: true, title: true, category: true, basePrice: true, durationMinutes: true,
         capacity: true, isActive: true,
+        // Portal, online derse özel alanları (seans bazlı bağlantı) ancak bunu bilirse çizebilir.
+        // `meetingUrl` de DÖNÜYOR ve dönmesi DOĞRU: bu uç dersin SAHİBİNE cevap veriyor —
+        // public uçlarda strip ediliyor (bkz. utils/seller.ts yorumu ve publicController).
+        deliveryMode: true, meetingUrl: true,
         sessions: {
           where: { startsAt: { gte: now } },
           orderBy: { startsAt: 'asc' },
-          select: { id: true, startsAt: true, endsAt: true, capacity: true, status: true },
+          select: { id: true, startsAt: true, endsAt: true, capacity: true, status: true, meetingUrl: true },
         },
       },
       orderBy: { createdAt: 'desc' },
