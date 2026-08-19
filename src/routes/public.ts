@@ -16,6 +16,7 @@ import {
   submitComplaint,
   searchUsers,
   getInstructorById,
+  getInstructors,
 } from '../controllers/publicController'
 import { validateCoupon } from '../controllers/couponController'
 import { optionalAuthMiddleware } from '../middlewares/auth'
@@ -40,6 +41,9 @@ router.get('/users-search', searchUsers)
 // optionalAuthMiddleware: uç herkese açık kalır ama token varsa kullanıcı kimliği dolar →
 // validateCoupon kişi-başı limiti ölçebilir (aksi halde "geçerli" der, rezervasyon reddederdi).
 router.post('/validate-coupon', optionalAuthMiddleware, validateCoupon)
+// Liste ucu, ':id'den ÖNCE tanımlanmalıydı diye düşünülebilir ama Express'te '/instructors' ve
+// '/instructors/:id' farklı yollar — çakışma yok.
+router.get('/instructors', getInstructors)
 router.get('/instructors/:id', optionalAuthMiddleware, getInstructorById)
 
 export default router

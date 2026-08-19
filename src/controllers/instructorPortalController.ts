@@ -141,8 +141,16 @@ export const createInstructorClass = async (req: Request, res: Response) => {
 
     const sportCat = await prisma.sportCategory.findFirst({
       where: { name: { equals: category, mode: 'insensitive' } },
-      select: { id: true },
+      select: { id: true, onlineAllowed: true },
     })
+
+    // ONLINE KATEGORİ KAPISI — kural DB'de (SportCategory.onlineAllowed). FAIL-CLOSED: kategori
+    // çözülemediyse de reddediyoruz, aksi halde serbest-metin bir kategori adıyla yüzme/binicilik
+    // gibi fiziksel olarak imkânsız bir ders online yayımlanabilirdi. venueController.createClass
+    // ile AYNI kural — kardeş yolların ayrışması bu repoda en sık bulunan kök nedendir.
+    if (deliveryMode === 'online' && !sportCat?.onlineAllowed) {
+      return res.status(400).json({ error: 'Bu branş online derse uygun değil.' })
+    }
 
     const safeTitle = clampStr(title, 120) || ''
     const safeDesc = clampStr(description, 2000) || null

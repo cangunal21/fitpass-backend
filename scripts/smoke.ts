@@ -5168,6 +5168,51 @@ async function run() {
       throw new Error('YÜZ YÜZE dersle check-in yapan kullanıcı liderlikte YOK — kurulum çalışmıyor, negatif iddia da anlamsız')
     }
   })
+  await check('Online: uygun OLMAYAN branşta online ders AÇILAMAZ (kural DB\'de, iki yazma yolunda da aynı)', async () => {
+    const uygun = await prisma.sportCategory.findFirst({ where: { onlineAllowed: true }, orderBy: { id: 'asc' }, select: { name: true } })
+    const uygunsuz = await prisma.sportCategory.findFirst({ where: { onlineAllowed: false }, orderBy: { id: 'asc' }, select: { name: true } })
+    if (!uygun || !uygunsuz) atla('online-uygun ve uygun-olmayan kategori çifti yok')
+
+    await prisma.instructor.update({ where: { id: OI }, data: { isApproved: true, isActive: true } })
+    const iTok = jwt.sign({ instructorId: OI, email: `smoke_oi${OI}@x.com`, role: 'instructor' }, JWT_SECRET, { expiresIn: '1h' })
+    const govde = (category: string) => ({
+      title: 'Smoke Online Kategori', category, basePrice: 100, duration: 60, capacity: 5,
+      deliveryMode: 'online', meetingUrl: 'https://ornek.test/oda',
+    })
+
+    const red = await http('/api/instructor/classes', { method: 'POST', token: iTok, body: govde(uygunsuz!.name) })
+    if (red.status !== 400) {
+      throw new Error(`online'a UYGUN OLMAYAN branşta (${uygunsuz!.name}) ders açılabildi: ${red.status} ${red.text.slice(0, 120)}`)
+    }
+
+    // Pozitif kontrol: kapı her şeyi reddediyor olsaydı yukarıdaki iddia da anlamsız olurdu.
+    const kabul = await http('/api/instructor/classes', { method: 'POST', token: iTok, body: govde(uygun!.name) })
+    if (kabul.status !== 201) {
+      throw new Error(`online'a UYGUN branşta (${uygun!.name}) ders açılamadı: ${kabul.status} ${kabul.text.slice(0, 140)}`)
+    }
+    const yeniId = kabul.json?.class?.id
+    if (yeniId) await prisma.class.deleteMany({ where: { id: yeniId } })
+  })
+
+  await check('Eğitmen listesi: onaylı mekânsız hoca görünür, onay kaldırılınca DÜŞER', async () => {
+    await prisma.instructor.update({ where: { id: OI }, data: { isApproved: true, isActive: true } })
+    const acik = await expectOk('/api/public/instructors?limit=50')
+    const liste = acik.json?.instructors || []
+    const bulunan = liste.find((i: any) => i.id === OI)
+    if (!bulunan) throw new Error('ONAYLI mekânsız hoca eğitmen listesinde YOK')
+    if (bulunan.venueName !== null) throw new Error(`mekânsız hocada salon adı dolu geldi: ${bulunan.venueName}`)
+    // Hassas alan sızıntısı: bu uç kimlik doğrulaması İSTEMİYOR.
+    if (acik.text.includes('passwordHash') || bulunan.email !== undefined) {
+      throw new Error('eğitmen listesinde hassas alan sızdı (passwordHash/email)')
+    }
+
+    await prisma.instructor.update({ where: { id: OI }, data: { isApproved: false } })
+    const kapali = await expectOk('/api/public/instructors?limit=50')
+    if ((kapali.json?.instructors || []).some((i: any) => i.id === OI)) {
+      throw new Error('ONAYI KALDIRILMIŞ mekânsız hoca eğitmen listesinde kalmaya devam etti')
+    }
+    await prisma.instructor.update({ where: { id: OI }, data: { isApproved: true } })
+  })
 }
 
 async function main() {

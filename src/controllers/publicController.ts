@@ -878,3 +878,89 @@ export const getInstructorById = async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
+
+// GET /api/public/instructors — EĞİTMEN LİSTESİ (keşif yüzeyi).
+//
+// Bugüne kadar public'te YALNIZ `/instructors/:id` vardı: eğitmen sayfaları ancak bir dersin
+// içinden tıklanarak bulunabiliyordu, listelenemiyordu. Online ders kanadıyla birlikte
+// mekânsız hocalar da geldiği için eğitmen artık başlı başına bir keşif nesnesi.
+//
+// KAPI: `instructorLiveWhere()` — salona bağlı eğitmende SALONUN durumu, mekânsız eğitmende
+// KENDİ onayı. Kapıyı burada elle yazmak, kardeş uçlarla ayrışmanın en kısa yoludur.
+export const getInstructors = async (req: Request, res: Response) => {
+  try {
+    const { search, category, mode, page, limit } = req.query
+    const pageNum = Math.max(1, parseIntSafe(page) || 1)
+    const pageSize = Math.min(50, Math.max(1, parseIntSafe(limit) || 24))
+    const searchStr = typeof search === 'string' ? search.trim().slice(0, 80) : undefined
+    const categoryStr = typeof category === 'string' ? category : undefined
+    const deliveryMode = parseDeliveryMode(mode)
+
+    const and: any[] = [instructorLiveWhere()]
+
+    if (searchStr) {
+      and.push({
+        OR: [
+          { fullName: { contains: searchStr, mode: 'insensitive' } },
+          { specialty: { contains: searchStr, mode: 'insensitive' } },
+          { venue: { is: { name: { contains: searchStr, mode: 'insensitive' } } } },
+        ],
+      })
+    }
+
+    // Branş/teslim filtresi EĞİTMENİN DERSLERİNDEN türetiliyor: `specialty` serbest metin ve
+    // güvenilmez (hoca "yoga · pilates" yazıyor), gerçek sinyal açtığı derslerdir.
+    if (categoryStr || deliveryMode) {
+      and.push({
+        classes: {
+          some: {
+            isActive: true,
+            ...(categoryStr ? { sportCategory: { name: { equals: categoryStr, mode: 'insensitive' } } } : {}),
+            ...(deliveryMode ? { deliveryMode } : {}),
+          },
+        },
+      })
+    }
+
+    const where = { AND: and }
+
+    // hasMore: LIMIT+1 hilesi — ek COUNT sorgusu yok (kardeş uçlarla aynı desen).
+    const rows = await prisma.instructor.findMany({
+      where,
+      select: {
+        id: true, fullName: true, specialty: true, specialtyEn: true, bio: true, bioEn: true,
+        avatarUrl: true, verified: true, avgRating: true, totalReviews: true, venueId: true,
+        venue: { select: { id: true, name: true, neighborhood: { select: { name: true } } } },
+        _count: { select: { classes: true } },
+      },
+      orderBy: [{ verified: 'desc' }, { avgRating: 'desc' }, { totalReviews: 'desc' }, { id: 'asc' }],
+      skip: (pageNum - 1) * pageSize,
+      take: pageSize + 1,
+    })
+
+    const hasMore = rows.length > pageSize
+    const sayfa = hasMore ? rows.slice(0, pageSize) : rows
+
+    return res.json({
+      // stripInstructorSensitive: e-posta/telefon/passwordHash/inviteStatus public'e SIZMASIN.
+      // Bu uç kimlik doğrulaması İSTEMİYOR; id enumerasyonu yerine doğrudan liste veriyor,
+      // yani hassas alan sızıntısının maliyeti burada daha da yüksek.
+      instructors: sayfa.map((i) => ({
+        ...stripInstructorSensitive(i),
+        classCount: i._count.classes,
+        // Mekânsız hoca: salon yok, dolayısıyla konum da yok. İstemci salon satırını çizmemeli.
+        venueName: i.venue?.name ?? null,
+        neighborhood: i.venue?.neighborhood?.name ?? null,
+        _count: undefined,
+        venue: undefined,
+      })),
+      page: pageNum,
+      pageSize,
+      hasMore,
+      limit: pageSize,
+    })
+  } catch (err) {
+    console.error('getInstructors error:', err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}

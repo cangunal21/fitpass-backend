@@ -7,6 +7,7 @@ import { generateToken } from '../utils/jwt'
 import { sendCancellationEmail, sendVenuePasswordResetEmail, sendVenueRegistrationAdminEmail } from '../utils/email'
 import { sendPushNotification } from '../utils/push'
 import { isValidEmail, MIN_PASSWORD, parseIntSafe, clampStr } from '../utils/validate'
+import { toplantiUrlGecerliMi } from '../utils/sanitize'
 import crypto from 'crypto'
 import { trAddDays, trDate, trInstant, trTime, trWeekday, trYmd } from '../utils/trFormat'
 import { reversiblePoints } from '../utils/tier'
@@ -433,6 +434,23 @@ export const createClass = async (req: Request, res: Response) => {
     const venueId = (req as any).venueId
     const { title, description, category, basePrice, duration, capacity, instructorId } = req.body
 
+    // TESLİM BİÇİMİ — salon da online ders satabilir (ürün kararı: "hem salon hem bireysel hoca").
+    // Bu uçta hiç yoktu; eğitmen portaline eklenmiş, salon paneline eklenmemişti (kardeş yol boşluğu).
+    // Tanınmayan değer sessizce 'in_person'a DÜŞMÜYOR: salonun online sandığı ders yüz yüze yayımlanırdı.
+    const rawMode = typeof req.body.deliveryMode === 'string' ? req.body.deliveryMode.trim() : ''
+    if (rawMode && rawMode !== 'online' && rawMode !== 'in_person') {
+      return res.status(400).json({ error: 'Geçersiz teslim biçimi.' })
+    }
+    const deliveryMode: 'in_person' | 'online' = rawMode === 'online' ? 'online' : 'in_person'
+    const meetingUrlRaw = typeof req.body.meetingUrl === 'string' ? req.body.meetingUrl.trim() : ''
+    if (deliveryMode === 'online') {
+      if (!toplantiUrlGecerliMi(meetingUrlRaw)) {
+        return res.status(400).json({ error: 'Ders bağlantısı https ile başlayan geçerli bir adres olmalı.' })
+      }
+    } else if (meetingUrlRaw) {
+      return res.status(400).json({ error: 'Yüz yüze derse bağlantı eklenemez.' })
+    }
+
     if (!title || !category || !basePrice || !duration || !capacity) {
       return res.status(400).json({ error: 'Tüm zorunlu alanları doldurun.' })
     }
@@ -474,8 +492,16 @@ export const createClass = async (req: Request, res: Response) => {
     // Kategori adından sportCategoryId'yi bul (ilişki tutarlılığı için)
     const sportCat = await prisma.sportCategory.findFirst({
       where: { name: { equals: category, mode: 'insensitive' } },
-      select: { id: true },
+      select: { id: true, onlineAllowed: true },
     })
+
+    // ONLINE KATEGORİ KAPISI — kural DB'de (SportCategory.onlineAllowed), burada yalnız uygulanıyor.
+    // FAIL-CLOSED: kategori çözülemediyse de reddediyoruz; "tanımadığım kategoriyi online say"
+    // demek, yüzme/binicilik gibi fiziksel olarak imkânsız bir dersin online yayımlanmasına
+    // serbest-metin bir kategori adıyla kapı açardı.
+    if (deliveryMode === 'online' && !sportCat?.onlineAllowed) {
+      return res.status(400).json({ error: 'Bu branş online derse uygun değil.' })
+    }
 
     // Metinleri ÇEVİRİDEN ÖNCE sınırla — dev girdi AI token maliyetini patlatmasın + DB şişmesin
     const safeTitle = clampStr(title, 120) || ''
@@ -487,6 +513,8 @@ export const createClass = async (req: Request, res: Response) => {
         title: safeTitle,
         titleEn,
         description: safeDesc,
+        deliveryMode,
+        meetingUrl: deliveryMode === 'online' ? meetingUrlRaw || null : null,
         category,
         sportCategoryId: sportCat?.id ?? null,
         basePrice: fiyat,

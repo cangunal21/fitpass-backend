@@ -48,6 +48,13 @@ model SportCategory {
   iconUrl       String?
   colorHex      String?
   hasInstructor Boolean              @default(true)
+  // ONLINE'A UYGUN MU — kural TEK KAYNAKTA. İstemcilere sabit liste gömmek iki kopya demekti ve
+  // bu repoda o sınıf hatanın bedeli ödendi (istemcide sabit tier listesi). Sunucu ders açarken
+  // reddediyor, web ve mobil kategori filtresini bu alandan çiziyor.
+  // Karar (19 Ağu 2026): Yoga · Pilates · Fitness · Dans AÇIK. Dövüş Sporları KAPALI — online'da
+  // yalnız kardiyo türevi verilebilir ve o zaten Fitness'ın içinde; adın vaat ettiği teknik/
+  // partner çalışması karşılanamıyor. Yüzme/Binicilik/Deniz Sporları/Tenis fiziksel olarak imkânsız.
+  onlineAllowed Boolean              @default(false)
   classes       Class[]
   dropInSlots   DropInSlot[]
   venueSports   VenueSportCategory[]
