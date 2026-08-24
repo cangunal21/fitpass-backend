@@ -630,6 +630,13 @@ export const cancelBooking = async (req: Request, res: Response) => {
         },
         data: {
           status: 'cancelled',
+          // YAPISAL SONUÇ (O14): komisyon motoru (#79) geç iptalde komisyonu TUTULAN TUTAR
+          // üzerinden hesaplayacak; tutulan = finalAmount - refundAmount. Bu taban serbest
+          // metinden okunamaz, o yüzden kendi alanlarında duruyor.
+          refundType: rType,
+          refundAmount: rAmount,
+          // `notes` GERİYE DÖNÜK UYUM için korunuyor: web'de iki yer hâlâ bunu ayrıştırıyor
+          // (profil + admin). İstemciler `refundType`e geçtiğinde bu metin sadeleşebilir.
           notes: `${fresh.notes ? fresh.notes + ' | ' : ''}İptal: ${rType === 'full' ? 'Tam iade' : rType === 'half' ? 'Yarım iade' : 'İade yok'} (₺${rAmount})`,
         },
       })

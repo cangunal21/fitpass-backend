@@ -3,6 +3,7 @@ import prisma from '../utils/prisma'
 import { clampStr } from '../utils/validate'
 import { sendVenueApprovedEmail } from '../utils/email'
 import { invalidate } from '../utils/cache'
+import { assignFounderRank } from '../utils/founder'
 import { purgeUserReviews, purgeUserComments, applyUserBan } from '../utils/moderation'
 import { sendPushNotification } from '../utils/push'
 import { reversiblePoints } from '../utils/tier'
@@ -69,6 +70,13 @@ export const approveVenue = async (req: Request, res: Response) => {
     })
 
     if (approve) {
+      // ÖNCÜ SIRASI (O13) — ONAY anında veriliyor, kayıt anında değil. Kaydolup onaylanmayan
+      // salon sırayı kilitlemesin diye. Sıra BİR KERE verilir: askıya alınıp yeniden onaylanan
+      // salon sırasını kaybetmez. Hata olsa bile onay akışını düşürmüyoruz — rozet ikincil,
+      // salonun onaylanması birincil; ama sessiz de kalmıyoruz (founder.ts log basıyor).
+      await assignFounderRank(venueId).catch((e) => console.error('founderRank hatası:', e))
+      // Onaylı salon sayısı değişti → öne çıkarma penceresinin önbelleği bayatladı.
+      invalidate('approved-venue-count')
       try {
         const venueWithEmail = await prisma.venue.findUnique({ where: { id: venueId }, select: { email: true, name: true } })
         if (venueWithEmail?.email) {

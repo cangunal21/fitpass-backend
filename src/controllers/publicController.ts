@@ -11,6 +11,7 @@ import { trInstant, trAddDays } from '../utils/trFormat'
 import { getOccupancyMap, getOccupancy, spotsLeftOf } from '../utils/occupancy'
 // SATICI KAPISI — salonlu ve mekânsız hoca dersini birlikte kapsar; kapıyı elle yazma.
 import { classLiveWhere, deliveryWhere, parseDeliveryMode, sellerBlocked, sellerCardFields, IN_PERSON_ONLY, instructorLiveWhere } from '../utils/seller'
+import { founderBoostActive, founderOrderBy } from '../utils/founder'
 // API SÖZLEŞMESİ — üç repoda birebir aynı dosya. Yanıt tipini imzaya yazmak, sunucunun
 // gerçekten o şekli döndürdüğünü tsc'ye DOĞRULATIR (alan silinir/tipi değişirse build kırılır).
 import type { SessionListResponse, SessionDetailResponse, ForYouResponse, VenueListResponse, VenueDetailResponse, ApiError } from '../types/api'
@@ -368,6 +369,7 @@ export const getSessionById = async (req: Request, res: Response<SessionDetailRe
 // GET /api/public/venues
 export const getVenues = async (req: Request, res: Response<VenueListResponse | ApiError>) => {
   try {
+    const boostAktif = await founderBoostActive()
     const venues = await prisma.venue.findMany({
       where: { isApproved: true, isActive: true },
       include: {
@@ -375,7 +377,10 @@ export const getVenues = async (req: Request, res: Response<VenueListResponse | 
         neighborhood: true,
         _count: { select: { classes: true } },
       },
-      orderBy: { createdAt: 'desc' },
+      // ÖNCÜ SALON ÖNE ÇIKARMASI (O13) — salon sunumunda verilen söz. Platform 200 onaylı salona
+      // ulaşınca `founderOrderBy` boş dizi döner ve sıralama kendiliğinden eski hâline (createdAt)
+      // iner; bitiş koşulu kodda, süresiz bir ayrıcalık vaat edilmedi.
+      orderBy: [...founderOrderBy(boostAktif), { createdAt: 'desc' }],
       // LIMIT+1 → kesildiyse `hasMore` bildir (ek COUNT yok). Eskiden sinyal yoktu: katalog 500'ü
       // aşınca istemci sessizce eksik liste gösteriyordu.
       take: 501,

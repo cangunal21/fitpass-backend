@@ -301,6 +301,13 @@ model Venue {
   isActive             Boolean             @default(true)
   isVerified           Boolean             @default(false)
   isApproved           Boolean             @default(false)
+  // ÖNCÜ SALON SIRASI (O13) — salon ONAYLANDIĞI anda verilir, kayıt anında DEĞİL.
+  // Kayıt tarihine bağlasaydık, kaydolup hiç onaylanmayan bir salon sırayı kilitlerdi.
+  // İlk 50 rozet alır; öne çıkarma platform 200 onaylı salona ulaşana dek sürer (utils/founder.ts).
+  // @unique: sıra numarası ÇİFTLENEMEZ. Eşzamanlı iki onayda "MAX+1" okuması yarışır ve aynı
+  // numarayı üretebilir — bu repoda "kodla sağlanan tekillik eşzamanlılıkta işe yaramaz" dersi
+  // zaten ödendi, tekillik DB'de.
+  founderRank          Int?                @unique
   isSuspended          Boolean             @default(false)
   avgRating            Float               @default(0)
   totalReviews         Int                 @default(0)
@@ -565,6 +572,15 @@ model Booking {
   // TAM İADE ile iptal edebilir. Kullanıcı kendi isteğiyle transfer ederse damga silinir
   // (yeni seansı kendi seçmiş olur).
   rescheduledAt    DateTime?
+  // İPTAL SONUCU — YAPISAL (O14 hazırlığı). Bu bilgi bugüne kadar YALNIZCA `notes` alanında
+  // Türkçe metin olarak duruyordu ("İptal: Yarım iade (₺500)") ve web iki yerde
+  // `notes.split('İptal: ')[1]` ile ayrıştırıyordu — önek değişse arayüz sessizce boşalırdı.
+  //
+  // Komisyon motoru (#79) geldiğinde geç iptalde komisyon TUTULAN TUTAR üzerinden hesaplanacak
+  // (kullanıcı kararı 24 Ağu 2026). O taban serbest metinden okunamaz; burada duruyor.
+  // tutulan = finalAmount - refundAmount.
+  refundType       String? // 'full' | 'half' | 'none'
+  refundAmount     Float?
   coupon           Coupon?        @relation(fields: [couponId], references: [id])
   couponId         Int?
   creditUsed       Int            @default(0)

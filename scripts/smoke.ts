@@ -175,6 +175,7 @@ async function cleanup() {
   await prisma.booking.deleteMany({ where: { sessionId: 990421 } }).catch(() => {})
   await prisma.class_Session.deleteMany({ where: { id: 990421 } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: 990422 } }).catch(() => {})
+  await prisma.venue.deleteMany({ where: { id: 990431 } }).catch(() => {})
 
   const testUserIds = [990021, 990022, 990023, 990024]
   // Yorumlar bookingId + venueId FK'sına bağlı → booking/venue silmeden ÖNCE temizlenmeli
@@ -5205,6 +5206,53 @@ async function run() {
     if (yeniId) await prisma.class.deleteMany({ where: { id: yeniId } })
   })
 
+  await check('Öncü salon: sıra ONAY anında verilir ve BİR KERE verilir (yeniden onayda değişmez)', async () => {
+    // O13 — salon sunumunda 8 salona yazılı söz verildi. Sıra kayıt anında değil ONAY anında
+    // verilmeli (kaydolup onaylanmayan salon sırayı kilitlemesin) ve askıya alınıp yeniden
+    // onaylanan salon sırasını KAYBETMEMELİ.
+    const FV = 990431
+    await prisma.venue.deleteMany({ where: { id: FV } }).catch(() => {})
+    await prisma.venue.create({
+      data: {
+        id: FV, name: 'Smoke Oncu Salon', email: `smoke_oncu${FV}@x.com`, passwordHash: 'x',
+        address: 'Adres', isApproved: false, isActive: true, neighborhoodId: V, cityId: 1,
+      },
+    })
+
+    // Onaydan ÖNCE sıra olmamalı
+    const once = await prisma.venue.findUnique({ where: { id: FV }, select: { founderRank: true } })
+    if (once?.founderRank != null) throw new Error(`onaysız salona sıra verilmiş: ${once?.founderRank}`)
+
+    const onay = await http(`/api/admin/venues/${FV}/approve`, { method: 'PUT', admin: true, body: { approve: true } })
+    if (onay.status !== 200) throw new Error(`onay başarısız: ${onay.status} ${onay.text.slice(0, 120)}`)
+    const sonra = await prisma.venue.findUnique({ where: { id: FV }, select: { founderRank: true } })
+    if (sonra?.founderRank == null) throw new Error('ONAYDAN SONRA sıra verilmedi — rozet sözü karşılıksız kalır')
+    const ilkSira = sonra.founderRank
+
+    // Askıya al + yeniden onayla → sıra DEĞİŞMEMELİ
+    const asIl = await http(`/api/admin/venues/${FV}/suspend`, { method: 'PUT', admin: true, body: { suspend: true } })
+    if (asIl.status !== 200) atla(`askıya alma ucu beklenmedik yanıt verdi: ${asIl.status}`)
+    await http(`/api/admin/venues/${FV}/approve`, { method: 'PUT', admin: true, body: { approve: true } })
+    // ASKIYI DA KALDIR: `suspend` isActive'i kapatıyor, `approve` onu geri AÇMIYOR — ikisi ayrı
+    // anahtar. Public liste `isApproved && isActive` istediği için bu adım olmadan salon listede
+    // çıkmaz ve aşağıdaki iddia kod sağlamken kırmızı yanar (ilk koşuda tam bu oldu).
+    await http(`/api/admin/venues/${FV}/suspend`, { method: 'PUT', admin: true, body: { suspend: false } })
+    const tekrar = await prisma.venue.findUnique({ where: { id: FV }, select: { founderRank: true } })
+    if (tekrar?.founderRank !== ilkSira) {
+      throw new Error(`yeniden onayda sıra DEĞİŞTİ: ${ilkSira} -> ${tekrar?.founderRank} (sıra bir kere kazanılır)`)
+    }
+
+    // Public salon listesi sırayı taşımalı — istemci rozeti ancak bunu görürse çizebilir.
+    const liste = await expectOk('/api/public/venues')
+    const bulunan = (liste.json?.venues || []).find((v: any) => v.id === FV)
+    if (!bulunan) throw new Error('onaylı salon public listede yok')
+    if (bulunan.founderRank !== ilkSira) {
+      throw new Error(`public listede founderRank taşınmıyor: ${bulunan.founderRank} (beklenen ${ilkSira})`)
+    }
+
+    await prisma.venue.deleteMany({ where: { id: FV } }).catch(() => {})
+  })
+
   await check('İptal: <12 saat kala İADE YOK ama KOLTUK SERBEST kalır (bekleme listesi devreye girebilir)', async () => {
     // O12. Eskiden bu pencerede iptal 400 ile reddediliyordu: kullanıcı gelmiyor, koltuk ölüyordu.
     // Artık iptal edilebiliyor, iade edilmiyor ve yer yeniden satışa açılıyor.
@@ -5247,6 +5295,15 @@ async function run() {
     if ((sonra.json?.session?.spotsLeft ?? 0) !== 1) {
       throw new Error(`iptalden sonra koltuk SERBEST KALMADI: spotsLeft=${sonra.json?.session?.spotsLeft}`)
     }
+
+    // O14 HAZIRLIĞI: iptal sonucu YAPISAL alanlara yazılmalı. Komisyon motoru (#79) geç iptalde
+    // komisyonu TUTULAN TUTAR üzerinden hesaplayacak; bu taban `notes` metninden okunamaz.
+    const kayit = await prisma.booking.findUnique({ where: { id: bId }, select: { refundType: true, refundAmount: true, finalAmount: true } })
+    if (kayit?.refundType !== 'none' || kayit?.refundAmount !== 0) {
+      throw new Error(`iptal sonucu yapısal alana yazılmadı: refundType=${kayit?.refundType} refundAmount=${kayit?.refundAmount}`)
+    }
+    const tutulan = (kayit.finalAmount || 0) - (kayit.refundAmount || 0)
+    if (tutulan !== kayit.finalAmount) throw new Error(`tutulan tutar yanlış: ${tutulan} (iadesiz iptalde tamamı tutulmalı)`)
 
     await prisma.booking.deleteMany({ where: { sessionId: IS } })
   })
