@@ -165,6 +165,8 @@ export const NOTIFY: Record<string, Entry> = {
   // ── Parça/etiket metinleri (başka metinlerin içine gömülür) ───────────────
   refund_full: { body: { tr: 'Tam', en: 'Full' } },
   refund_half: { body: { tr: 'Yarım', en: 'Partial' } },
+  // <12 saat kala iptal: iade YOK ama koltuk serbest kalır (bkz. O12 / bookingController).
+  refund_none: { body: { tr: 'İade yok', en: 'No refund' } },
   // "kredi" TERİMİ KULLANILMAZ: cashback/kredi sistemi puan sistemine çevrildiğinde (ürün kararı)
   // arayüzden kaldırıldı ama bu metinde artık olarak kalmıştı. Bu bir PARA iadesidir (priceRefund),
   // puan değil → nötr "iade edildi" doğru ifade.

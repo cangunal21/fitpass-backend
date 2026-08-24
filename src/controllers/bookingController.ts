@@ -567,17 +567,12 @@ export const cancelBooking = async (req: Request, res: Response) => {
     // MUAFİYET: seansı SALON ertelediyse (booking.rescheduledAt) bu kural uygulanmaz — yeni saat
     // kullanıcının tercihi değil. Ders başlayana kadar TAM İADE ile iptal edebilir.
     const sessionStartsAt = booking.session?.startsAt
-    if (sessionStartsAt && !booking.rescheduledAt) {
-      const now = new Date()
-      const hoursUntilSession = (new Date(sessionStartsAt).getTime() - now.getTime()) / (1000 * 60 * 60)
-
-      if (hoursUntilSession < 12) {
-        return res.status(400).json({
-          error: 'Derse 12 saatten az kaldığı için iptal yapılamaz.',
-          hoursLeft: Math.round(hoursUntilSession * 10) / 10
-        })
-      }
-    }
+    // ERKEN RED KALDIRILDI (O12). Eskiden derse 12 saatten az kalınca iptal TAMAMEN reddediliyordu.
+    // Sonuç: kullanıcı gelmiyordu, koltuk boşa gidiyordu ve bekleme listesi hiç devreye giremiyordu —
+    // salon tek ücret alıyor, sırada bekleyen müşteri yer bulamıyordu. Artık iptal edilebiliyor ama
+    // İADE YOK: koltuk serbest kalıyor, bekleme listesindeki kişi gelip tam ücret ödeyebiliyor.
+    // İptal eden zaten iade alamayacaktı; yeni bir kaybı yok. Kapı (iade tutarı) transaction İÇİNDE,
+    // taze satırdan hesaplanıyor — buradaki erken kontrol yalnız bir kısayoldu.
 
     // (İade tipi/tutarı artık transaction İÇİNDE, taze satırdan hesaplanıyor — aşağıya bak.)
 
@@ -608,11 +603,19 @@ export const cancelBooking = async (req: Request, res: Response) => {
       // SALON ERTELEDİ → iptal penceresi kuralı uygulanmaz, iade TAM. Kullanıcı bu saati
       // seçmedi; "12 saat kala iptal yok" ve "12-24 saat yarım iade" onun kusuru değil.
       const salonErteledi = !!fresh.rescheduledAt
-      if (!salonErteledi && freshHours < 12) return { kind: 'tooLate' as const, hoursLeft: Math.round(freshHours * 10) / 10 }
-      // Ders BAŞLADIYSA artık iptal edilemez (ertelenmiş olsa bile) — geçmiş seansa iade yok.
+      // Ders BAŞLADIYSA artık iptal edilemez (ertelenmiş olsa bile) — geçmiş seansa iade yok
+      // ve koltuğu boşaltmanın da bir anlamı kalmaz.
       if (freshHours <= 0) return { kind: 'tooLate' as const, hoursLeft: Math.round(freshHours * 10) / 10 }
-      const rType = (salonErteledi || freshHours >= 24) ? 'full' : 'half'
-      const rAmount = rType === 'full' ? fresh.finalAmount : money((fresh.finalAmount || 0) / 2)
+      // ÜÇ KADEME (O12):
+      //   salon erteledi ya da 24s+  → TAM iade
+      //   12–24s                     → YARIM iade
+      //   <12s                       → İADE YOK, ama iptal EDİLEBİLİR → koltuk serbest kalır
+      // Son kademe bilerek "reddet" değil "iadesiz kabul et": reddetmek koltuğu öldürüyordu.
+      const rType: 'full' | 'half' | 'none' =
+        (salonErteledi || freshHours >= 24) ? 'full' : (freshHours >= 12 ? 'half' : 'none')
+      const rAmount = rType === 'full' ? fresh.finalAmount
+        : rType === 'half' ? money((fresh.finalAmount || 0) / 2)
+        : 0
 
       // CAS'i transferBooking:783 ile SİMETRİK yap: yalnız status değil, matematiği besleyen
       // alanları da pinle. Araya giren transfer bunları değiştirdiyse count=0 → hiçbir şey yapma.
@@ -627,7 +630,7 @@ export const cancelBooking = async (req: Request, res: Response) => {
         },
         data: {
           status: 'cancelled',
-          notes: `${fresh.notes ? fresh.notes + ' | ' : ''}İptal: ${rType === 'full' ? 'Tam iade' : 'Yarım iade'} (₺${rAmount})`,
+          notes: `${fresh.notes ? fresh.notes + ' | ' : ''}İptal: ${rType === 'full' ? 'Tam iade' : rType === 'half' ? 'Yarım iade' : 'İade yok'} (₺${rAmount})`,
         },
       })
       if (flip.count === 0) return { kind: 'conflict' as const }
@@ -728,7 +731,7 @@ export const cancelBooking = async (req: Request, res: Response) => {
         }
         const cPush = notifyPush(cLoc, 'booking_cancelled_self', {
           classTitle, date, time,
-          refund: notifyText(cLoc, refundType === 'full' ? 'refund_full' : 'refund_half'),
+          refund: notifyText(cLoc, refundType === 'full' ? 'refund_full' : refundType === 'half' ? 'refund_half' : 'refund_none'),
         })
         if (fullBooking.user?.pushToken && cPush) {
           sendPushNotification(fullBooking.user.pushToken, cPush.title, cPush.body).catch(() => {})
@@ -756,7 +759,9 @@ export const cancelBooking = async (req: Request, res: Response) => {
     // Komisyon kırılımı müşteriye dönmez (getMyBookings ile aynı politika).
     const { commissionAmount: _x1, venueCommission: _x2, userCommission: _x3, venuePayout: _x4, ...updatedSafe } = (updated || {}) as any
     res.json({
-      message: `Rezervasyon iptal edildi. ${refundType === 'full' ? 'Tam iade' : 'Yarım iade'} (₺${refundAmount}) uygulandı.`,
+      message: refundType === 'none'
+        ? 'Rezervasyon iptal edildi. Derse 12 saatten az kaldığı için iade yapılmadı; yeriniz bekleme listesindekilere açıldı.'
+        : `Rezervasyon iptal edildi. ${refundType === 'full' ? 'Tam iade' : 'Yarım iade'} (₺${refundAmount}) uygulandı.`,
       booking: updatedSafe,
       refundType,
       refundAmount,

@@ -171,6 +171,10 @@ async function cleanup() {
   await prisma.class_Session.deleteMany({ where: { id: { in: [990411, 990412] } } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: { in: [990413, 990414] } } }).catch(() => {})
   await prisma.neighborhood.deleteMany({ where: { id: { in: [990411, 990412] } } }).catch(() => {})
+  // İptal (O12) fixture'ları
+  await prisma.booking.deleteMany({ where: { sessionId: 990421 } }).catch(() => {})
+  await prisma.class_Session.deleteMany({ where: { id: 990421 } }).catch(() => {})
+  await prisma.user.deleteMany({ where: { id: 990422 } }).catch(() => {})
 
   const testUserIds = [990021, 990022, 990023, 990024]
   // Yorumlar bookingId + venueId FK'sına bağlı → booking/venue silmeden ÖNCE temizlenmeli
@@ -3137,14 +3141,21 @@ async function run() {
     const fs = require('fs'), path = require('path')
     // 1) Backend kuralı hâlâ 12/24 mü? (kural değişirse metinler de gözden geçirilmeli)
     const bc = fs.readFileSync(path.join(__dirname, '../src/controllers/bookingController.ts'), 'utf8')
-    if (!/freshHours\s*<\s*12/.test(bc)) throw new Error('12 saat iptal kapısı bulunamadı — kural değişmişse metinler de güncellenmeli')
-    // Tur20: kurala MUAFİYET eklendi (salon ertelerse tam iade) → regex yeni ifadeye göre.
-    if (!/salonErteledi\s*\|\|\s*freshHours\s*>=\s*24\s*\)\s*\?\s*'full'\s*:\s*'half'/.test(bc)) throw new Error('24s tam / 12-24s yarım kuralı bulunamadı — metinler gözden geçirilmeli')
+    // O12: <12s artık "iptal YOK" değil "İADE yok, koltuk serbest". Guard yeni üç kademeyi pinler;
+    // biri değişirse istemci metinleri de gözden geçirilmek zorunda kalır (guard'ın tek amacı bu).
+    if (!/freshHours\s*>=\s*12\s*\?\s*'half'\s*:\s*'none'/.test(bc)) throw new Error('12-24s yarım / <12s iadesiz kademesi bulunamadı — kural değişmişse metinler de güncellenmeli')
+    if (!/salonErteledi\s*\|\|\s*freshHours\s*>=\s*24\s*\)\s*\?\s*'full'/.test(bc)) throw new Error('24s tam iade kuralı bulunamadı — metinler gözden geçirilmeli')
+    // <12s'in REDDEDİLMEDİĞİNİ de pinle: eski davranışa sessizce dönülürse koltuk yine ölür.
+    if (/!salonErteledi\s*&&\s*freshHours\s*<\s*12\)\s*return\s*\{\s*kind:\s*'tooLate'/.test(bc)) throw new Error('<12 saat iptali yeniden REDDEDİLİYOR — O12 geri alınmış, koltuk bekleme listesine açılmıyor')
     // Erteleme muafiyeti kullanıcıya DUYURULMALI: hakkı bilmeyen kullanamaz.
     const nt = fs.readFileSync(path.join(__dirname, '../src/utils/notifyText.ts'), 'utf8')
     if (!/session_rescheduled[\s\S]{0,600}?ÜCRETSİZ iptal/.test(nt)) throw new Error('erteleme bildiriminde ücretsiz iptal hakkı yazmıyor — kullanıcı hakkından habersiz kalır')
     // 2) İstemci metinleri "12 saate kadar ücretsiz" gibi yanıltıcı ifade İÇERMEMELİ
-    const misleading = [/12 saat öncesine kadar ücretsiz/i, /free cancellation up to 12 hours/i, /cancel for free up to 12 hours/i]
+    const misleading = [
+      /12 saat öncesine kadar ücretsiz/i, /free cancellation up to 12 hours/i, /cancel for free up to 12 hours/i,
+      // O12 sonrası: "son 12 saatte iptal yok" ARTIK YANLIŞ — iptal edilebiliyor, iade edilmiyor.
+      /son 12s iptal yok/i, /12s-\s*iptal yok/i,
+    ]
     // Bu kontrolün BACKEND kısmı her yerde koşar; İSTEMCİ METNİ kısmı kardeş repo yoksa atlanır.
     // Atlanan kısım GÖRÜNÜR olmalı, yoksa "tamamı geçti" sanılır.
     const eksikDosya: string[] = []
@@ -5192,6 +5203,52 @@ async function run() {
     }
     const yeniId = kabul.json?.class?.id
     if (yeniId) await prisma.class.deleteMany({ where: { id: yeniId } })
+  })
+
+  await check('İptal: <12 saat kala İADE YOK ama KOLTUK SERBEST kalır (bekleme listesi devreye girebilir)', async () => {
+    // O12. Eskiden bu pencerede iptal 400 ile reddediliyordu: kullanıcı gelmiyor, koltuk ölüyordu.
+    // Artık iptal edilebiliyor, iade edilmiyor ve yer yeniden satışa açılıyor.
+    const IS = 990421 // seans
+    const IU = 990422 // kullanıcı
+    const cat = await temelKategori()
+    const alti = new Date(Date.now() + 6 * 3600000) // 12 saatlik pencerenin İÇİNDE, ama geçmişte değil
+
+    await prisma.class_Session.upsert({
+      where: { id: IS },
+      update: { startsAt: alti, endsAt: new Date(alti.getTime() + 3600000), capacity: 1, status: 'open' },
+      create: { id: IS, classId: C, startsAt: alti, endsAt: new Date(alti.getTime() + 3600000), capacity: 1, status: 'open' },
+    })
+    await testPrisma.user.upsert({
+      where: { id: IU },
+      update: { isEmailVerified: true, passwordChangedAt: null, banned: false },
+      create: { id: IU, username: `smoke_ip_${IU}`, email: `smoke_ip_${IU}@x.com`, passwordHash: 'x', fullName: 'Smoke Iptal', isEmailVerified: true },
+    })
+    const tok = jwt.sign({ userId: IU, email: `smoke_ip_${IU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    await prisma.booking.deleteMany({ where: { sessionId: IS } })
+
+    const rez = await http('/api/bookings', { method: 'POST', token: tok, body: { sessionId: IS } })
+    if (rez.status !== 201 && rez.status !== 200) throw new Error(`kurulum rezervasyonu başarısız: ${rez.status} ${rez.text.slice(0, 140)}`)
+    const bId = rez.json?.booking?.id
+    if (!bId) throw new Error('booking id alınamadı')
+
+    // Koltuk gerçekten doldu mu? (Sonraki iddia ancak bu doğruysa anlamlı.)
+    const doluyken = await expectOk(`/api/public/sessions/${IS}`)
+    if ((doluyken.json?.session?.spotsLeft ?? -1) !== 0) {
+      throw new Error(`kurulumda koltuk dolmadı: spotsLeft=${doluyken.json?.session?.spotsLeft}`)
+    }
+
+    const ipt = await http(`/api/bookings/${bId}/cancel`, { method: 'PUT', token: tok })
+    if (ipt.status !== 200) throw new Error(`<12 saat iptali REDDEDİLDİ: ${ipt.status} ${ipt.text.slice(0, 160)}`)
+    if (ipt.json?.refundType !== 'none') throw new Error(`iade tipi 'none' değil: ${ipt.json?.refundType}`)
+    if ((ipt.json?.refundAmount ?? -1) !== 0) throw new Error(`iade tutarı 0 değil: ${ipt.json?.refundAmount}`)
+
+    // ASIL İDDİA: koltuk serbest kaldı mı? Bekleme listesi ancak böyle işe yarar.
+    const sonra = await expectOk(`/api/public/sessions/${IS}`)
+    if ((sonra.json?.session?.spotsLeft ?? 0) !== 1) {
+      throw new Error(`iptalden sonra koltuk SERBEST KALMADI: spotsLeft=${sonra.json?.session?.spotsLeft}`)
+    }
+
+    await prisma.booking.deleteMany({ where: { sessionId: IS } })
   })
 
   await check('Eğitmen listesi: onaylı mekânsız hoca görünür, onay kaldırılınca DÜŞER', async () => {
