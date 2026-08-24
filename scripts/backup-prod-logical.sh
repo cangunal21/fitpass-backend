@@ -132,6 +132,27 @@ echo "    live-indexes.sql ($(wc -l < "$DIR/live-indexes.sql" | tr -d ' ') indek
   ORDER BY c.relname, a.attnum" > "$DIR/schema-1b-defaults.sql" 2>/dev/null || true
 echo "    schema-1b-defaults.sql ($(wc -l < "$DIR/schema-1b-defaults.sql" | tr -d ' ') default — prod'un GERCEK hali)"
 
+# CANLI CHECK KISITLARI: `prisma migrate diff` CHECK URETMEZ — Prisma bunlari modellemiyor.
+# BEDELI ODENDI (21-23 Agu 2026, 24 Agu'da teshis edildi): online ders isiyle prod'a iki CHECK
+# kondu (class_venueless_must_be_online, class_delivery_mode_valid). Uretilen 1089 satirlik
+# semada ikisi de YOK -> geri yuklenen kopyada eksik -> katalog karsilastirmasi tam 2 satir fark
+# gordu -> UC GUN BOYUNCA her yedek "DOGRULANAMADI" damgasi yiyip saklama suresiyle SILINDI.
+# Yani yedek aliniyordu ama kullanilabilir tek bir yedek KALMIYORDU.
+#
+# Ayni kor nokta CI'da da cikmisti ve orada src/utils/ensureIndexes.ts ile kapatilmisti; yedek
+# tarafi kapatilmamisti. KURAL: Prisma'nin modellemedigi HER prod DDL'i burada yakalanmali —
+# indeks ve default icin zaten yapiliyordu, CHECK eksikti.
+#
+# DROP IF EXISTS + ADD: bugun hedef DB Prisma semasindan kuruldugu icin cakisma olamaz, ama
+# Prisma ileride CHECK uretmeye baslarsa bu dosya yine idempotent kalir.
+"$PSQL" "$PROD_URL_GUVENLI" -tAc "
+  SELECT 'ALTER TABLE '||conrelid::regclass::text||' DROP CONSTRAINT IF EXISTS \"'||conname||'\";'
+       ||E'\n'||'ALTER TABLE '||conrelid::regclass::text||' ADD CONSTRAINT \"'||conname||'\" '||pg_get_constraintdef(oid)||';'
+  FROM pg_constraint
+  WHERE connamespace='public'::regnamespace AND contype='c'
+  ORDER BY conname" > "$DIR/schema-1c-checks.sql" 2>/dev/null || true
+echo "    schema-1c-checks.sql ($(grep -c 'ADD CONSTRAINT' "$DIR/schema-1c-checks.sql" 2>/dev/null || echo 0) CHECK — prisma bunlari uretmez)"
+
 # PROD KATALOG PARMAK IZI: dogrulama adiminda geri yuklenen DB ile SATIR SATIR karsilastirilir.
 # Ayrica insanin sonradan `diff` alabilecegi tek dosya budur.
 katalog_sql() {
@@ -258,7 +279,18 @@ psql "$TARGET" -v ON_ERROR_STOP=1 -f schema-2-fks.sql
 # 4) ID sayaclari (bu adim atlanirsa ilk yeni kayit "duplicate key" verir)
 psql "$TARGET" -v ON_ERROR_STOP=1 -f schema-3-sequences.sql
 
-# 5) kodla acilan ek indeksler — sunucu ilk acilista bunlari kendi olusturur
+# 5) prod'un GERCEK sutun default'lari
+#    Prisma'nin ISTEMCI TARAFINDA urettigi degerler (@default(uuid()) gibi) DB'ye DEFAULT olarak
+#    yazilmaz; prod'da migration'la konmus gercek default'lar olabilir. Bu adim atlanirsa sema
+#    sessizce eksik kalir (olculdu: 154 yerine 150 default'lu sutun).
+psql "$TARGET" -v ON_ERROR_STOP=1 -f schema-1b-defaults.sql
+
+# 6) CHECK kisitlari — PRISMA BUNLARI URETMEZ, bu dosya olmadan geri gelmezler
+#    Bedeli odendi: online ders isiyle konan iki CHECK uretilen semada olmadigi icin geri yuklenen
+#    kopyada eksik kaliyor ve dogrulama "SEMA FARKI: 2 satir" deyip dusuyordu.
+psql "$TARGET" -v ON_ERROR_STOP=1 -f schema-1c-checks.sql
+
+# 7) kodla acilan ek indeksler — sunucu ilk acilista bunlari kendi olusturur
 #    (ensureIndexes.ts). Elle istersen: psql "$TARGET" -f live-indexes.sql  (var olanlar hata verir, normal)
 ```
 
@@ -305,6 +337,10 @@ else
   "$PSQL" "$T" -q -v ON_ERROR_STOP=1 -f "$DIR/schema-3-sequences.sql" >/dev/null
   # Prod'un GERCEK default'lari (prisma semasinin uretemedikleri dahil)
   [[ -s "$DIR/schema-1b-defaults.sql" ]] && "$PSQL" "$T" -q -v ON_ERROR_STOP=1 -f "$DIR/schema-1b-defaults.sql" >/dev/null
+  # CHECK kisitlari FK'lardan SONRA: veri zaten yuklu, bir CHECK ihlali TAM BURADA patlar —
+  # FK'larla ayni mantik, yedegin saglamligi icin ek kanit. ON_ERROR_STOP ACIK: sessizce
+  # atlanirsa katalog karsilastirmasi yine fark gorur ve sebebi anlasilmaz.
+  [[ -s "$DIR/schema-1c-checks.sql" ]] && "$PSQL" "$T" -q -v ON_ERROR_STOP=1 -f "$DIR/schema-1c-checks.sql" >/dev/null
   # Kodla acilan indeksler (ensureIndexes.ts). Var olanlar "already exists" der; BEKLENEN durum bu,
   # o yuzden burada ON_ERROR_STOP kapali. RESTORE.md adim 5 de ayni seyi soyluyor.
   [[ -s "$DIR/live-indexes.sql" ]] && "$PSQL" "$T" -q -f "$DIR/live-indexes.sql" >/dev/null 2>&1
