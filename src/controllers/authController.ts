@@ -18,16 +18,24 @@ import { cityIdOfNeighborhood } from '../utils/geo'
 import { notifyFields, notifyPush, NotifyParams } from '../utils/notifyText'
 import { sendPushNotification } from '../utils/push'
 import { MIN_PASSWORD, clampStr, isValidEmail, parseIntSafe } from '../utils/validate'
+import { eksikZorunluOnaylar, onaylariKaydet } from '../utils/consent'
 
 // KAYIT OL
 export const register = async (req: Request, res: Response) => {
   try {
-    const { username, email, phone, password, fullName, referralCode, preferredSports, preferredNeighborhoods } = req.body
+    const { username, email, phone, password, fullName, referralCode, preferredSports, preferredNeighborhoods, onaylar } = req.body
     const cleanSports = Array.isArray(preferredSports) ? preferredSports.filter((s: any) => typeof s === 'string').slice(0, 20) : []
     const cleanNeighborhoods = Array.isArray(preferredNeighborhoods) ? preferredNeighborhoods.map((n: any) => parseInt(n)).filter((n: any) => !isNaN(n)).slice(0, 20) : []
 
     if (!username || !email || !password || !fullName) {
       return res.status(400).json({ error: 'Tüm zorunlu alanları doldurun.' })
+    }
+
+    // Sözleşme onayı HESAP AÇILMADAN ÖNCE doğrulanır. Sonra kontrol etmek, onaysız bir
+    // hesabın bir an için var olmasına izin vermek demektir.
+    const eksik = eksikZorunluOnaylar('user', onaylar)
+    if (eksik.length) {
+      return res.status(400).json({ error: 'Üyelik Sözleşmesi ve Gizlilik Politikası onaylanmadan kayıt tamamlanamaz.', eksikOnaylar: eksik })
     }
 
     if (!isValidEmail(email)) {
@@ -87,6 +95,9 @@ export const register = async (req: Request, res: Response) => {
         createdAt: true,
       }
     })
+
+    // Onay kaydı — hesap açıldıktan HEMEN sonra, ispat yükü bizde olduğu için.
+    await onaylariKaydet(req, 'user', user.id, onaylar)
 
     const token = generateToken({ userId: user.id, email: user.email })
 

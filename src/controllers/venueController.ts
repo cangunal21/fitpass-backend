@@ -16,6 +16,7 @@ import { invalidate } from '../utils/cache'
 import { issuePanelRefreshToken, revokeAllPanelRefreshTokens, rotatePanelAccessToken, revokePanelRefreshToken } from '../utils/panelRefreshToken'
 import { notifyFields, notifyPush } from '../utils/notifyText'
 import { Locale } from '../utils/locale'
+import { eksikZorunluOnaylar, onaylariKaydet } from '../utils/consent'
 const money = (x: number) => Math.round(x * 100) / 100 // bookingController ile aynı 2-ondalık yuvarlama
 
 // Bir seans/ders silinirken aktif rezervasyonları GÜVENLİ kaldırır:
@@ -152,10 +153,16 @@ async function notifyRemovedBookings(affected: { userId: number; status: string 
 // SALON KAYIT
 export const venueRegister = async (req: Request, res: Response) => {
   try {
-    const { name, email, password, phone, address, description, neighborhoodId, sportCategories, instructor } = req.body // cityId BİLEREK alınmıyor — mahalleden türetiliyor
+    const { name, email, password, phone, address, description, neighborhoodId, sportCategories, instructor, onaylar } = req.body // cityId BİLEREK alınmıyor — mahalleden türetiliyor
 
     if (!name || !email || !password || !phone || !address) {
       return res.status(400).json({ error: 'Ad, email, şifre, telefon ve adres zorunludur.' })
+    }
+
+    // Sözleşme onayı hesap açılmadan ÖNCE doğrulanır (bkz. utils/consent.ts).
+    const eksikOnay = eksikZorunluOnaylar('venue', onaylar)
+    if (eksikOnay.length) {
+      return res.status(400).json({ error: 'Salon Aracılık Sözleşmesi ve Gizlilik Politikası onaylanmadan kayıt tamamlanamaz.', eksikOnaylar: eksikOnay })
     }
 
     if (!isValidEmail(email)) {
@@ -205,6 +212,9 @@ export const venueRegister = async (req: Request, res: Response) => {
         createdAt: true,
       }
     })
+
+    // Onay kaydı — hesap açıldıktan HEMEN sonra, ispat yükü bizde olduğu için.
+    await onaylariKaydet(req, 'venue', venue.id, onaylar)
 
     if (sportCategories && Array.isArray(sportCategories)) {
       // SINIRLA: tekrarsız (Set) + string + en çok 30 kategori. Aksi halde ~14k elemanlık dizi 14k sıralı

@@ -88,6 +88,20 @@ let skip = 0
 const kismiAtlananlar: string[] = []
 const lines: string[] = []
 
+// Kayıt uçları artık sözleşme onayı istiyor (bkz. src/utils/consent.ts). Testlerin her biri
+// ayrı onay gövdesi taşımasın diye tek yerde duruyor: sürüm değişince tek satır güncellenir.
+const ONAY_UYE = { uyelik: true, gizlilik: true }
+
+// Kayıt akışı doğrulama kodu da üretiyor (EmailVerificationToken userId FK'sı) — kullanıcı
+// doğrudan silinemez. Bağlı satırlar önce temizlenmeli, aksi halde cleanup FK'ya takılıyor.
+const temizleOnayKullanicisi = async (userId: number) => {
+  await prisma.consentRecord.deleteMany({ where: { subjectType: 'user', subjectId: userId } })
+  await prisma.emailVerificationToken.deleteMany({ where: { userId } })
+  await prisma.refreshToken.deleteMany({ where: { userId } })
+  await prisma.notification.deleteMany({ where: { userId } })
+  await prisma.user.deleteMany({ where: { id: userId } })
+}
+
 async function check(name: string, fn: () => Promise<void>) {
   // İLERLEME İZİ: sonuçlar yalnız en sonda basıldığı için, koşu ortada takılırsa HANGİ kontrolde
   // takıldığı görünmüyordu (bu oturumda gerçekten yaşandı — teşhis için tahmin yürütmek gerekti).
@@ -580,7 +594,7 @@ async function run() {
   await check('Refresh token: yenileme + logout iptali', async () => {
     const uniq = Date.now()
     const em = `reftest${uniq}@x.com`
-    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `reftest${uniq}`, email: em, password: 'RefTest1234', fullName: 'Ref Test' } })
+    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `reftest${uniq}`, email: em, password: 'RefTest1234', fullName: 'Ref Test', onaylar: ONAY_UYE } })
     const rtok = reg.json?.refreshToken
     if (!rtok || !reg.json?.token) throw new Error('register refreshToken/token döndürmedi')
     const r1 = await http('/api/auth/refresh', { method: 'POST', body: { refreshToken: rtok } })
@@ -602,7 +616,7 @@ async function run() {
   await check('Ban: banlı kullanıcı getMe 403 + refresh 401', async () => {
     const uniq = Date.now() + 1
     const em = `bantest${uniq}@x.com`
-    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `bantest${uniq}`, email: em, password: 'BanTest1234', fullName: 'Ban Test' } })
+    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `bantest${uniq}`, email: em, password: 'BanTest1234', fullName: 'Ban Test', onaylar: ONAY_UYE } })
     const utok = reg.json?.token, rtok = reg.json?.refreshToken
     if (!utok || !rtok) throw new Error('register token/refreshToken yok')
     const tu = await prisma.user.findUnique({ where: { email: em }, select: { id: true } })
@@ -762,7 +776,7 @@ async function run() {
     const uniq = Date.now()
     const reg = async (tag: string, refCode?: string) => {
       const email = `ref_${tag}_${uniq}@x.com`
-      const r = await http('/api/auth/register', { method: 'POST', body: { username: `ref_${tag}_${uniq}`, email, password: 'RefTest1234', fullName: `Ref ${tag}`, ...(refCode ? { referralCode: refCode } : {}) } })
+      const r = await http('/api/auth/register', { method: 'POST', body: { username: `ref_${tag}_${uniq}`, email, password: 'RefTest1234', fullName: `Ref ${tag}`, ...(refCode ? { referralCode: refCode } : {}), onaylar: ONAY_UYE } })
       const u = await prisma.user.findUnique({ where: { email: email.toLowerCase() }, select: { id: true } }) // kod email'i küçük harfe normalize eder
       // Gerçek kayıt akışı → doğrulanmamış doğuyor. Bu testin konusu davet/puan zinciri;
       // doğrulama kapısının kendi testi ayrı.
@@ -922,7 +936,7 @@ async function run() {
   // ---- Girdi cap: aşırı uzun kullanıcı metni kırpılır (DB şişmesi/AI maliyeti önlenir) ----
   await check('Girdi cap: uzun fullName (register) + notes (booking) kırpılır', async () => {
     const uq = Date.now(); const email = `cap_${uq}@x.com`
-    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `cap_${uq}`, email, password: 'CapTest1234', fullName: 'A'.repeat(5000) } })
+    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `cap_${uq}`, email, password: 'CapTest1234', fullName: 'A'.repeat(5000), onaylar: ONAY_UYE } })
     if (!reg.json?.token) throw new Error(`register başarısız: ${reg.status}`)
     const u = await prisma.user.findUnique({ where: { email }, select: { id: true, fullName: true } })
     if (!u || (u.fullName?.length || 0) > 80) throw new Error(`fullName kırpılmadı: ${u?.fullName?.length} (<=80 bekleniyor)`)
@@ -1297,7 +1311,7 @@ async function run() {
   // ---- Şifre sıfırlama uçtan uca: token tek-kullanım + oturum iptal + hesap sızıntısı yok ----
   await check('Şifre sıfırlama: token tek-kullanım + refresh iptal + enumeration yok', async () => {
     const uq = Date.now(); const email = `pwd_${uq}@x.com`
-    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `pwd_${uq}`, email, password: 'OldPass1234', fullName: 'Pwd User' } })
+    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `pwd_${uq}`, email, password: 'OldPass1234', fullName: 'Pwd User', onaylar: ONAY_UYE } })
     if (!reg.json?.refreshToken) throw new Error('register refreshToken vermedi')
     const uid = (await prisma.user.findUnique({ where: { email }, select: { id: true } }))?.id
     await http('/api/auth/forgot-password', { method: 'POST', body: { email } })
@@ -1727,6 +1741,70 @@ async function run() {
     await prisma.venue.deleteMany({ where: { id: EV } }).catch(() => {})
   })
 
+  // ---- SÖZLEŞME / AÇIK RIZA ONAYI (KVKK ispat yükü) ----
+
+  await check('Onay kapısı: sözleşme onaylanmadan kayıt AÇILMAZ (hesap da oluşmaz)', async () => {
+    const uq = Date.now()
+    const email = `onaysiz_${uq}@x.com`
+    const r = await http('/api/auth/register', { method: 'POST', body: { username: `onaysiz${uq}`, email, password: 'OnayTest1234', fullName: 'Onaysiz' } })
+    if (r.status !== 400) throw new Error(`onaysız kayıt ${r.status} (400 bekleniyor)`)
+    if (!Array.isArray(r.json?.eksikOnaylar) || !r.json.eksikOnaylar.includes('uyelik')) {
+      throw new Error(`eksikOnaylar listesi dönmedi: ${r.text.slice(0, 140)}`)
+    }
+    // Kapı hesap açıldıktan SONRA çalışsaydı onaysız bir hesap bir an için var olurdu.
+    const kalinti = await prisma.user.findFirst({ where: { email } })
+    if (kalinti) throw new Error('onaysız istekte KULLANICI OLUŞMUŞ — kapı create sonrasına düşmüş')
+  })
+
+  await check('Onay kapısı: eksik tek onay bile yeterli değil (yalnız gizlilik verildi)', async () => {
+    const uq = Date.now() + 1
+    const r = await http('/api/auth/register', { method: 'POST', body: { username: `yarim${uq}`, email: `yarim_${uq}@x.com`, password: 'OnayTest1234', fullName: 'Yarim Onay', onaylar: { gizlilik: true } } })
+    if (r.status !== 400) throw new Error(`yarım onayla kayıt ${r.status} (400 bekleniyor)`)
+    if (!r.json?.eksikOnaylar?.includes('uyelik')) throw new Error('eksik olan uyelik bildirilmedi')
+  })
+
+  await check('Onay kaydı: sürümü SUNUCU yazar, istemcinin iddiası ayrı kolonda durur', async () => {
+    const uq = Date.now() + 2
+    const email = `onayli_${uq}@x.com`
+    const r = await http('/api/auth/register', { method: 'POST', body: {
+      username: `onayli${uq}`, email, password: 'OnayTest1234', fullName: 'Onayli Uye',
+      // İstemci BAYAT bir sürüm iddia ediyor: kayıt buna göre yapılmamalı.
+      onaylar: { uyelik: { granted: true, version: 'Taslak 1' }, gizlilik: true },
+    } })
+    if (r.status !== 201) throw new Error(`onaylı kayıt ${r.status}: ${r.text.slice(0, 140)}`)
+    const u = await prisma.user.findFirst({ where: { email }, select: { id: true } })
+    if (!u) throw new Error('kullanıcı oluşmadı')
+    const kayitlar = await prisma.consentRecord.findMany({ where: { subjectType: 'user', subjectId: u.id } })
+    const uyelik = kayitlar.find(k => k.docSlug === 'uyelik')
+    const gizlilik = kayitlar.find(k => k.docSlug === 'gizlilik')
+    if (!uyelik || !gizlilik) throw new Error(`onay kaydı eksik: ${kayitlar.map(k => k.docSlug).join(',')}`)
+    if (uyelik.docVersion === 'Taslak 1') throw new Error('SUNUCU İSTEMCİYE GÜVENDİ: docVersion istemcinin iddiası yazılmış')
+    if (uyelik.clientVersion !== 'Taslak 1') throw new Error(`istemci iddiası kaybedildi: ${uyelik.clientVersion}`)
+    if (!uyelik.consentedAt) throw new Error('consentedAt boş — zaman damgası olmadan ispat değeri yok')
+    // Üyenin görmediği sözleşmeler için kayıt DÜŞMEMELİ.
+    if (kayitlar.some(k => k.docSlug === 'salon-araciligi' || k.docSlug === 'egitmen-aydinlatma')) {
+      throw new Error('üye kaydında salon/eğitmen sözleşmesi onayı yazılmış')
+    }
+    await temizleOnayKullanicisi(u.id)
+  })
+
+  await check('Onay kaydı: verilmeyen isteğe bağlı rıza için satır YAZILMAZ', async () => {
+    const uq = Date.now() + 3
+    const email = `rizasiz_${uq}@x.com`
+    const r = await http('/api/auth/register', { method: 'POST', body: {
+      username: `rizasiz${uq}`, email, password: 'OnayTest1234', fullName: 'Rizasiz Uye',
+      onaylar: { uyelik: true, gizlilik: true, 'acik-riza-ticari-ileti': false },
+    } })
+    if (r.status !== 201) throw new Error(`kayıt ${r.status}: ${r.text.slice(0, 140)}`)
+    const u = await prisma.user.findFirst({ where: { email }, select: { id: true } })
+    if (!u) throw new Error('kullanıcı oluşmadı')
+    const ticari = await prisma.consentRecord.findFirst({ where: { subjectType: 'user', subjectId: u.id, docSlug: 'acik-riza-ticari-ileti' } })
+    // "Hayır" cevabı bir rıza kaydı DEĞİLDİR: granted=false satırı, sonradan "rıza vardı"
+    // diye okunabilecek bir kayıt üretir. Rıza yoksa satır da olmaz.
+    if (ticari) throw new Error('reddedilen açık rıza için kayıt yazılmış')
+    await temizleOnayKullanicisi(u.id)
+  })
+
   await check('Rekor seri: 3 gün üst üste check-in → getMe recordStreak 3', async () => {
     const RU = 990231
     await testPrisma.user.upsert({ where: { id: RU }, update: { recordStreak: 0 }, create: { id: RU, username: `rec_${RU}`, email: `rec_${RU}@x.com`, passwordHash: 'x', fullName: 'Rekor User', tierId: 1 } })
@@ -1972,13 +2050,13 @@ async function run() {
     const clean = async () => { const u = await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } }, select: { id: true } }); if (u) { await prisma.refreshToken.deleteMany({ where: { userId: u.id } }); await prisma.emailVerificationToken.deleteMany({ where: { userId: u.id } }); await prisma.user.delete({ where: { id: u.id } }).catch(() => {}) } }
     await clean()
     // 1) geçersiz username (boşluk + /) → 400
-    const bad = await http('/api/auth/register', { method: 'POST', body: { username: 'ali veli/x', email: 'valid_reg_x@x.com', password: 'Test1234', fullName: 'T' } })
+    const bad = await http('/api/auth/register', { method: 'POST', body: { username: 'ali veli/x', email: 'valid_reg_x@x.com', password: 'Test1234', fullName: 'T', onaylar: ONAY_UYE } })
     if (bad.status !== 400) throw new Error(`geçersiz username ${bad.status} (400 bekleniyor)`)
     // 2) karışık-case email ile kayıt (UsrCase01@X.CoM → usrcase01@x.com)
-    const reg = await http('/api/auth/register', { method: 'POST', body: { username: 'usrcase01', email: 'UsrCase01@X.CoM', password: 'Test1234', fullName: 'T' } })
+    const reg = await http('/api/auth/register', { method: 'POST', body: { username: 'usrcase01', email: 'UsrCase01@X.CoM', password: 'Test1234', fullName: 'T', onaylar: ONAY_UYE } })
     if (reg.status !== 201) throw new Error(`kayıt ${reg.status}: ${reg.text.slice(0, 120)}`)
     // 3) aynı email farklı case → çift hesap engeli 400
-    const dup = await http('/api/auth/register', { method: 'POST', body: { username: 'usrcase02', email: 'usrcase01@x.com', password: 'Test1234', fullName: 'T' } })
+    const dup = await http('/api/auth/register', { method: 'POST', body: { username: 'usrcase02', email: 'usrcase01@x.com', password: 'Test1234', fullName: 'T', onaylar: ONAY_UYE } })
     if (dup.status !== 400) throw new Error(`çift email (case) ${dup.status} (400 bekleniyor)`)
     // 4) FARKLI case ile giriş → başarılı
     const login = await http('/api/auth/login', { method: 'POST', body: { email: 'USRCASE01@x.com', password: 'Test1234' } })
@@ -2272,7 +2350,7 @@ async function run() {
 
   await check('Gamification: kayıtta tierId atanır (ilk booking pointRate 0 değil)', async () => {
     const email = `tiertest_${Date.now()}@x.com`
-    const r = await http('/api/auth/register', { method: 'POST', body: { fullName: 'Tier Test', username: `tiertest${Date.now()}`.slice(0, 20), email, password: 'GecerliSifre123' } })
+    const r = await http('/api/auth/register', { method: 'POST', body: { fullName: 'Tier Test', username: `tiertest${Date.now()}`.slice(0, 20), email, password: 'GecerliSifre123', onaylar: ONAY_UYE } })
     if (r.status !== 201 && r.status !== 200) throw new Error(`kayıt: ${r.status} ${r.text.slice(0,120)}`)
     const u = await prisma.user.findUnique({ where: { email }, select: { id: true, tierId: true } })
     if (u?.tierId !== 1) throw new Error(`kayıtta tierId ${u?.tierId} (1=Aday bekleniyor) → ilk booking pointRate 0 olurdu`)
@@ -3573,7 +3651,7 @@ async function run() {
   await check('Auth: kullanıcı parola değişimi DAĞITILMIŞ access token\'ı da geçersiz kılar', async () => {
     const uniq = Date.now()
     const em = `pwgate${uniq}@x.com`
-    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `pwgate${uniq}`, email: em, password: 'PwGate1234', fullName: 'Pw Gate' } })
+    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `pwgate${uniq}`, email: em, password: 'PwGate1234', fullName: 'Pw Gate', onaylar: ONAY_UYE } })
     const calinan = reg.json?.token
     if (!calinan) throw new Error(`kayıt token vermedi: ${reg.status}`)
     // Çalınan jeton şu an çalışıyor
@@ -3950,7 +4028,7 @@ async function run() {
   await check('Kayıt: e-posta doğrulama kodu — kod girilmeden yazma uçları kapalı, kod açar', async () => {
     const uniq = Date.now() + 11
     const em = `vc${uniq}@x.com`
-    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `vc${uniq}`, email: em, password: 'VcTest1234', fullName: 'Vc Test' } })
+    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `vc${uniq}`, email: em, password: 'VcTest1234', fullName: 'Vc Test', onaylar: ONAY_UYE } })
     if (reg.status !== 201) throw new Error(`kayıt: ${reg.status} ${reg.text.slice(0, 140)}`)
     const tok = reg.json?.token
     if (!tok) throw new Error('kayıt token vermedi')
@@ -4098,7 +4176,7 @@ async function run() {
   await check('Profil: avatar adresi doğrulanır (yalnız https + bilinen barındırıcı)', async () => {
     const uniq = Date.now()
     const em = `av${uniq}@x.com`
-    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `av${uniq}`, email: em, password: 'AvTest1234', fullName: 'Av Test' } })
+    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `av${uniq}`, email: em, password: 'AvTest1234', fullName: 'Av Test', onaylar: ONAY_UYE } })
     const tok = reg.json?.token
     if (!tok) throw new Error(`kayıt token vermedi: ${reg.status}`)
 
@@ -4129,7 +4207,7 @@ async function run() {
   await check('Şifre sıfırlama: hesap başına soğuma (kurbanın kutusu doldurulamaz)', async () => {
     const uniq = Date.now() + 3
     const em = `cool${uniq}@x.com`
-    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `cool${uniq}`, email: em, password: 'CoolTest1234', fullName: 'Cool Test' } })
+    const reg = await http('/api/auth/register', { method: 'POST', body: { username: `cool${uniq}`, email: em, password: 'CoolTest1234', fullName: 'Cool Test', onaylar: ONAY_UYE } })
     if (reg.status !== 201 && reg.status !== 200) throw new Error(`kayıt: ${reg.status}`)
     const uid = (await prisma.user.findUnique({ where: { email: em }, select: { id: true } }))!.id
     await prisma.passwordResetToken.deleteMany({ where: { userId: uid } })

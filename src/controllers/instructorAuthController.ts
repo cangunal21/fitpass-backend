@@ -7,6 +7,7 @@ import { isValidEmail, MIN_PASSWORD, clampStr } from '../utils/validate'
 import { sendInstructorPasswordResetEmail } from '../utils/email'
 import { invalidate } from '../utils/cache'
 import { issuePanelRefreshToken, revokeAllPanelRefreshTokens, rotatePanelAccessToken, revokePanelRefreshToken } from '../utils/panelRefreshToken'
+import { eksikZorunluOnaylar, onaylariKaydet } from '../utils/consent'
 
 // Eğitmen (instructor) auth realm — venue realm'inin aynası. GÜVENLİK: token payload'ı SADECE
 // {instructorId, email, role:'instructor'} taşır; venueId ASLA eklenmez → salon finans/check-in
@@ -197,9 +198,15 @@ export const instructorLogout = async (req: Request, res: Response) => {
 // POST /api/instructor/register
 export const instructorRegister = async (req: Request, res: Response) => {
   try {
-    const { email, password, fullName, specialty, bio, phone } = req.body
+    const { email, password, fullName, specialty, bio, phone, onaylar } = req.body
     if (!email || !password || !fullName) {
       return res.status(400).json({ error: 'Ad soyad, e-posta ve şifre zorunludur.' })
+    }
+
+    // Sözleşme onayı hesap açılmadan ÖNCE doğrulanır (bkz. utils/consent.ts).
+    const eksikOnay = eksikZorunluOnaylar('instructor', onaylar)
+    if (eksikOnay.length) {
+      return res.status(400).json({ error: 'Eğitmen Aydınlatma Metni ve Gizlilik Politikası onaylanmadan kayıt tamamlanamaz.', eksikOnaylar: eksikOnay })
     }
     if (!isValidEmail(email)) return res.status(400).json({ error: 'Geçerli bir e-posta girin.' })
     if (String(password).length < MIN_PASSWORD) {
@@ -240,6 +247,9 @@ export const instructorRegister = async (req: Request, res: Response) => {
       },
       select: { id: true, fullName: true, email: true, isApproved: true },
     })
+
+    // Onay kaydı — hesap açıldıktan HEMEN sonra, ispat yükü bizde olduğu için.
+    await onaylariKaydet(req, 'instructor', instructor.id, onaylar)
 
     // Bilerek TOKEN DÖNMÜYOR: kullanıcı kayıttan sonra giriş ekranına gider. Kayıt yanıtında
     // oturum açmak, e-posta doğrulaması olmayan bir realm'de hesabı doğrudan kullanılabilir

@@ -944,3 +944,36 @@ model RefreshToken {
   @@index([rotatedAt])
   @@index([family])
 }
+
+/// AÇIK RIZA / SÖZLEŞME ONAY KAYDI
+///
+/// NEDEN VAR: KVKK'da rızanın varlığını İSPAT YÜKÜ veri sorumlusundadır (m.3/1-a, m.5/1).
+/// Kayıt ekranlarında onay kutusu göstermek yeterli değil; kimin, ne zaman, HANGİ SÜRÜMÜ
+/// onayladığı saklanmalı. Metnin o günkü içeriği repodan geri getirilebilir
+/// (fitpass-web/src/lib/hukuk/belgeler.generated.ts commit'lidir), bu yüzden slug+sürüm yeterli.
+///
+/// User/Venue/Instructor'a FK VERİLMEDİ: üç ayrı özne tipi var ve Prisma'da tek kolondan
+/// üç tabloya FK verilemez. Hesap silinince kaydın kalması ZATEN İSTENEN davranıştır —
+/// rızanın verildiği anı ispatlayan kayıt, rızayı veren hesaptan bağımsız olarak yaşamalı
+/// (kimlikle bağı subjectId'dir; hesap silinince o id'ye karşılık gelen kişi kalmaz).
+model ConsentRecord {
+  id            Int       @id @default(autoincrement())
+  subjectType   String // 'user' | 'venue' | 'instructor'
+  subjectId     Int
+  docSlug       String // 'gizlilik', 'uyelik', 'acik-riza-ticari-ileti' …
+  docVersion    String // SUNUCUNUN bildiği sürüm — istemciye güvenilmez
+  /// İstemcinin gösterdiğini İDDİA ettiği sürüm. docVersion'dan farklıysa kullanıcı
+  /// bayat bir arayüzde başka bir metin görmüş demektir; sessiz kalmasın diye ayrı tutulur.
+  clientVersion String?
+  kind          String // 'sozlesme' (üyeliğin önkoşulu) | 'acik_riza' (isteğe bağlı)
+  granted       Boolean   @default(true)
+  consentedAt   DateTime  @default(now())
+  /// İspat için — IP ve cihaz bilgisi Gizlilik Politikası'nda beyan edilmiştir.
+  ipAddress     String?
+  userAgent     String?
+  /// Açık rıza geri alınabilir ve geri alma İLERİYE ETKİLİDİR: satır silinmez, damgalanır.
+  revokedAt     DateTime?
+
+  @@index([subjectType, subjectId])
+  @@index([docSlug])
+}
