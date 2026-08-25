@@ -80,8 +80,6 @@ async function run() {
   await hit('user weird', 'GET', '/api/public/users/..%2F..', 'none')
   await hit('search empty', 'GET', '/api/public/users-search?q=', 'none')
   await hit('search huge', 'GET', `/api/public/users-search?q=${HUGE}`, 'none')
-  await hit('coupon missing', 'POST', '/api/public/validate-coupon', 'none', {})
-  await hit('coupon bad venue', 'POST', '/api/public/validate-coupon', 'none', { code: 'X', venueId: 'abc' })
   await hit('complaint missing', 'POST', '/api/public/complaint', 'none', {})
   await hit('complaint bad email', 'POST', '/api/public/complaint', 'none', { name: 'a', email: 'notanemail', subject: 's', message: HUGE })
 

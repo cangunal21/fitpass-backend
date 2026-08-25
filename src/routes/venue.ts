@@ -13,8 +13,13 @@ import { createInstructor, getVenueInstructors, updateInstructor, deleteInstruct
 import { submitSubMerchant, refreshSubMerchantStatus } from '../controllers/submerchantController'
 import { getUploadSignature } from '../controllers/uploadController'
 import { venueAuthMiddleware, venueApprovedMiddleware, venueVerifiedMiddleware } from '../middlewares/venueAuth'
-import { createCoupon, getVenueCoupons, deleteCoupon } from '../controllers/couponController'
 import { getVenueStats, getVenueRevenue } from '../controllers/statsController'
+
+// KUPON KALDIRILDI (24 Ağu 2026, kullanıcı kararı) — salon artık kupon üretemez.
+// Gerekçe: kuponun fiyat değiştirmekten tek farkı HEDEFLEME idi ve istismarın tanımı da buydu
+// (salon kendi çevresine ~%100 indirim verip komisyon penceresini atlatabiliyordu). Model şemada
+// DURUYOR ama üretim ve kabul kapalı; ileride promosyon istenirse doğru şekli PLATFORMUN finanse
+// ettiği kupondur, salona bağlı olan değil.
 
 const router = Router()
 registerNumericParams(router)
@@ -59,11 +64,8 @@ router.put('/profile', venueAuthMiddleware, updateVenueProfile)
 router.put('/change-password', venueAuthMiddleware, changeVenuePassword)
 router.get('/stats', venueAuthMiddleware, getVenueStats)
 router.get('/revenue', venueAuthMiddleware, getVenueRevenue)
-router.get('/coupons', venueAuthMiddleware, getVenueCoupons)
 // Salonun KENDİ yorumları — public uçtan farkı: salon kendi ÖZEL yanıtını da görür.
 router.get('/reviews', venueAuthMiddleware, getMyVenueReviews)
-router.post('/coupons', venueAuthMiddleware, venueApprovedMiddleware, createCoupon)
-router.delete('/coupons/:id', venueAuthMiddleware, deleteCoupon)
 
 // Görsel yükleme imzası (bkz. controllers/uploadController.ts)
 router.post('/upload-signature', venueAuthMiddleware, getUploadSignature)

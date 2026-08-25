@@ -605,6 +605,10 @@ export const deleteAccount = async (req: Request, res: Response) => {
       // taciz eden, kurbani hesabini silmeye ikna ederek kaniti yok edebiliyordu.
       await tx.report.deleteMany({ where: { reportedUserId: userId } })
 
+      // MİRAS KOD (kupon sistemi 24 Ağu 2026'da kaldırıldı): yeni rezervasyonlarda couponId
+      // hiçbir zaman dolmuyor, bu blok yalnız KALDIRMA ÖNCESİ satırlar için çalışır. Tablo
+      // ve kolon bilerek DURUYOR (veri kaybı olmasın); blok silinirse eski satırların
+      // usedCount'u sonsuza dek yanık kalırdı.
       // KUPON HAKKI İADE — bu transaction referral sayacını ve referral puanını bilinçle geri alıyor
       // ama kuponu ATLIYORDU: hesap silinince booking'ler hard-delete ediliyor, kuponun yaktığı
       // usedCount ise kalıyordu. Salonun kampanya kotası kalıcı yanıyor ve booking satırı silindiği

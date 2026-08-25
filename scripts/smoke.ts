@@ -180,9 +180,8 @@ async function cleanup() {
   const testUserIds = [990021, 990022, 990023, 990024]
   // Yorumlar bookingId + venueId FK'sına bağlı → booking/venue silmeden ÖNCE temizlenmeli
   await prisma.review.deleteMany({ where: { OR: [{ reviewerUserId: { in: testUserIds } }, { reviewerUserId: U }, { venueId: V }, { venueId: 990011 }] } }).catch(() => {})
-  // Test kullanıcı booking'leri kupon/kategori silmeden ÖNCE (couponId/sportCategoryId FK)
+  // Test kullanıcı booking'leri kategori silmeden ÖNCE (sportCategoryId FK)
   await prisma.booking.deleteMany({ where: { userId: { in: testUserIds } } }).catch(() => {})
-  await prisma.coupon.deleteMany({ where: { venueId: V } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: { in: testUserIds } } }).catch(() => {})
   // Durum-yayılımı kategori testi kalıntıları (class önce, sonra kategori)
   await prisma.class.deleteMany({ where: { title: 'KatTest' } }).catch(() => {})
@@ -206,7 +205,6 @@ async function cleanup() {
   await prisma.venue.deleteMany({ where: { id: 990141 } }).catch(() => {})
   // Kupon kişi-başı limit testi kalıntısı (990151)
   await prisma.booking.deleteMany({ where: { session: { classId: 990151 } } }).catch(() => {})
-  await prisma.coupon.deleteMany({ where: { code: 'PERUSER1' } }).catch(() => {})
   await prisma.class_Session.deleteMany({ where: { id: { in: [990151, 990152] } } }).catch(() => {})
   await prisma.class.deleteMany({ where: { id: 990151 } }).catch(() => {})
   // For You distinct testi kalıntısı
@@ -238,10 +236,8 @@ async function cleanup() {
   // Ekonomik regresyon kalıntıları (9934x + test kupon kodları)
   const econVenues = [990340, 990341, 990342, 990343]
   const econUsers = [990340, 990342, 990343]
-  await prisma.coupon.deleteMany({ where: { code: { in: ['HALF50TEST', 'ORCL10'] } } }).catch(() => {})
   await prisma.rewardPoint.deleteMany({ where: { userId: { in: econUsers } } }).catch(() => {})
   await prisma.booking.deleteMany({ where: { OR: [{ userId: { in: econUsers } }, { session: { class: { venueId: { in: econVenues } } } }] } }).catch(() => {})
-  await prisma.coupon.deleteMany({ where: { venueId: { in: econVenues } } }).catch(() => {})
   await prisma.class_Session.deleteMany({ where: { class: { venueId: { in: econVenues } } } }).catch(() => {})
   await prisma.class.deleteMany({ where: { venueId: { in: econVenues } } }).catch(() => {})
   await prisma.user.deleteMany({ where: { id: { in: econUsers } } }).catch(() => {})
@@ -299,7 +295,6 @@ async function cleanup() {
   await prisma.venue.deleteMany({ where: { id: 990411 } }).catch(() => {})
   // Auth regresyon test venue kalıntıları (990013 other-venue, 990014 suspend)
   await prisma.venue.deleteMany({ where: { id: { in: [990013, 990014] } } }).catch(() => {})
-  await prisma.coupon.deleteMany({ where: { code: { startsWith: 'NEG' } } }).catch(() => {})
   // Kayıt/giriş case testi kalıntısı (usrcase01)
   {
     const u = await prisma.user.findFirst({ where: { email: { equals: 'usrcase01@x.com', mode: 'insensitive' } }, select: { id: true } }).catch(() => null)
@@ -697,24 +692,6 @@ async function run() {
   })
 
   // Para: iptal edilen rezervasyon kuponun usedCount hakkını YAKMAMALI (geri verilmeli)
-  await check('Para: iptalde kupon usedCount geri verilir', async () => {
-    const Z = 990023, uniq = Date.now() + 3
-    const code = `SMKCPN${uniq}`
-    const cpn = await prisma.coupon.create({ data: { venueId: V, code, discountType: 'percent', discountValue: 10, isActive: true } })
-    await testPrisma.user.upsert({ where: { id: Z }, update: {}, create: { id: Z, username: `cpn_${Z}`, email: `cpn_${Z}@x.com`, passwordHash: 'x', fullName: 'Coupon User' } })
-    const ztok = jwt.sign({ userId: Z, email: `cpn_${Z}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
-    const bk = await http('/api/bookings', { method: 'POST', token: ztok, body: { sessionId: S, couponCode: code } })
-    if (bk.status !== 201) throw new Error(`kuponlu rezervasyon başarısız: ${bk.status} ${bk.text.slice(0, 120)}`)
-    const c1 = await prisma.coupon.findUnique({ where: { code }, select: { usedCount: true } })
-    if (c1?.usedCount !== 1) throw new Error(`rezervasyon sonrası usedCount ${c1?.usedCount} (1 bekleniyor)`)
-    const cancel = await http(`/api/bookings/${bk.json?.booking?.id}/cancel`, { method: 'PUT', token: ztok })
-    if (cancel.status !== 200) throw new Error(`iptal başarısız: ${cancel.status} ${cancel.text.slice(0, 120)}`)
-    const c2 = await prisma.coupon.findUnique({ where: { code }, select: { usedCount: true } })
-    if (c2?.usedCount !== 0) throw new Error(`iptal sonrası usedCount ${c2?.usedCount} (0 bekleniyor — kupon hakkı yandı)`)
-    await prisma.booking.deleteMany({ where: { userId: Z } }).catch(() => {})
-    await prisma.coupon.deleteMany({ where: { id: cpn.id } }).catch(() => {})
-    await prisma.user.deleteMany({ where: { id: Z } }).catch(() => {})
-  })
 
   // Durum-yayılımı: kullanımdaki kategori silinemez (400, gerçek veri cascade-silinmez), boş silinir (200)
   await check('Durum: kullanımdaki kategori silinemez, boş silinir', async () => {
@@ -728,24 +705,6 @@ async function run() {
     const ok = await http(`/api/admin/categories/${cat.id}`, { method: 'DELETE', admin: true })
     if (ok.status !== 200) throw new Error(`boş kategori silinemedi: ${ok.status}`)
     await prisma.sportCategory.deleteMany({ where: { id: cat.id } }).catch(() => {})
-  })
-
-  // Durum-yayılımı: admin kupon silme, kuponu kullanan booking varken 500 vermez + couponId koparır
-  await check('Durum: admin kupon silme booking baglantisini koparir (500 yok)', async () => {
-    const W = 990024, uniq = Date.now() + 7
-    const code = `ADMCPN${uniq}`
-    const cpn = await prisma.coupon.create({ data: { venueId: V, code, discountType: 'percent', discountValue: 10, isActive: true } })
-    await testPrisma.user.upsert({ where: { id: W }, update: {}, create: { id: W, username: `adm_${W}`, email: `adm_${W}@x.com`, passwordHash: 'x', fullName: 'Adm' } })
-    const wtok = jwt.sign({ userId: W, email: `adm_${W}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
-    const bk = await http('/api/bookings', { method: 'POST', token: wtok, body: { sessionId: S, couponCode: code } })
-    if (bk.status !== 201) throw new Error(`kuponlu booking başarısız: ${bk.status}`)
-    const del = await http(`/api/admin/coupons/${cpn.id}`, { method: 'DELETE', admin: true })
-    if (del.status !== 200) throw new Error(`admin kupon silme: ${del.status} ${del.text.slice(0, 120)}`)
-    if (await prisma.coupon.findUnique({ where: { id: cpn.id } })) throw new Error('kupon silinmedi')
-    const b = await prisma.booking.findUnique({ where: { id: bk.json?.booking?.id }, select: { couponId: true } })
-    if (b?.couponId !== null) throw new Error('booking couponId koparılmadı (FK sızıntısı)')
-    await prisma.booking.deleteMany({ where: { userId: W } }).catch(() => {})
-    await prisma.user.deleteMany({ where: { id: W } }).catch(() => {})
   })
 
   // Salon hoca silme: sahiplik + FK-güvenli (dersin instructorId'si boşalır, hoca gider)
@@ -1666,31 +1625,17 @@ async function run() {
     const tok = jwt.sign({ userId: TU, email: `trf_${TU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
     const r = await http(`/api/bookings/${bk.id}/transfer`, { method: 'PUT', token: tok, body: { targetSessionId: sc.id } })
     if (r.status !== 200) throw new Error(`transfer başarısız: ${r.status} ${r.text.slice(0, 120)}`)
-    const after = await prisma.booking.findUnique({ where: { id: bk.id }, select: { pointsEarned: true, finalAmount: true } })
+    const after = await prisma.booking.findUnique({ where: { id: bk.id }, select: { pointsEarned: true, finalAmount: true, venuePayout: true } })
     if (after?.pointsEarned !== 1) throw new Error(`pointsEarned ${after?.pointsEarned} (1 bekleniyor — ucuz derse göre)`)
     if (after?.finalAmount !== 100) throw new Error(`finalAmount ${after?.finalAmount} (100 bekleniyor)`)
+    // venuePayout salonun HAK EDİŞİ — ödeme açıldığında parayı bu alan sürecek. Transfer finalAmount'ı
+    // yeni baza indirirken payout'u ESKİ bazda bırakırsa salona 2 katı tahakkuk eder ve hiçbir test görmez
+    // (bu invaryantı tutan tek test kupon temizliğinde silinmişti — 24 Ağu 2026'da buraya taşındı).
+    if (after?.venuePayout !== 100) throw new Error(`venuePayout ${after?.venuePayout} (100 bekleniyor — transfer payout'u YENİ baza göre yeniden yazmalı)`)
     const up = await prisma.user.findUnique({ where: { id: TU }, select: { rewardPoints: true } })
     if (up?.rewardPoints !== 2) throw new Error(`rewardPoints ${up?.rewardPoints} (2 bekleniyor — transfer kredilenmemiş puana DOKUNMAMALI)`)
   })
 
-  await check('Kupon: kişi başı limit ikinci kullanımı engeller (400)', async () => {
-    const cScat = await temelKategori()
-    await prisma.class.upsert({ where: { id: 990151 }, update: {}, create: { id: 990151, venueId: V, title: 'KuponDers', category: catName, sportCategoryId: cScat?.id ?? null, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
-    await prisma.class_Session.upsert({ where: { id: 990151 }, update: { startsAt: new Date(Date.now() + 2 * 86400000), status: 'open' }, create: { id: 990151, classId: 990151, startsAt: new Date(Date.now() + 2 * 86400000), endsAt: new Date(Date.now() + 2 * 86400000 + 3600000), capacity: 20, status: 'open' } })
-    // FARKLI GÜN ŞART: iki seans da AYNI derse bağlı ve startsAt ikisinde de `Date.now() + 2 gün`
-    // ile hesaplanıyordu. ensureIndexes (classId, startsAt) üzerinde TEKİLLİK index'i kuruyor;
-    // iki upsert aynı milisaniyede tamamlanırsa (CI'da yerel Postgres ile olağan) ikincisi
-    // "Unique constraint failed" ile düşüyordu — yerelde geçen, CI'da düşen bir KARARSIZLIK.
-    // Testin kendisi için zamanların aynı olması gerekmiyor; yalnız ikisi de gelecekte ve açık olmalı.
-    await prisma.class_Session.upsert({ where: { id: 990152 }, update: { startsAt: new Date(Date.now() + 3 * 86400000), status: 'open' }, create: { id: 990152, classId: 990151, startsAt: new Date(Date.now() + 3 * 86400000), endsAt: new Date(Date.now() + 3 * 86400000 + 3600000), capacity: 20, status: 'open' } })
-    await prisma.booking.deleteMany({ where: { session: { classId: 990151 } } })
-    await prisma.coupon.deleteMany({ where: { code: 'PERUSER1' } })
-    await prisma.coupon.create({ data: { venueId: V, code: 'PERUSER1', discountType: 'fixed', discountValue: 100, perUserLimit: 1, isActive: true } })
-    const b1 = await http('/api/bookings', { method: 'POST', token, body: { sessionId: 990151, couponCode: 'PERUSER1' } })
-    if (b1.status !== 201) throw new Error(`1. kullanım başarısız: ${b1.status} ${b1.text.slice(0, 120)}`)
-    const b2 = await http('/api/bookings', { method: 'POST', token, body: { sessionId: 990152, couponCode: 'PERUSER1' } })
-    if (b2.status !== 400) throw new Error(`2. kullanım engellenmeli (400), gelen: ${b2.status} ${b2.text.slice(0, 120)}`)
-  })
 
   await check('Salon istatistik: doluluk groupSize (koltuk) sayar, kayıt değil', async () => {
     const SV = 990181, SU = 990181
@@ -1740,44 +1685,6 @@ async function run() {
     await prisma.user.deleteMany({ where: { id: BU } }).catch(() => {})
   })
 
-  await check('Güvenlik: createCoupon negatif fixed indirim reddeder (400)', async () => {
-    const vtok = jwt.sign({ venueId: V, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
-    const r = await http('/api/venue/coupons', { method: 'POST', token: vtok, body: { code: `NEG${Date.now()}`, discountType: 'fixed', discountValue: -100 } })
-    if (r.status !== 400) throw new Error(`negatif fixed kupon ${r.status} (400 bekleniyor)`)
-  })
-
-  // #ECON-A: transfer YÜZDE kuponu mutlak indirime DONMAZ — yeni baza göre yeniden hesaplanır (salon eksik ödenmez)
-  await check('Ekonomik: transfer yüzde-kuponu yeni baza göre hesaplar (#A)', async () => {
-    const EV = 990340, CA = 990340, CB = 990341, SA = 990340, SB = 990341, EU = 990340
-    await prisma.venue.upsert({ where: { id: EV }, update: { isApproved: true, isActive: true }, create: { id: EV, name: 'EconV', email: `ev${EV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
-    await prisma.class.upsert({ where: { id: CA }, update: { basePrice: 200, isActive: true, venueId: EV }, create: { id: CA, venueId: EV, title: 'Pahalı', category: catName, basePrice: 200, durationMinutes: 60, capacity: 20, isActive: true } })
-    await prisma.class.upsert({ where: { id: CB }, update: { basePrice: 100, isActive: true, venueId: EV }, create: { id: CB, venueId: EV, title: 'Ucuz', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
-    const fut = new Date(Date.now() + 2 * 86400000)
-    await prisma.class_Session.upsert({ where: { id: SA }, update: { classId: CA, startsAt: fut, status: 'open', capacity: 20 }, create: { id: SA, classId: CA, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), capacity: 20, status: 'open' } })
-    await prisma.class_Session.upsert({ where: { id: SB }, update: { classId: CB, startsAt: fut, status: 'open', capacity: 20 }, create: { id: SB, classId: CB, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), capacity: 20, status: 'open' } })
-    await testPrisma.user.upsert({ where: { id: EU }, update: {}, create: { id: EU, username: `econ_${EU}`, email: `econ_${EU}@x.com`, passwordHash: 'x', fullName: 'Econ', tierId: 1 } })
-    await prisma.booking.deleteMany({ where: { userId: EU } })
-    await prisma.coupon.deleteMany({ where: { code: 'HALF50TEST' } })
-    await prisma.coupon.create({ data: { venueId: EV, code: 'HALF50TEST', discountType: 'percent', discountValue: 50, isActive: true } })
-    const euTok = jwt.sign({ userId: EU, email: `econ_${EU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
-    const bk = await http('/api/bookings', { method: 'POST', token: euTok, body: { sessionId: SA, couponCode: 'HALF50TEST' } })
-    if (bk.status !== 201) throw new Error(`booking: ${bk.status} ${bk.text.slice(0, 120)}`)
-    const bid = bk.json?.booking?.id
-    const b0 = await prisma.booking.findUnique({ where: { id: bid }, select: { finalAmount: true, venuePayout: true } })
-    if (b0?.finalAmount !== 100 || b0?.venuePayout !== 100) throw new Error(`kurulum final/payout 100 bekleniyor (${b0?.finalAmount}/${b0?.venuePayout})`)
-    const tr = await http(`/api/bookings/${bid}/transfer`, { method: 'PUT', token: euTok, body: { targetSessionId: SB } })
-    if (tr.status !== 200) throw new Error(`transfer: ${tr.status} ${tr.text.slice(0, 120)}`)
-    const b1 = await prisma.booking.findUnique({ where: { id: bid }, select: { finalAmount: true, venuePayout: true } })
-    if (b1?.venuePayout !== 50 || b1?.finalAmount !== 50) throw new Error(`transfer sonrası final/payout 50 olmalı (%50 yeni baz 100), geldi ${b1?.finalAmount}/${b1?.venuePayout} — eski bug 0/0`)
-    await prisma.booking.deleteMany({ where: { userId: EU } }).catch(() => {})
-    await prisma.rewardPoint.deleteMany({ where: { userId: EU } }).catch(() => {})
-    await prisma.coupon.deleteMany({ where: { code: 'HALF50TEST' } }).catch(() => {})
-    await prisma.class_Session.deleteMany({ where: { id: { in: [SA, SB] } } }).catch(() => {})
-    await prisma.class.deleteMany({ where: { id: { in: [CA, CB] } } }).catch(() => {})
-    await prisma.user.deleteMany({ where: { id: EU } }).catch(() => {})
-    await prisma.venue.deleteMany({ where: { id: EV } }).catch(() => {})
-  })
-
   // #ECON-C: ders/salon silmede puan geri-alma bakiyeyi NEGATİFE düşürmez (clamp)
   await check('Ekonomik: ders silmede puan geri-alma clamp\'li (#C)', async () => {
     const EV = 990342, CC = 990342, SC = 990342, EU = 990342
@@ -1818,26 +1725,6 @@ async function run() {
     await prisma.class.deleteMany({ where: { id: CD } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: EU } }).catch(() => {})
     await prisma.venue.deleteMany({ where: { id: EV } }).catch(() => {})
-  })
-
-  // #ECON-H: non-numeric percent discountValue reddedilir (NaN money kolonuna yazılmasın)
-  await check('Ekonomik: createCoupon non-numeric değeri reddeder (#H)', async () => {
-    const vtok = jwt.sign({ venueId: V, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
-    const r = await http('/api/venue/coupons', { method: 'POST', token: vtok, body: { code: `NAN${Date.now()}`, discountType: 'percent', discountValue: 'abc' } })
-    if (r.status !== 400) throw new Error(`non-numeric kupon ${r.status} (400 bekleniyor)`)
-  })
-
-  // #ECON-B: validateCoupon enumeration oracle vermez (yok/yanlış-salon aynı yanıt); geçerli indirimi döner
-  await check('Ekonomik: validateCoupon oracle vermez (#B)', async () => {
-    await prisma.coupon.deleteMany({ where: { code: 'ORCL10' } })
-    await prisma.coupon.create({ data: { venueId: V, code: 'ORCL10', discountType: 'percent', discountValue: 10, isActive: true } })
-    const notFound = await http('/api/public/validate-coupon', { method: 'POST', body: { code: 'YOKBOYLE_X', venueId: V } })
-    const wrongVenue = await http('/api/public/validate-coupon', { method: 'POST', body: { code: 'ORCL10', venueId: V + 99999 } })
-    if (notFound.status !== wrongVenue.status) throw new Error(`oracle: yok(${notFound.status}) ≠ yanlış-salon(${wrongVenue.status})`)
-    if (notFound.json?.valid !== false || wrongVenue.json?.valid !== false) throw new Error('geçersiz kupon valid:false dönmeli')
-    const ok = await http('/api/public/validate-coupon', { method: 'POST', body: { code: 'ORCL10', venueId: V } })
-    if (!ok.json?.valid || ok.json?.coupon?.discountValue !== 10) throw new Error(`geçerli kupon indirimi dönmedi: ${ok.text.slice(0, 120)}`)
-    await prisma.coupon.deleteMany({ where: { code: 'ORCL10' } }).catch(() => {})
   })
 
   await check('Rekor seri: 3 gün üst üste check-in → getMe recordStreak 3', async () => {
@@ -2669,35 +2556,6 @@ async function run() {
   })
 
   // ================== PARA MATEMATİĞİ REGRESYONLARI (denetim turu 14) ==================
-  await check('Para: fixed kupon discountAmount money()\'li — defter özdeşliği tutar', async () => {
-    const CV = 990801, CC = 990801, CS = 990801, CU = 990801
-    await prisma.venue.upsert({ where: { id: CV }, update: { isApproved: true, isActive: true }, create: { id: CV, name: 'CpV', email: `cpv${CV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
-    await prisma.class.upsert({ where: { id: CC }, update: {}, create: { id: CC, venueId: CV, title: 'CpD', category: catName, basePrice: 50, durationMinutes: 60, capacity: 20, isActive: true } })
-    const soon = new Date(Date.now() + 2 * 86400000)
-    await prisma.class_Session.upsert({ where: { id: CS }, update: { startsAt: soon }, create: { id: CS, classId: CC, startsAt: soon, endsAt: new Date(soon.getTime() + 3600000), capacity: 20, status: 'open' } })
-    await testPrisma.user.upsert({ where: { id: CU }, update: {}, create: { id: CU, username: `cp_${CU}`, email: `cp_${CU}@x.com`, passwordHash: 'x', fullName: 'Cp' } })
-    await prisma.booking.deleteMany({ where: { userId: CU } })
-    // Kuruş-altı fixed kupon oluşturmayı DENE → 2 ondalığa yuvarlanmalı (9.999 → 10.00)
-    await prisma.coupon.deleteMany({ where: { code: 'FIX999' } })
-    const vtok = jwt.sign({ venueId: CV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
-    const cr = await http('/api/venue/coupons', { method: 'POST', token: vtok, body: { code: 'FIX999', discountType: 'fixed', discountValue: 9.999 } })
-    if (cr.status !== 201) throw new Error(`kupon oluşturma: ${cr.status} ${cr.text.slice(0,120)}`)
-    const cpn = await prisma.coupon.findUnique({ where: { code: 'FIX999' }, select: { discountValue: true } })
-    if (Math.round((cpn!.discountValue) * 1000) % 10 !== 0) throw new Error(`fixed kupon 2 ondalığa yuvarlanmadı: ${cpn!.discountValue}`)
-    // Rezervasyonda defter özdeşliği: baseAmount = finalAmount + discountAmount (float tozu olmamalı)
-    const utok = jwt.sign({ userId: CU, email: `cp_${CU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
-    const bk = await http('/api/bookings', { method: 'POST', token: utok, body: { sessionId: CS, couponCode: 'FIX999' } })
-    if (bk.status !== 201) throw new Error(`rezervasyon: ${bk.status} ${bk.text.slice(0,120)}`)
-    const row = await prisma.booking.findFirst({ where: { userId: CU }, select: { baseAmount: true, finalAmount: true, discountAmount: true } })
-    const drift = Math.abs(row!.baseAmount - (row!.finalAmount + row!.discountAmount))
-    if (drift > 1e-9) throw new Error(`defter özdeşliği bozuk: baseAmount ${row!.baseAmount} != finalAmount ${row!.finalAmount} + discountAmount ${row!.discountAmount} (fark ${drift})`)
-    await prisma.booking.deleteMany({ where: { userId: CU } }).catch(() => {})
-    await prisma.coupon.deleteMany({ where: { code: 'FIX999' } }).catch(() => {})
-    await prisma.class_Session.deleteMany({ where: { id: CS } }).catch(() => {})
-    await prisma.class.deleteMany({ where: { id: CC } }).catch(() => {})
-    await prisma.venue.deleteMany({ where: { id: CV } }).catch(() => {})
-    await prisma.user.deleteMany({ where: { id: CU } }).catch(() => {})
-  })
 
   await check('Para: drop-in totalPrice money()\'li + sıfır/negatif fiyat reddedilir', async () => {
     const DV = 990802
@@ -4630,37 +4488,6 @@ async function run() {
 
   // Tur20 — DENETİM BULGUSU: seans/ders silinince kupon usedCount iade EDİLMİYORDU (iptal
   // yolunda ediliyor). maxUses'lı kampanya, hiç gerçekleşmemiş rezervasyonlar yüzünden tükeniyordu.
-  await check('Kupon: seans silinince kullanım hakkı İADE edilir (iptalle simetrik)', async () => {
-    const KV = 990491, KC = 990491, KS = 990491, KU = 990491
-    await prisma.booking.deleteMany({ where: { session: { classId: KC } } }).catch(() => {})
-    await prisma.class_Session.deleteMany({ where: { id: KS } }).catch(() => {})
-    await prisma.class.deleteMany({ where: { id: KC } }).catch(() => {})
-    await prisma.coupon.deleteMany({ where: { code: 'SILINEN10' } }).catch(() => {})
-    await prisma.venue.upsert({ where: { id: KV }, update: { isApproved: true, isActive: true, isSuspended: false }, create: { id: KV, name: 'KuponSalon', email: `ks${KV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
-    await prisma.class.upsert({ where: { id: KC }, update: { venueId: KV, isActive: true }, create: { id: KC, venueId: KV, title: 'KuponDers2', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
-    const fut = new Date(Date.now() + 2 * 86400000)
-    await prisma.class_Session.upsert({ where: { id: KS }, update: { classId: KC, startsAt: fut, status: 'open', capacity: 20 }, create: { id: KS, classId: KC, startsAt: fut, endsAt: new Date(fut.getTime() + 3600000), capacity: 20, status: 'open' } })
-    await testPrisma.user.upsert({ where: { id: KU }, update: {}, create: { id: KU, username: `kup_${KU}`, email: `kup_${KU}@x.com`, passwordHash: 'x', fullName: 'Kupon' } })
-    const cp = await prisma.coupon.create({ data: { venueId: KV, code: 'SILINEN10', discountType: 'fixed', discountValue: 10, maxUses: 10, isActive: true } })
-    const utok = jwt.sign({ userId: KU, email: `kup_${KU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
-
-    const bk = await http('/api/bookings', { method: 'POST', token: utok, body: { sessionId: KS, couponCode: 'SILINEN10' } })
-    if (bk.status !== 201) throw new Error(`kurulum booking: ${bk.status} ${bk.text.slice(0, 120)}`)
-    const c1 = await prisma.coupon.findUnique({ where: { id: cp.id }, select: { usedCount: true } })
-    if (c1?.usedCount !== 1) throw new Error(`kurulum: usedCount 1 olmalı, ${c1?.usedCount}`)
-
-    // Salon SEANSI SİLER → kupon hakkı geri gelmeli
-    const vtok = jwt.sign({ venueId: KV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
-    const del = await http(`/api/venue/classes/${KC}/sessions/${KS}`, { method: 'DELETE', token: vtok })
-    if (del.status !== 200) throw new Error(`seans silinemedi: ${del.status} ${del.text.slice(0, 120)}`)
-    const c2 = await prisma.coupon.findUnique({ where: { id: cp.id }, select: { usedCount: true } })
-    if (c2?.usedCount !== 0) throw new Error(`seans silinince kupon hakkı iade edilmedi: usedCount ${c2?.usedCount} (0 bekleniyor)`)
-
-    await prisma.coupon.deleteMany({ where: { code: 'SILINEN10' } }).catch(() => {})
-    await prisma.class.deleteMany({ where: { id: KC } }).catch(() => {})
-    await prisma.user.deleteMany({ where: { id: KU } }).catch(() => {})
-    await prisma.venue.deleteMany({ where: { id: KV } }).catch(() => {})
-  })
 
   // Tur20 — DENETİM BULGUSU: özel drop-in slotu HİÇ açılamıyordu. Sunucu görüntülemede ?code=,
   // katılımda privateCode bekliyor; hiçbir istemci göndermiyordu → salon özel slot üretebiliyor

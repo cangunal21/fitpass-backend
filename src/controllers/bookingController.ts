@@ -31,7 +31,7 @@ const money = (x: number) => Math.round(x * 100) / 100
 export const createBooking = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).userId
-    const { sessionId: rawSessionId, notes, groupSize: rawGroupSize, taggedUsernames, couponCode } = req.body
+    const { sessionId: rawSessionId, notes, groupSize: rawGroupSize, taggedUsernames } = req.body
     const sessionId = parseInt(rawSessionId)
     const groupSize = Math.max(1, Math.min(parseInt(rawGroupSize) || 1, 10))
     const rawTags: string[] = Array.isArray(taggedUsernames) ? taggedUsernames.slice(0, groupSize - 1) : []
@@ -58,8 +58,9 @@ export const createBooking = async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'Geçerli bir ders seansı gerekli.' })
     }
 
-    let coupon: { id: number; discountType: string; discountValue: number } | null = null
-    let couponDiscount = 0
+    // KUPON KALDIRILDI — indirim her zaman 0. `discountAmount` kolonu defter özdeşliği için
+    // (baseAmount = finalAmount + discountAmount) duruyor ve hep 0 yazılıyor.
+    const couponDiscount = 0
     let finalAmount = 0
     let booking: any
 
@@ -121,48 +122,18 @@ export const createBooking = async (req: Request, res: Response) => {
 
         const basePrice = (session.class?.basePrice || 0) * groupSize
 
-        if (couponCode) {
-          // KİLİT SIRASI: User → Coupon (kod tabanının tamamıyla aynı: User → Class_Session →
-          // Booking → Coupon). Eskiden burada önce Coupon kilitleniyordu; cancelBooking ise
-          // User'ı önce kilitliyor → aynı kullanıcı + aynı kupon üzerinde eşzamanlı
-          // rezervasyon+iptal döngüsel beklemeye (40P01 deadlock) giriyor, kurban istek
-          // "Sunucu hatası" alıyordu.
-          await tx.$executeRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`
-          // TRIM: mobil istemci kodu kırpıyor, web ve sunucu KIRPMIYORDU. Kopyala-yapıştırda sona
-          // eklenen tek boşluk "geçersiz kupon" demeye yetiyordu. Normalizasyon tek yerde.
-          const kuponKodu = String(couponCode).trim().toUpperCase()
-          await tx.$executeRaw`SELECT id FROM "Coupon" WHERE code = ${kuponKodu} FOR UPDATE`
-          const found = await tx.coupon.findUnique({ where: { code: kuponKodu } })
-
-          // ENUMERASYON/ORACLE ENGELİ — validateCoupon ile AYNI politika.
-          // Buradaki dört red eskiden DÖRT AYRI mesaj veriyordu ('Geçersiz kupon kodu.' /
-          // 'Bu kupon bu salona ait değil.' / 'Kupon süresi dolmuş.' / 'Kupon kullanım limiti dolmuş.').
-          // couponController'daki sertleştirme bu yüzden fiilen işlevsizdi: saldırgan aynı bilgiyi
-          // /api/bookings üzerinden alıyordu — üstelik couponLimiter (15/dk) YALNIZ
-          // /api/public/validate-coupon'a bağlı olduğu için hız sınırı da yoktu.
-          // ÖLÇÜLDÜ (17 Ağu 2026): 40 ardışık tahmin → validate-coupon'da 25'i limitlendi,
-          // /api/bookings'te 40/40 geçti. Başarısız tahmin tx'i geri aldığı için iz de bırakmıyordu.
-          const gecersiz = () => new BookingError('Geçersiz veya kullanılamaz kupon kodu.', 400)
-          if (!found || !found.isActive) throw gecersiz()
-          if (found.venueId !== session.class!.venueId) throw gecersiz()
-          if (found.expiresAt && found.expiresAt < new Date()) throw gecersiz()
-          if (found.maxUses && found.usedCount >= found.maxUses) throw gecersiz()
-          // Kişi başı limit: bu kullanıcının bu kuponu kaç aktif (iptal edilmemiş) rezervasyonda kullandığını say.
-          // Kupon satırı FOR UPDATE ile kilitli → eşzamanlı ikinci kullanım da bu kontrolde yakalanır.
-          // perUserLimit mesajı BİLİNÇLİ olarak bilgilendirici: bu dal ancak kullanıcı kuponu DAHA ÖNCE
-          // başarıyla kullandıysa çalışır — yani kodun varlığını zaten biliyor. Sızdırdığı yeni bilgi yok.
-          if (found.perUserLimit != null) {
-            const myUses = await tx.booking.count({ where: { couponId: found.id, userId, status: { not: 'cancelled' } } })
-            if (myUses >= found.perUserLimit) throw new BookingError('Bu kuponu daha fazla kullanamazsınız (kişi başı limit doldu).', 400)
-          }
-          coupon = found
-          // İKİ DAL DA money(): fixed dalı eskiden Math.min'i ham bırakıyordu → discountAmount kolonuna
-          // yuvarlanmamış float (49.995 gibi) yazılıp baseAmount = finalAmount + discountAmount defter
-          // özdeşliği 0.001 TL bozuluyordu. Artık her iki dal da 2 ondalığa yuvarlı.
-          couponDiscount = found.discountType === 'percent'
-            ? money(basePrice * (found.discountValue / 100))
-            : money(Math.min(found.discountValue, basePrice))
-        }
+        // KUPON KABULÜ KALDIRILDI (24 Ağu 2026, kullanıcı kararı). Gövdeden `couponCode` gelse
+        // bile HİÇBİR indirim uygulanmaz — sessizce yok sayılır, çünkü kupon üretimi de kapatıldı
+        // ve prod'da hiç kupon yok (yedekten doğrulandı: Coupon 0 satır).
+        //
+        // NEDEN: kuponun fiyat değiştirmekten tek farkı HEDEFLEME idi ve istismarın tanımı da
+        // buydu — salon kendi çevresine ~%100 indirim verip komisyon penceresini atlatabilirdi.
+        // Komisyon kademesi (1. ders %15 → 3.+ %2,5) geliri ilk rezervasyonlarda topladığı için
+        // "ilk ders indirimi" tam da o pencerenin üstüne oturuyordu.
+        //
+        // Model şemada DURUYOR (Booking.couponId, Coupon tablosu) — silmek FK'lere, iptal
+        // mantığına ve salon silme temizliğine dokunmak demekti, sıfır kazanç için gerçek risk.
+        // İleride promosyon istenirse doğru şekli PLATFORMUN finanse ettiği kupondur.
 
         const userWithTier = await tx.user.findUnique({
           where: { id: userId },
@@ -194,7 +165,6 @@ export const createBooking = async (req: Request, res: Response) => {
             finalAmount,
             venuePayout,
             pointsEarned,
-            couponId: coupon?.id || null,
             bookingNumber: `BK-${crypto.randomUUID()}`,
             // 6 bayt (12 hex): 4 bayt ~4.3 milyar idi ve @unique olduğu için çarpışma P2002
             // fırlatıp kullanıcıya "Sunucu hatası" (500) olarak dönüyordu. 6 bayt çarpışma
@@ -209,9 +179,6 @@ export const createBooking = async (req: Request, res: Response) => {
           },
         })
 
-        if (coupon) {
-          await tx.coupon.update({ where: { id: coupon.id }, data: { usedCount: { increment: 1 } } })
-        }
         // NOT: puan artik REZERVASYONDA kredilenmez — check-in'de (awardAttendanceOnCheckin) verilir.
         // pointsEarned yine kaydedilir (oran booking aninda kilitlenir), kredilenme derse gidince olur.
 

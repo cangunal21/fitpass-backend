@@ -280,7 +280,7 @@ export const deleteVenue = async (req: Request, res: Response) => {
       }
       await tx.instructor.deleteMany({ where: { venueId } })
       // Salon düzeyindeki kalan kayıtlar (bağımsız tablolar)
-      await tx.coupon.deleteMany({ where: { venueId } })
+      await tx.coupon.deleteMany({ where: { venueId } }) // miras tablo: yeni kupon üretilmiyor, eski satırlar FK'yı kilitlemesin
       await tx.review.deleteMany({ where: { venueId } })
       await tx.userBadge.deleteMany({ where: { venueId } })
       await tx.venuePayout.deleteMany({ where: { venueId } })
@@ -416,40 +416,7 @@ export const reviewVenueImages = async (req: Request, res: Response) => {
   }
 }
 
-// Tüm kuponlar (admin)
-export const getAllCoupons = async (req: Request, res: Response) => {
-  try {
-    const coupons = await prisma.coupon.findMany({
-      include: { venue: { select: { id: true, name: true } } },
-      orderBy: { createdAt: 'desc' },
-    })
-    return res.json({ coupons })
-  } catch (err) {
-    if (handlePrismaErr(err, res)) return
-    console.error(err)
-    return res.status(500).json({ error: 'Sunucu hatası.' })
-  }
-}
-
-// Kupon sil (admin) — bu kuponu kullanan booking'lerin couponId'sini önce boşalt
-// (yoksa FK ihlali → 500). Booking'in finansal kaydı (discountAmount/finalAmount) korunur.
-export const adminDeleteCoupon = async (req: Request, res: Response) => {
-  try {
-    const couponId = parseInt(req.params.id as string)
-    if (!couponId || isNaN(couponId)) return res.status(400).json({ error: 'Geçersiz kupon.' })
-    await prisma.$transaction(async (tx) => {
-      await tx.booking.updateMany({ where: { couponId }, data: { couponId: null } })
-      await tx.coupon.delete({ where: { id: couponId } })
-    })
-    return res.json({ message: 'Kupon silindi.' })
-  } catch (err) {
-    if (handlePrismaErr(err, res)) return
-    console.error(err)
-    return res.status(500).json({ error: 'Sunucu hatası.' })
-  }
-}
-
-// Tüm kategoriler (admin)
+// Tüm spor kategorileri (admin)
 export const getCategories = async (req: Request, res: Response) => {
   try {
     const categories = await prisma.sportCategory.findMany({ orderBy: { name: 'asc' } })

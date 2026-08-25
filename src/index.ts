@@ -149,15 +149,7 @@ const chatLimiter = rateLimit({
 })
 
 // Kupon doğrulama (auth'suz) — kod enumerasyonunu yavaşlat (kullanıcı/IP başına dakikada 15)
-const couponLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 15,
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: rlKey,
-  skip: skipRateLimit,
-  message: { error: 'Çok fazla kupon denemesi. Lütfen bir dakika bekleyin.' },
-})
+// couponLimiter KALDIRILDI — kupon uçları kapatıldı (24 Ağu 2026), sınırlayacak uç kalmadı.
 
 // Sosyal YAZMA (takip/takipten çık) — kurbanı bildirim/push seliyle boğma + Notification satır şişmesi engeli
 const socialWriteLimiter = rateLimit({
@@ -218,7 +210,6 @@ const sikayetLimiter = rateLimit({
   message: { error: 'Çok fazla şikayet gönderildi. Lütfen bir dakika bekleyin.' },
 })
 app.use('/api/public/complaint', sikayetLimiter)
-app.use('/api/public/validate-coupon', couponLimiter)
 app.use('/api/social/report', sikayetLimiter)   // bkz. sikayetLimiter — giriş kovasından ayrı
 app.use('/api/auth/resend-verification', authLimiter) // self-servis doğrulama-maili seli engeli
 // Kod deneme uçları: 6 hane = 1.000.000 olasılık. Kod başına 5 deneme sınırı var (utils/

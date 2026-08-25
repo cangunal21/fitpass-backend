@@ -35,7 +35,6 @@ PLATFORM BİLGİLERİ:
 - DERS EKLEMEK: Sadece salonlar ders ekleyebilir. Salon sahibiysen sipsakspor.com/salon-giris adresinden giriş yap, salon panelinden ders ekle. Kullanıcılar ders ekleyemez, sadece rezervasyon yapabilir.
 - Grup rezervasyonu: bir derse birden fazla kişiyle kaydolabilir, arkadaşlarını etiketleyebilirsin
 - Eğitmen profilleri: salonlardaki eğitmenlerin profillerini, uzmanlıklarını ve değerlendirmelerini görebilirsin
-- Kupon kodu: salonların verdiği kupon kodlarını rezervasyon sırasında girip indirim kazanabilirsin (yüzde veya sabit tutar indirimi olabilir)
 - Ders sonrası değerlendirme: dersin bittikten sonra otomatik olarak 5 üzerinden puan verme ve yorum yapma ekranı açılır, yorum opsiyoneldir
 - Mobil uygulamada (iOS/Android) ders öncesi 2 saat kala push bildirimi ve email hatırlatması gönderilir
 

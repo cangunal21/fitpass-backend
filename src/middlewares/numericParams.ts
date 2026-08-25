@@ -2,7 +2,7 @@ import { Router } from 'express'
 
 // Sayısal olması gereken route parametreleri (:id, :venueId, ...).
 // :username gibi string param'lar listede yok → etkilenmez.
-const NUMERIC = ['id', 'venueId', 'sessionId', 'slotId', 'classId', 'reviewId', 'reportId', 'couponId', 'instructorId', 'userId']
+const NUMERIC = ['id', 'venueId', 'sessionId', 'slotId', 'classId', 'reviewId', 'reportId', 'instructorId', 'userId']
 
 /**
  * Sayısal ID param'larını route controller'a girMEDEN önce doğrular.
