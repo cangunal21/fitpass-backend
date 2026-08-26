@@ -31,6 +31,13 @@ export const RIZA_BELGELERI = {
   // Salon ve eğitmen tarafı
   'salon-araciligi': { surum: 'Taslak 11', kind: 'sozlesme' as const, zorunlu: true },
   'egitmen-aydinlatma': { surum: 'Taslak 2', kind: 'sozlesme' as const, zorunlu: true },
+  // 18 YAŞ BEYANI — sözleşme onayından AYRI bir kalem.
+  // Gizlilik 11.4: "18 yaşınızı doldurduğunuza ilişkin beyanınız AYRI BİR ONAYLA alınır ve bu
+  // beyan tarih-saat bilgisiyle kayıt altında tutulur; Şipşakspor DOĞUM TARİHİ bilgisini bu
+  // amacın dışında toplamaz." Bu yüzden yaş/doğum tarihi kolonu YOK: taahhüt edilen şey veri
+  // toplamak değil, beyanı damgalamak. Aynı hüküm Üyelik m.3.1 ve Eğitmen Aydınlatma m.3(a)'da.
+  // Sözleşme onayıyla aynı kutuya konsaydı "ayrı onay" şartı karşılanmazdı.
+  'yas-beyani': { surum: 'v1', kind: 'beyan' as const, zorunlu: true },
   // İsteğe bağlı açık rızalar — verilmemesi üyeliği engellemez
   'acik-riza-ticari-ileti': { surum: 'Taslak 2', kind: 'acik_riza' as const, zorunlu: false },
 } as const
@@ -38,9 +45,10 @@ export const RIZA_BELGELERI = {
 export type RizaBelgesi = keyof typeof RIZA_BELGELERI
 
 export const zorunluBelgeler = (ozne: 'user' | 'venue' | 'instructor'): RizaBelgesi[] => {
+  // SALON tüzel kişidir: yaş beyanı istenmez. Üye ve eğitmen gerçek kişidir → beyan zorunlu.
   if (ozne === 'venue') return ['salon-araciligi', 'gizlilik']
-  if (ozne === 'instructor') return ['egitmen-aydinlatma', 'gizlilik']
-  return ['uyelik', 'gizlilik']
+  if (ozne === 'instructor') return ['egitmen-aydinlatma', 'gizlilik', 'yas-beyani']
+  return ['uyelik', 'gizlilik', 'yas-beyani']
 }
 
 /** İstemcinin gönderdiği onay gövdesi: { slug: { granted, version? } } */
@@ -59,6 +67,25 @@ const okuOnay = (g: OnayGovdesi | undefined, slug: string) => {
  */
 export function eksikZorunluOnaylar(ozne: 'user' | 'venue' | 'instructor', govde: OnayGovdesi | undefined): RizaBelgesi[] {
   return zorunluBelgeler(ozne).filter(slug => !okuOnay(govde, slug).granted)
+}
+
+/** Kullanıcıya dönecek hata metni — HANGİSİ eksikse onu söyler. */
+const BELGE_ADI: Record<RizaBelgesi, string> = {
+  uyelik: 'Üyelik Sözleşmesi',
+  gizlilik: 'Gizlilik Politikası',
+  'salon-araciligi': 'Salon Aracılık Sözleşmesi',
+  'egitmen-aydinlatma': 'Eğitmen Aydınlatma Metni',
+  'yas-beyani': '18 yaş beyanı',
+  'acik-riza-ticari-ileti': 'Ticari ileti izni',
+}
+
+export function eksikOnayMesaji(eksik: RizaBelgesi[]): string {
+  // Sabit metin ("Üyelik Sözleşmesi ve Gizlilik Politikası onaylanmadan…") eksik olan yaş
+  // beyanıyken kullanıcıyı YANLIŞ yere bakmaya gönderiyordu: zaten onayladığı sözleşmeyi
+  // tekrar onaylamaya çalışıyordu.
+  const adlar = eksik.map(e => BELGE_ADI[e] || e)
+  const liste = adlar.length > 1 ? `${adlar.slice(0, -1).join(', ')} ve ${adlar[adlar.length - 1]}` : adlar[0]
+  return `${liste} onaylanmadan kayıt tamamlanamaz.`
 }
 
 const istemciIzi = (req: Request) => ({

@@ -18,7 +18,7 @@ import { cityIdOfNeighborhood } from '../utils/geo'
 import { notifyFields, notifyPush, NotifyParams } from '../utils/notifyText'
 import { sendPushNotification } from '../utils/push'
 import { MIN_PASSWORD, clampStr, isValidEmail, parseIntSafe } from '../utils/validate'
-import { eksikZorunluOnaylar, onaylariKaydet } from '../utils/consent'
+import { eksikZorunluOnaylar, eksikOnayMesaji, onaylariKaydet } from '../utils/consent'
 import { finansalArsivle } from '../utils/finansalArsiv'
 
 // KAYIT OL
@@ -36,7 +36,7 @@ export const register = async (req: Request, res: Response) => {
     // hesabın bir an için var olmasına izin vermek demektir.
     const eksik = eksikZorunluOnaylar('user', onaylar)
     if (eksik.length) {
-      return res.status(400).json({ error: 'Üyelik Sözleşmesi ve Gizlilik Politikası onaylanmadan kayıt tamamlanamaz.', eksikOnaylar: eksik })
+      return res.status(400).json({ error: eksikOnayMesaji(eksik), eksikOnaylar: eksik })
     }
 
     if (!isValidEmail(email)) {

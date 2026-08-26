@@ -90,7 +90,7 @@ const lines: string[] = []
 
 // Kayıt uçları artık sözleşme onayı istiyor (bkz. src/utils/consent.ts). Testlerin her biri
 // ayrı onay gövdesi taşımasın diye tek yerde duruyor: sürüm değişince tek satır güncellenir.
-const ONAY_UYE = { uyelik: true, gizlilik: true }
+const ONAY_UYE = { uyelik: true, gizlilik: true, 'yas-beyani': true }
 
 // Kayıt akışı doğrulama kodu da üretiyor (EmailVerificationToken userId FK'sı) — kullanıcı
 // doğrudan silinemez. Bağlı satırlar önce temizlenmeli, aksi halde cleanup FK'ya takılıyor.
@@ -1913,13 +1913,58 @@ async function run() {
     if (!r.json?.eksikOnaylar?.includes('uyelik')) throw new Error('eksik olan uyelik bildirilmedi')
   })
 
+  await check('Yaş beyanı: sözleşme onaylansa DA beyan yoksa kayıt açılmaz (AYRI onay)', async () => {
+    const uq = Date.now() + 7
+    const email = `yassiz_${uq}@x.com`
+    // Sözleşmeler onaylı, yalnız yaş beyanı yok. Gizlilik 11.4 beyanın "AYRI BİR ONAYLA"
+    // alınmasını istiyor: sözleşme kutusuna gömülseydi bu istek karşılanmazdı ve bu test
+    // de geçemezdi.
+    const r = await http('/api/auth/register', { method: 'POST', body: {
+      username: `yassiz${uq}`, email, password: 'YasTest1234', fullName: 'Yassiz Uye',
+      onaylar: { uyelik: true, gizlilik: true },
+    } })
+    if (r.status !== 400) throw new Error(`yaş beyanı olmadan kayıt ${r.status} (400 bekleniyor)`)
+    if (!r.json?.eksikOnaylar?.includes('yas-beyani')) throw new Error(`eksik beyan bildirilmedi: ${r.text.slice(0, 140)}`)
+    // Mesaj EKSİK OLANI söylemeli: sabit "Üyelik Sözleşmesi ve Gizlilik Politikası" metni,
+    // kullanıcıyı zaten onayladığı sözleşmeyi tekrar onaylamaya çalışmaya gönderiyordu.
+    if (!/yaş beyanı/i.test(String(r.json?.error || ''))) throw new Error(`hata mesajı eksik olanı söylemiyor: ${r.json?.error}`)
+    if (await prisma.user.findFirst({ where: { email } })) throw new Error('yaş beyanı yokken KULLANICI OLUŞMUŞ')
+  })
+
+  await check('Yaş beyanı: DOĞUM TARİHİ toplanmadan, tarih-saat damgasıyla kaydedilir', async () => {
+    const uq = Date.now() + 8
+    const email = `yasli_${uq}@x.com`
+    const oncesi = new Date()
+    const r = await http('/api/auth/register', { method: 'POST', body: {
+      username: `yasli${uq}`, email, password: 'YasTest1234', fullName: 'Yasli Uye', onaylar: ONAY_UYE,
+    } })
+    if (r.status !== 201) throw new Error(`kayıt ${r.status}: ${r.text.slice(0, 140)}`)
+    const u = await prisma.user.findFirst({ where: { email }, select: { id: true } })
+    if (!u) throw new Error('kullanıcı oluşmadı')
+
+    const beyan = await prisma.consentRecord.findFirst({ where: { subjectType: 'user', subjectId: u.id, docSlug: 'yas-beyani' } })
+    if (!beyan) throw new Error('yaş beyanı KAYDEDİLMEDİ — Gizlilik 11.4 "tarih-saat bilgisiyle kayıt altında tutulur" diyor')
+    if (beyan.kind !== 'beyan') throw new Error(`beyan türü yanlış: ${beyan.kind}`)
+    if (!(beyan.consentedAt >= oncesi)) throw new Error('tarih-saat damgası yok/geçersiz')
+
+    // Metin AÇIKÇA "doğum tarihi bilgisini bu amacın dışında toplamaz" diyor: şemada
+    // doğum tarihi/yaş kolonu OLMAMALI. Kolon eklenirse metin yanlış beyan hâline gelir.
+    const kolonlar: { column_name: string }[] = await prisma.$queryRawUnsafe(
+      `SELECT column_name FROM information_schema.columns WHERE table_name = 'User'`
+    )
+    const yasakli = kolonlar.map(k => k.column_name).filter(c => /birth|dogum|doğum|age$|yas$/i.test(c))
+    if (yasakli.length) throw new Error(`User'da yaş/doğum kolonu var: ${yasakli.join(', ')} — metin "doğum tarihi toplanmaz" diyor`)
+
+    await temizleOnayKullanicisi(u.id)
+  })
+
   await check('Onay kaydı: sürümü SUNUCU yazar, istemcinin iddiası ayrı kolonda durur', async () => {
     const uq = Date.now() + 2
     const email = `onayli_${uq}@x.com`
     const r = await http('/api/auth/register', { method: 'POST', body: {
       username: `onayli${uq}`, email, password: 'OnayTest1234', fullName: 'Onayli Uye',
       // İstemci BAYAT bir sürüm iddia ediyor: kayıt buna göre yapılmamalı.
-      onaylar: { uyelik: { granted: true, version: 'Taslak 1' }, gizlilik: true },
+      onaylar: { uyelik: { granted: true, version: 'Taslak 1' }, gizlilik: true, 'yas-beyani': true },
     } })
     if (r.status !== 201) throw new Error(`onaylı kayıt ${r.status}: ${r.text.slice(0, 140)}`)
     const u = await prisma.user.findFirst({ where: { email }, select: { id: true } })
@@ -1943,7 +1988,7 @@ async function run() {
     const email = `rizasiz_${uq}@x.com`
     const r = await http('/api/auth/register', { method: 'POST', body: {
       username: `rizasiz${uq}`, email, password: 'OnayTest1234', fullName: 'Rizasiz Uye',
-      onaylar: { uyelik: true, gizlilik: true, 'acik-riza-ticari-ileti': false },
+      onaylar: { uyelik: true, gizlilik: true, 'yas-beyani': true, 'acik-riza-ticari-ileti': false },
     } })
     if (r.status !== 201) throw new Error(`kayıt ${r.status}: ${r.text.slice(0, 140)}`)
     const u = await prisma.user.findFirst({ where: { email }, select: { id: true } })

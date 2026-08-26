@@ -16,7 +16,7 @@ import { invalidate } from '../utils/cache'
 import { issuePanelRefreshToken, revokeAllPanelRefreshTokens, rotatePanelAccessToken, revokePanelRefreshToken } from '../utils/panelRefreshToken'
 import { notifyFields, notifyPush } from '../utils/notifyText'
 import { Locale } from '../utils/locale'
-import { eksikZorunluOnaylar, onaylariKaydet } from '../utils/consent'
+import { eksikZorunluOnaylar, eksikOnayMesaji, onaylariKaydet } from '../utils/consent'
 import { finansalArsivle } from '../utils/finansalArsiv'
 const money = (x: number) => Math.round(x * 100) / 100 // bookingController ile aynı 2-ondalık yuvarlama
 
@@ -176,7 +176,7 @@ export const venueRegister = async (req: Request, res: Response) => {
     // Sözleşme onayı hesap açılmadan ÖNCE doğrulanır (bkz. utils/consent.ts).
     const eksikOnay = eksikZorunluOnaylar('venue', onaylar)
     if (eksikOnay.length) {
-      return res.status(400).json({ error: 'Salon Aracılık Sözleşmesi ve Gizlilik Politikası onaylanmadan kayıt tamamlanamaz.', eksikOnaylar: eksikOnay })
+      return res.status(400).json({ error: eksikOnayMesaji(eksikOnay), eksikOnaylar: eksikOnay })
     }
 
     if (!isValidEmail(email)) {
