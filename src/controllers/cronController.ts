@@ -2,6 +2,8 @@ import { Request, Response } from 'express'
 import crypto from 'crypto'
 import prisma from '../utils/prisma'
 import { sendRemindersJob } from '../jobs/reminderJob'
+import { suresiDolanlariImhaEt } from '../utils/finansalArsiv'
+import { suresiDolanTrafigiImhaEt } from '../utils/trafikKaydi'
 
 // Kaynağa GÖMÜLÜ varsayılan YOK (adminAuth deseni) — commit'lenen 'cron-secret-2024' benzeri default,
 // NODE_ENV yanlış/eksik olan bir deploy'da bu side-effect'li ucu herkese açardı. Secret yoksa HER ortamda 503.
@@ -31,6 +33,29 @@ export const sendReminders = async (req: Request, res: Response) => {
     return res.json({ message: `${sent} hatirlatma gonderildi.`, sent })
   } catch (err) {
     console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+/**
+ * SAKLAMA SÜRESİ DOLAN KAYITLARI İMHA ET.
+ *
+ * Gizlilik Politikası hem finansal kayıtlar (10 yıl) hem trafik kayıtları (1-2 yıl) için
+ * "süre sonunda imha edilir" diyor. Süresiz saklamak, saklamamak kadar açık bir ihlaldir:
+ * metin bir süre taahhüt ediyorsa o sürenin dolduğu an bir şey OLMALI.
+ */
+export const imhaEt = async (req: Request, res: Response) => {
+  try {
+    if (!CRON_CONFIGURED) return res.status(503).json({ error: 'Cron yapılandırılmamış.' })
+    const secret = req.headers['x-cron-secret']
+    if (typeof secret !== 'string' || !safeEqual(secret, CRON_SECRET)) {
+      return res.status(401).json({ error: 'Yetkisiz.' })
+    }
+    const finansal = await suresiDolanlariImhaEt()
+    const trafik = await suresiDolanTrafigiImhaEt()
+    return res.json({ message: 'İmha tamamlandı.', finansal, trafik })
+  } catch (err) {
+    console.error('imhaEt error:', err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }

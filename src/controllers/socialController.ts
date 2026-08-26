@@ -7,6 +7,7 @@ import { seasonInfo } from '../utils/season'
 import { parseIntSafe } from '../utils/validate'
 import { notifyFields, notifyPush, notifyText } from '../utils/notifyText'
 import { Locale } from '../utils/locale'
+import { trafikKaydet } from '../utils/trafikKaydi'
 
 // Liderlik/sıralama sorgu paramlarını NORMALIZE et. Aksi halde doğrulanmamış ?branch=<rastgele> her istekte
 // YENİ cache anahtarı üretip 45sn cache'i baypas ediyor + tüm-kullanıcı taramasını tetikliyordu (DoS + bellek).
@@ -891,6 +892,8 @@ export const addActivityComment = async (req: Request, res: Response) => {
     } catch (notifyErr) {
       console.error('comment notify error:', notifyErr)
     }
+
+    trafikKaydet(req, 'icerik_yayin', { ozne: 'user', ozneId: (req as any).userId, icerikTuru: 'activity_comment', icerikId: comment?.id ?? null })
 
     return res.status(201).json({ comment })
   } catch (err) {

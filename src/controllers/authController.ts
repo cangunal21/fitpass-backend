@@ -20,6 +20,7 @@ import { sendPushNotification } from '../utils/push'
 import { MIN_PASSWORD, clampStr, isValidEmail, parseIntSafe } from '../utils/validate'
 import { eksikZorunluOnaylar, eksikOnayMesaji, onaylariKaydet } from '../utils/consent'
 import { finansalArsivle } from '../utils/finansalArsiv'
+import { trafikKaydet, trafikAnonimlestir } from '../utils/trafikKaydi'
 
 // KAYIT OL
 export const register = async (req: Request, res: Response) => {
@@ -99,6 +100,7 @@ export const register = async (req: Request, res: Response) => {
 
     // Onay kaydı — hesap açıldıktan HEMEN sonra, ispat yükü bizde olduğu için.
     await onaylariKaydet(req, 'user', user.id, onaylar)
+    trafikKaydet(req, 'kayit', { ozne: 'user', ozneId: user.id })
 
     const token = generateToken({ userId: user.id, email: user.email })
 
@@ -187,6 +189,7 @@ export const login = async (req: Request, res: Response) => {
 
     const token = generateToken({ userId: user.id, email: user.email })
     const refreshToken = await issueRefreshToken(user.id)
+    trafikKaydet(req, 'giris', { ozne: 'user', ozneId: user.id })
 
     return res.json({
       message: 'Giriş başarılı!',
@@ -658,6 +661,9 @@ export const deleteAccount = async (req: Request, res: Response) => {
       // Booking'leri sil, sahip olunan salonların owner bağını boşalt, en son kullanıcıyı sil
       await tx.booking.deleteMany({ where: { userId } })
       await tx.venue.updateMany({ where: { ownerUserId: userId }, data: { ownerUserId: null } })
+      // 5651 trafik kaydı SİLİNMEZ, ANONİMLEŞTİRİLİR (Gizlilik 11.3). Kullanıcı satırından
+      // ÖNCE yapılır: sonra yapılsaydı FK olmadığı için çalışırdı ama sıra niyeti gizlerdi.
+      await trafikAnonimlestir(tx as any, 'user', userId)
       await tx.user.delete({ where: { id: userId } })
     })
 

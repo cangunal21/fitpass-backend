@@ -1025,3 +1025,38 @@ model FinansalKayit {
   @@index([purgeAfter])
   @@index([venueId])
 }
+
+/// 5651 TRAFİK KAYDI — yer sağlayıcı yükümlülüğü.
+///
+/// Gizlilik Politikası Bölüm 7: "5651 sayılı Kanun ve ilgili mevzuat uyarınca yer sağlayıcı
+/// sıfatıyla tutulan trafik kayıtları, Kanun'da öngörülen süre (bir yıldan az, iki yıldan fazla
+/// olmamak üzere) boyunca saklanır ve süre sonunda imha edilir."
+/// Metin bunu beyan ediyordu ama şemada IP tutan TEK BİR KOLON yoktu.
+///
+/// KAPSAM — her HTTP isteği DEĞİL: yer sağlayıcı trafik bilgisi, yayımlanan içeriği kimin ne
+/// zaman nereden yayımladığını gösteren kayıttır. Her istek loglansaydı hem devasa hem de
+/// veri asgariliğine aykırı olurdu; hiçbiri loglanmazsa yükümlülük karşılanmaz. Kaydedilen:
+/// içerik yayımlama (yorum, akış yorumu, şikâyet) + kimlik olayları (kayıt, giriş).
+///
+/// ActivityLog BU DEĞİLDİR: o bir sosyal akış tablosudur, IP tutmaz ve kullanıcı silinince gider.
+model TrafikKaydi {
+  id          Int      @id @default(autoincrement())
+  /// 'icerik_yayin' | 'kayit' | 'giris'
+  eventType   String
+  /// 'user' | 'venue' | 'instructor'. Hesap silinince subjectId NULL'lanır (anonimleştirme):
+  /// satır KALIR — Gizlilik 11.3 "trafik kayıtları silinmez, kimlik bağlantısı koparılır" diyor.
+  subjectType String?
+  subjectId   Int?
+  /// Yayımlanan içeriğin türü ve kimliği ('review', 'activity_comment', 'complaint'…)
+  contentType String?
+  contentId   Int?
+  ipAddress   String?
+  userAgent   String?
+  occurredAt  DateTime @default(now())
+  /// Süre sonunda imha — metin "süre sonunda imha edilir" diyor, süresiz saklamak ihlaldir.
+  purgeAfter  DateTime
+
+  @@index([purgeAfter])
+  @@index([subjectType, subjectId])
+  @@index([contentType, contentId])
+}

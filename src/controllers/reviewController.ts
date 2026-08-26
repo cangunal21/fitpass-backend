@@ -5,6 +5,7 @@ import { clampStr, parseIntSafe } from '../utils/validate'
 import { sanitizeReview, hidePrivateReply } from '../utils/reviews'
 // API SÖZLEŞMESİ — üç repoda birebir aynı dosya (bkz. scripts/tip-damgasi.cjs).
 import type { VenueReviewsResponse, ApiError } from '../types/api'
+import { trafikKaydet } from '../utils/trafikKaydi'
 
 // Yorum/puan ekle (auth required)
 // YENİ MODEL: Bir katılımdan İKİ satır — salon (targetType='venue') + hoca (targetType='instructor').
@@ -118,6 +119,9 @@ export const createReview = async (req: Request, res: Response) => {
       }
       return { venueReview, instructorReview }
     })
+
+    // 5651 yer sağlayıcı trafik kaydı — yayımlanan içeriği kimin nereden yayımladığı.
+    trafikKaydet(req, 'icerik_yayin', { ozne: 'user', ozneId: (req as any).userId, icerikTuru: 'review', icerikId: result.venueReview?.id ?? null })
 
     return res.status(201).json({ message: 'Puanınız kaydedildi!', ...result })
   } catch (err: any) {

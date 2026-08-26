@@ -1758,6 +1758,82 @@ async function run() {
     if (c?.email !== 'h@x.com') throw new Error(`e-postasız salon satıcı sayıldı: ${JSON.stringify(c)}`)
   })
 
+  // ---- 5651 TRAFİK KAYDI (Gizlilik Politikası Bölüm 7) ----
+
+  await check('Trafik kaydı: yayımlanan içerik IP ve zamanla kayda geçer', async () => {
+    const uq = Date.now() + 11
+    await prisma.trafikKaydi.deleteMany({ where: { contentType: 'complaint' } }).catch(() => {})
+    const konu = `SmokeSikayet5651-${uq}`
+    const r = await http('/api/public/complaint', { method: 'POST', body: { name: 'Trafik Test', email: `tr_${uq}@x.com`, subject: konu, message: 'Trafik kaydı testi mesajıdır.' } })
+    if (r.status !== 200) throw new Error(`şikâyet ${r.status}: ${r.text.slice(0, 140)}`)
+
+    // Ateşle-unut: kaydın düşmesi için kısa bir pencere.
+    let kayit = null
+    for (let i = 0; i < 20 && !kayit; i++) {
+      kayit = await prisma.trafikKaydi.findFirst({ where: { contentType: 'complaint' }, orderBy: { id: 'desc' } })
+      if (!kayit) await new Promise(r2 => setTimeout(r2, 100))
+    }
+    if (!kayit) throw new Error('içerik yayımlandı ama TRAFİK KAYDI yazılmadı — metin 5651 kaydı tuttuğumuzu beyan ediyor')
+    if (kayit.eventType !== 'icerik_yayin') throw new Error(`olay türü yanlış: ${kayit.eventType}`)
+    if (!kayit.ipAddress) throw new Error('IP yok — 5651 kaydının işe yarayan tek yanı bu')
+    // Süresiz saklanmamalı: 5651 "bir yıldan az, iki yıldan fazla olmamak üzere" diyor.
+    const yil = kayit.purgeAfter.getFullYear() - kayit.occurredAt.getFullYear()
+    if (yil < 1 || yil > 2) throw new Error(`saklama ${yil} yıl — 5651 aralığı 1-2 yıl`)
+
+    await prisma.trafikKaydi.deleteMany({ where: { contentType: 'complaint' } }).catch(() => {})
+    await prisma.complaint.deleteMany({ where: { subject: konu } }).catch(() => {})
+  })
+
+  await check('Trafik kaydı: hesap silinince SİLİNMEZ, ANONİMLEŞTİRİLİR', async () => {
+    const uq = Date.now() + 12
+    const email = `trsil_${uq}@x.com`
+    const sifre = 'TrafikSil1234'
+    const reg = await http('/api/auth/register', { method: 'POST', body: {
+      username: `trsil${uq}`, email, password: sifre, fullName: 'Trafik Sil', onaylar: ONAY_UYE,
+    } })
+    if (reg.status !== 201) throw new Error(`kayıt ${reg.status}: ${reg.text.slice(0, 140)}`)
+    const u = await prisma.user.findFirst({ where: { email }, select: { id: true } })
+    if (!u) throw new Error('kullanıcı oluşmadı')
+
+    let kayitlar = 0
+    for (let i = 0; i < 20 && kayitlar === 0; i++) {
+      kayitlar = await prisma.trafikKaydi.count({ where: { subjectType: 'user', subjectId: u.id } })
+      if (kayitlar === 0) await new Promise(r2 => setTimeout(r2, 100))
+    }
+    if (kayitlar === 0) throw new Error('kayıt olayı trafik kaydına yazılmadı')
+
+    const tok = jwt.sign({ userId: u.id, email }, JWT_SECRET, { expiresIn: '1h' })
+    const d = await http('/api/auth/account', { method: 'DELETE', token: tok, body: { password: sifre } })
+    if (d.status !== 200) throw new Error(`hesap silme ${d.status}: ${d.text.slice(0, 160)}`)
+
+    // Kimlik bağlantısı KOPARILMIŞ olmalı...
+    if (await prisma.trafikKaydi.count({ where: { subjectType: 'user', subjectId: u.id } })) {
+      throw new Error('hesap silindi ama trafik kaydı hâlâ kullanıcıya BAĞLI — silme talebi karşılanmadı')
+    }
+    // ...ama satır KALMALI. Silmek 5651 yükümlülüğünü ihlal ederdi.
+    const anonim = await prisma.trafikKaydi.findFirst({ where: { eventType: 'kayit', subjectId: null }, orderBy: { id: 'desc' } })
+    if (!anonim) throw new Error('trafik kaydı SİLİNMİŞ — Gizlilik 11.3 "silinmez, anonimleştirilir" diyor')
+    if (!anonim.ipAddress) throw new Error('anonimleştirme IP\'yi de silmiş — kayıt işe yaramaz hâle gelir')
+
+    await prisma.trafikKaydi.deleteMany({ where: { subjectId: null, eventType: 'kayit' } }).catch(() => {})
+  })
+
+  await check('İmha: süresi dolan finansal ve trafik kayıtları silinir', async () => {
+    const gecmis = new Date(Date.now() - 86400000)
+    await prisma.trafikKaydi.create({ data: { eventType: 'giris', ipAddress: '1.2.3.4', occurredAt: gecmis, purgeAfter: gecmis } })
+    await prisma.finansalKayit.create({ data: { bookingNumber: 'IMHA-TEST', occurredAt: gecmis, baseAmount: 1, commissionAmount: 0, userCommission: 0, venueCommission: 0, finalAmount: 1, venuePayout: 1, groupSize: 1, reason: 'hesap_silindi', purgeAfter: gecmis } })
+
+    const r = await fetch(BASE + '/api/cron/imha', { method: 'POST', headers: { 'x-cron-secret': CRON_SECRET } })
+    if (r.status !== 200) throw new Error(`imha ucu ${r.status}: ${(await r.text()).slice(0, 140)}`)
+    // Metin "süre sonunda imha edilir" diyor: süresiz saklamak da vaadin ihlalidir.
+    if (await prisma.finansalKayit.findFirst({ where: { bookingNumber: 'IMHA-TEST' } })) {
+      throw new Error('süresi dolan FİNANSAL kayıt imha edilmedi')
+    }
+    if (await prisma.trafikKaydi.findFirst({ where: { purgeAfter: { lte: new Date() } } })) {
+      throw new Error('süresi dolan TRAFİK kaydı imha edilmedi')
+    }
+  })
+
   // ---- FİNANSAL KAYIT ARŞİVİ (Gizlilik Politikası 11.3) ----
 
   await check('Arşiv: hesap silmede finansal kayıt ANONİMLEŞTİRİLEREK saklanır', async () => {
