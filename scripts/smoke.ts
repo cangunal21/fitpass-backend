@@ -1758,6 +1758,108 @@ async function run() {
     if (c?.email !== 'h@x.com') throw new Error(`e-postasız salon satıcı sayıldı: ${JSON.stringify(c)}`)
   })
 
+  // ---- SATICI İZLEME: hareket günlüğü + geri dönüş oranı + platform analitiği ----
+
+  await check('Hareket günlüğü: seans iptali KAYDA GEÇER (kaç kişi, kaç saat kala)', async () => {
+    const HV = 990701, HU = 990701
+    await prisma.venueOlay.deleteMany({ where: { venueId: HV } }).catch(() => {})
+    await prisma.venue.upsert({ where: { id: HV }, update: { isApproved: true, isActive: true }, create: { id: HV, name: 'Hareket Salon', email: `hv${HV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: HV }, update: {}, create: { id: HV, venueId: HV, title: 'HareketDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 10, isActive: true } })
+    // 6 saat sonrası: "son anda iptal" ölçülebilmeli
+    const yakin = new Date(Date.now() + 6 * 3600000)
+    await prisma.class_Session.upsert({ where: { id: HV }, update: { startsAt: yakin }, create: { id: HV, classId: HV, startsAt: yakin, endsAt: new Date(yakin.getTime() + 3600000), capacity: 10, status: 'open' } })
+    await testPrisma.user.upsert({ where: { id: HU }, update: {}, create: { id: HU, username: `hv_${HU}`, email: `hv_${HU}@x.com`, passwordHash: 'x', fullName: 'Hareket Uye' } })
+    await prisma.booking.deleteMany({ where: { sessionId: HV } })
+    await prisma.booking.create({ data: { userId: HU, sessionId: HV, status: 'confirmed', bookingType: 'class', groupSize: 2, baseAmount: 200, commissionAmount: 0, venueCommission: 0, finalAmount: 200, venuePayout: 200, pointsEarned: 0, checkedIn: false, bookingNumber: `HRK-${Date.now()}` } })
+
+    const vtok = jwt.sign({ venueId: HV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const d = await http(`/api/venue/classes/${HV}/sessions/${HV}`, { method: 'DELETE', token: vtok })
+    if (d.status !== 200) throw new Error(`seans silme ${d.status}: ${d.text.slice(0, 140)}`)
+
+    let olay = null
+    for (let i = 0; i < 20 && !olay; i++) {
+      olay = await prisma.venueOlay.findFirst({ where: { venueId: HV, olay: 'seans_iptal' } })
+      if (!olay) await new Promise(r => setTimeout(r, 100))
+    }
+    if (!olay) throw new Error('seans iptali GÜNLÜĞE YAZILMADI — bu veri geri getirilemez')
+    // Bu iki alan SONRADAN hesaplanamaz: seans silindi, rezervasyonlar silindi.
+    if (olay.etkilenen !== 1) throw new Error(`etkilenen rezervasyon ${olay.etkilenen} (1 bekleniyor)`)
+    if (olay.kalanSaat == null || olay.kalanSaat > 7 || olay.kalanSaat < 5) {
+      throw new Error(`kalanSaat ${olay.kalanSaat} (~6 bekleniyor) — "son anda iptal" ölçülemez`)
+    }
+
+    const r = await expectOk('/api/admin/venue-events?venueId=' + HV, { admin: true })
+    const listede = (r.json?.olaylar || []).find((o: any) => o.olay === 'seans_iptal')
+    if (!listede) throw new Error('olay admin panelinde görünmüyor')
+    if (listede.venueName !== 'Hareket Salon') throw new Error(`salon adı çözülmedi: ${listede.venueName}`)
+
+    await prisma.venueOlay.deleteMany({ where: { venueId: HV } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: HV } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: HU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: HV } }).catch(() => {})
+  })
+
+  await check('Hareket günlüğü: bağlantı ADRESİ günlüğe yazılmaz (bilet sızmasın)', async () => {
+    const { izlenen } = await import('../src/utils/venueOlay')
+    const c = izlenen({ meetingUrl: 'https://zoom.us/j/GIZLI123', capacity: 5 } as any)
+    if (!c) throw new Error('izlenen alanlar boş döndü')
+    // meetingUrl bilet niteliğinde (İptal-İade m.7.2). Admin panelinde okunabilir bir log,
+    // bileti sızdırmamalı — yalnız değişip değişmediği yazılır.
+    if (String(c.meetingUrl).includes('GIZLI123')) throw new Error('BAĞLANTI ADRESİ GÜNLÜĞE YAZILDI — bilet sızıyor')
+    if (c.meetingUrl !== '(var)') throw new Error(`meetingUrl maskesi yanlış: ${c.meetingUrl}`)
+    if (c.capacity !== 5) throw new Error('izlenen alan kaybolmuş')
+  })
+
+  await check('Geri dönüş oranı: SADECE kimliği bilinen kişiler sayılır', async () => {
+    const RV = 990711, R1 = 990711, R2 = 990712
+    await prisma.venue.upsert({ where: { id: RV }, update: { isApproved: true, isActive: true }, create: { id: RV, name: 'Donus Salon', email: `rv${RV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: RV }, update: {}, create: { id: RV, venueId: RV, title: 'DonusDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 20, isActive: true } })
+    const t = new Date(Date.now() + 5 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: RV }, update: { startsAt: t }, create: { id: RV, classId: RV, startsAt: t, endsAt: new Date(t.getTime() + 3600000), capacity: 20, status: 'open' } })
+    for (const uid of [R1, R2]) {
+      await testPrisma.user.upsert({ where: { id: uid }, update: {}, create: { id: uid, username: `rv_${uid}`, email: `rv_${uid}@x.com`, passwordHash: 'x', fullName: `Donus ${uid}` } })
+    }
+    await prisma.booking.deleteMany({ where: { sessionId: RV } })
+    // R1 İKİ kez geldi (dönen), R2 BİR kez (dönmeyen) → oran %50
+    for (const [uid, n] of [[R1, 2], [R2, 1]] as [number, number][]) {
+      for (let i = 0; i < n; i++) {
+        await prisma.booking.create({ data: { userId: uid, sessionId: RV, status: 'confirmed', bookingType: 'class', groupSize: 1, baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, pointsEarned: 0, checkedIn: false, bookingNumber: `DNS-${uid}-${i}-${Date.now()}` } })
+      }
+    }
+    // Kimliksiz koltuk etkisi: R2'nin rezervasyonunu 5 kişilik yap. groupSize PAYDAYA
+    // GİRMEMELİ — etiketsiz koltukların tekrar davranışını bilmiyoruz.
+    await prisma.booking.updateMany({ where: { userId: R2, sessionId: RV }, data: { groupSize: 5 } })
+
+    const r = await expectOk('/api/admin/venue-retention', { admin: true })
+    const s2 = (r.json?.salonlar || []).find((x: any) => x.venueId === RV)
+    if (!s2) throw new Error('salon geri dönüş listesinde yok')
+    if (s2.kimligiBilinenKisi !== 2) throw new Error(`kişi sayısı ${s2.kimligiBilinenKisi} (2 bekleniyor — groupSize sayılmamalı)`)
+    if (s2.donenKisi !== 1) throw new Error(`dönen kişi ${s2.donenKisi} (1 bekleniyor)`)
+    if (s2.donusOrani !== 50) throw new Error(`dönüş oranı ${s2.donusOrani} (50 bekleniyor)`)
+    if (s2.dagilim?.['1'] !== 1 || s2.dagilim?.['2'] !== 1) throw new Error(`dağılım yanlış: ${JSON.stringify(s2.dagilim)}`)
+
+    await prisma.booking.deleteMany({ where: { sessionId: RV } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: RV } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: { in: [R1, R2] } } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: RV } }).catch(() => {})
+  })
+
+  await check('Platform analitiği: mahalle/branş/ay kırılımı döner (bigint patlamaz)', async () => {
+    const r = await expectOk('/api/admin/platform-analytics', { admin: true })
+    for (const k of ['dersMahalle', 'brans', 'aylik', 'kullaniciMahalle']) {
+      if (!Array.isArray(r.json?.[k])) throw new Error(`${k} dizi değil: ${typeof r.json?.[k]}`)
+    }
+    // COUNT/SUM bigint döner ve JSON.stringify bigint'te PATLAR — sayıya çevrilmiş olmalı.
+    const ornek = (r.json.dersMahalle as any[])[0] || (r.json.brans as any[])[0]
+    if (ornek) {
+      for (const [k, v] of Object.entries(ornek)) {
+        if (typeof v === 'string' && /^\d+$/.test(v) && (k === 'koltuk' || k === 'rezervasyon')) {
+          throw new Error(`${k} sayı değil string döndü: ${v}`)
+        }
+      }
+    }
+  })
+
   // ---- 5651 TRAFİK KAYDI (Gizlilik Politikası Bölüm 7) ----
 
   await check('Trafik kaydı: yayımlanan içerik IP ve zamanla kayda geçer', async () => {

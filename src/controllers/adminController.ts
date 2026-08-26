@@ -646,3 +646,177 @@ export const approveInstructor = async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
+
+/**
+ * SALON HAREKET GÜNLÜĞÜ — admin panelinde geçmiş hareketler.
+ *
+ * Filtreler: salon, olay türü, tarih aralığı. Sayfalama var çünkü bu tablo zamanla en hızlı
+ * büyüyen tablo olacak ve tamamını çekmek paneli kilitler.
+ */
+export const getVenueEvents = async (req: Request, res: Response) => {
+  try {
+    const venueId = parseInt(String(req.query.venueId || '')) || undefined
+    const olay = typeof req.query.olay === 'string' && req.query.olay ? req.query.olay : undefined
+    const limit = Math.min(Math.max(parseInt(String(req.query.limit || '')) || 50, 1), 200)
+    const cursor = parseInt(String(req.query.cursor || '')) || undefined
+
+    const where: any = {}
+    if (venueId) where.venueId = venueId
+    if (olay) where.olay = olay
+    if (cursor) where.id = { lt: cursor }
+
+    const olaylar = await prisma.venueOlay.findMany({
+      where,
+      orderBy: { id: 'desc' },
+      take: limit + 1,
+    })
+    const dahaVar = olaylar.length > limit
+    const sayfa = dahaVar ? olaylar.slice(0, limit) : olaylar
+
+    // Salon adları AYRI çekiliyor: VenueOlay'da Venue'ya FK YOK (salon silinse de kayıt kalmalı),
+    // bu yüzden include kullanılamıyor. Silinmiş salon için ad null döner — kayıt yine görünür.
+    const ids = [...new Set(sayfa.map(o => o.venueId))]
+    const venues = ids.length
+      ? await prisma.venue.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } })
+      : []
+    const adlar = new Map(venues.map(v => [v.id, v.name]))
+
+    return res.json({
+      olaylar: sayfa.map(o => ({ ...o, venueName: adlar.get(o.venueId) ?? null })),
+      sonrakiCursor: dahaVar ? sayfa[sayfa.length - 1].id : null,
+    })
+  } catch (err) {
+    if (handlePrismaErr(err, res)) return
+    console.error('getVenueEvents error:', err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+/**
+ * SALON GERİ DÖNÜŞ ORANI — sızıntı/kalite sinyali.
+ *
+ * ÖLÇÜM YALNIZ KİMLİĞİ BİLİNEN KOLTUKLAR ÜZERİNDEN (kullanıcı kararı 26 Ağu 2026).
+ * Grup rezervasyonundaki etiketsiz koltuklar kural gereği hep "yeni müşteri" sayılır ve
+ * tekrar gelip gelmediklerini BİLEMEYİZ; onları paydaya koymak, çok grup rezervasyonu alan
+ * sağlıklı bir salonu sızıntı yapıyormuş gibi gösterirdi.
+ *
+ * NOT — bugünkü sınır: "kimliği bilinen" = rezervasyonu YAPAN kişi. Etiketlenen arkadaşlar
+ * ayrı koltuk satırı olarak tutulmadığı için (Booking.taggedFriends bir JSON dizisi) kendi
+ * tekrar sayaçlarına işlemiyorlar. Koltuk düzeyinde satırlar geldiğinde bu ölçüm keskinleşir.
+ */
+export const getVenueRetention = async (req: Request, res: Response) => {
+  try {
+    // Tek sorguda: her (salon, kullanıcı) çifti için rezervasyon sayısı.
+    // Yalnız gerçekleşmiş/geçerli rezervasyonlar — iptaller tekrar sinyali değildir.
+    const satirlar: { venueId: number; userId: number; adet: bigint }[] = await prisma.$queryRawUnsafe(`
+      SELECT c."venueId" AS "venueId", b."userId" AS "userId", COUNT(*) AS adet
+      FROM "Booking" b
+      JOIN "Class_Session" s ON s.id = b."sessionId"
+      JOIN "Class" c ON c.id = s."classId"
+      WHERE b.status IN ('confirmed','pending') AND c."venueId" IS NOT NULL
+      GROUP BY c."venueId", b."userId"
+    `)
+
+    const perVenue = new Map<number, { kisi: number; donen: number; toplamRez: number; dagilim: Record<string, number> }>()
+    for (const r of satirlar) {
+      const adet = Number(r.adet)
+      const v = perVenue.get(r.venueId) ?? { kisi: 0, donen: 0, toplamRez: 0, dagilim: {} }
+      v.kisi += 1
+      v.toplamRez += adet
+      if (adet >= 2) v.donen += 1
+      const kova = adet >= 5 ? '5+' : String(adet)
+      v.dagilim[kova] = (v.dagilim[kova] || 0) + 1
+      perVenue.set(r.venueId, v)
+    }
+
+    const ids = [...perVenue.keys()]
+    const venues = ids.length
+      ? await prisma.venue.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, isApproved: true } })
+      : []
+
+    const sonuc = venues.map(v => {
+      const d = perVenue.get(v.id)!
+      return {
+        venueId: v.id,
+        name: v.name,
+        isApproved: v.isApproved,
+        kimligiBilinenKisi: d.kisi,
+        donenKisi: d.donen,
+        // ÖLÇÜM GÜVENİ: az kişiyle oran anlamsızdır. Oranı yine döneriz ama istemci
+        // "yeterli veri yok" diyebilsin diye kişi sayısı da döner.
+        donusOrani: d.kisi ? Math.round((d.donen / d.kisi) * 1000) / 10 : null,
+        kisiBasiOrtalama: d.kisi ? Math.round((d.toplamRez / d.kisi) * 100) / 100 : null,
+        toplamRezervasyon: d.toplamRez,
+        // Kaç kişi 1 kez, 2 kez, ... geldi
+        dagilim: d.dagilim,
+      }
+    }).sort((a, b) => b.toplamRezervasyon - a.toplamRezervasyon)
+
+    return res.json({ salonlar: sonuc })
+  } catch (err) {
+    if (handlePrismaErr(err, res)) return
+    console.error('getVenueRetention error:', err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+/**
+ * PLATFORM ANALİTİĞİ — nerede, hangi branşta, ne kadar spor yapılıyor.
+ *
+ * Mahalle = DERSİN YAPILDIĞI yer (salonun mahallesi), kullanıcının oturduğu yer değil.
+ * İkisi farklı sorular; burada sorulan "nerede spor yapılıyor".
+ */
+export const getPlatformAnalytics = async (req: Request, res: Response) => {
+  try {
+    const [mahalle, brans, aylik, kullaniciMahalle] = await Promise.all([
+      prisma.$queryRawUnsafe(`
+        SELECT n.id, n.name, COUNT(b.id) AS rezervasyon, COALESCE(SUM(b."groupSize"),0) AS koltuk
+        FROM "Booking" b
+        JOIN "Class_Session" s ON s.id = b."sessionId"
+        JOIN "Class" c ON c.id = s."classId"
+        JOIN "Venue" v ON v.id = c."venueId"
+        JOIN "Neighborhood" n ON n.id = v."neighborhoodId"
+        WHERE b.status IN ('confirmed','pending')
+        GROUP BY n.id, n.name ORDER BY koltuk DESC LIMIT 50
+      `),
+      prisma.$queryRawUnsafe(`
+        SELECT COALESCE(sc.name, c.category, 'Bilinmiyor') AS brans,
+               COUNT(b.id) AS rezervasyon, COALESCE(SUM(b."groupSize"),0) AS koltuk
+        FROM "Booking" b
+        JOIN "Class_Session" s ON s.id = b."sessionId"
+        JOIN "Class" c ON c.id = s."classId"
+        LEFT JOIN "SportCategory" sc ON sc.id = c."sportCategoryId"
+        WHERE b.status IN ('confirmed','pending')
+        GROUP BY brans ORDER BY koltuk DESC
+      `),
+      prisma.$queryRawUnsafe(`
+        SELECT to_char(date_trunc('month', s."startsAt"), 'YYYY-MM') AS ay,
+               COUNT(b.id) AS rezervasyon, COALESCE(SUM(b."groupSize"),0) AS koltuk
+        FROM "Booking" b
+        JOIN "Class_Session" s ON s.id = b."sessionId"
+        WHERE b.status IN ('confirmed','pending')
+        GROUP BY ay ORDER BY ay DESC LIMIT 24
+      `),
+      prisma.$queryRawUnsafe(`
+        SELECT n.id, n.name, COUNT(u.id) AS kullanici
+        FROM "User" u JOIN "Neighborhood" n ON n.id = u."neighborhoodId"
+        GROUP BY n.id, n.name ORDER BY kullanici DESC LIMIT 50
+      `),
+    ])
+
+    // BigInt → number: COUNT/SUM bigint döner ve JSON.stringify bigint'te PATLAR.
+    const say = (rows: any[]) =>
+      rows.map(r => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, typeof v === 'bigint' ? Number(v) : v])))
+
+    return res.json({
+      dersMahalle: say(mahalle as any[]),
+      brans: say(brans as any[]),
+      aylik: say(aylik as any[]),
+      kullaniciMahalle: say(kullaniciMahalle as any[]),
+    })
+  } catch (err) {
+    if (handlePrismaErr(err, res)) return
+    console.error('getPlatformAnalytics error:', err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}

@@ -18,6 +18,7 @@ import { notifyFields, notifyPush } from '../utils/notifyText'
 import { Locale } from '../utils/locale'
 import { eksikZorunluOnaylar, eksikOnayMesaji, onaylariKaydet } from '../utils/consent'
 import { finansalArsivle } from '../utils/finansalArsiv'
+import { venueOlayYaz, izlenen } from '../utils/venueOlay'
 const money = (x: number) => Math.round(x * 100) / 100 // bookingController ile aynı 2-ondalık yuvarlama
 
 // Bir seans/ders silinirken aktif rezervasyonları GÜVENLİ kaldırır:
@@ -630,6 +631,13 @@ export const updateClass = async (req: Request, res: Response) => {
       }
     })
 
+    // HAREKET GÜNLÜĞÜ: fiyat/kapasite/aktiflik değişimi. "Rezervasyonlardan SONRA fiyatı
+    // yükseltti mi" sorusunun tek dayanağı bu kayıt — mevcut şema yalnız son fiyatı tutuyor.
+    venueOlayYaz({
+      venueId: existing.venueId as number, olay: 'ders_guncelle', hedefTur: 'class', hedefId: classId,
+      oncesi: izlenen(existing as any), sonrasi: izlenen(updated as any),
+    })
+
     return res.json({ message: 'Ders güncellendi!', class: updated })
   } catch (err) {
     console.error(err)
@@ -917,6 +925,13 @@ export const deleteClass = async (req: Request, res: Response) => {
     // timeout: purge rezervasyon başına birkaç gidiş-dönüş yapıyor; dolu bir dersin silinmesi
     // Prisma'nın 5 sn'lik VARSAYILANINI aşıp TÜM işlemi geri alıyordu (seans silinmez, o dersteki
     // herkesin puan iadesi hiç yazılmaz, salona 500 döner — tekrar denemede yük daha da büyük).
+    // HAREKET GÜNLÜĞÜ: "kötü yorum alan dersi sildi mi" sorusu ancak bu kayıtla sorulabilir.
+    // Yorum sistemi dersin silinmesine karşı korunmuş (Review.bookingId nullable) ama SİLME
+    // EYLEMİNİN KENDİSİ hiçbir yere yazılmıyordu.
+    venueOlayYaz({
+      venueId: cls.venueId as number, olay: 'ders_kapat', hedefTur: 'class', hedefId: classId,
+      oncesi: izlenen(cls as any), etkilenen: affected.length,
+    })
     await notifyRemovedBookings(affected, cls.title).catch(() => {})
     return res.json({ message: 'Ders silindi.', affectedBookings: affected.length })
   } catch (err) {
@@ -946,6 +961,12 @@ export const deleteSession = async (req: Request, res: Response) => {
       await recomputeVenueRating(tx, ownedVenueId) // yorumlar silindi → salon puanını güncelle
       return a
     }, { timeout: 30000, maxWait: 10000 })
+    // HAREKET GÜNLÜĞÜ — "son anda iptal" ancak burada yazılırsa ölçülebilir: seans silindikten
+    // sonra startsAt'e bakma şansı yok, etkilenen rezervasyonlar da silindi.
+    venueOlayYaz({
+      venueId: ownedVenueId, olay: 'seans_iptal', hedefTur: 'session', hedefId: sessionId,
+      oncesi: izlenen(session as any), etkilenen: affected.length, baslangic: session.startsAt,
+    })
     await notifyRemovedBookings(affected, session.class.title).catch(() => {})
     return res.json({ message: 'Seans silindi.', affectedBookings: affected.length })
   } catch (err) {
@@ -1132,6 +1153,15 @@ export const updateSession = async (req: Request, res: Response) => {
         if (u.email) sendCancellationEmail(u.email, u.fullName || '', `${session.class.title} ${newTimeSuffix}`, yeniTarih, yeniSaat, loc).catch(() => {})
       }
     }
+
+    // HAREKET GÜNLÜĞÜ: saat/kapasite değişikliği ve kaç rezervasyonu etkilediği.
+    // "Rezervasyon aldıktan sonra saati değiştiriyor mu" ancak bu kayıtla görülebilir.
+    const etkilenenSayisi = await prisma.booking.count({ where: { sessionId, status: { in: ['confirmed', 'pending'] } } })
+    venueOlayYaz({
+      venueId: session.class.venueId as number, olay: 'seans_guncelle', hedefTur: 'session', hedefId: sessionId,
+      oncesi: izlenen(session as any), sonrasi: izlenen(updated as any),
+      etkilenen: etkilenenSayisi, baslangic: eskiStartsAt,
+    })
 
     return res.json({ message: 'Seans güncellendi!', session: updated })
   } catch (err) {

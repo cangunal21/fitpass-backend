@@ -1060,3 +1060,40 @@ model TrafikKaydi {
   @@index([subjectType, subjectId])
   @@index([contentType, contentId])
 }
+
+/// SALON HAREKET GÜNLÜĞÜ — satıcının NE YAPTIĞININ kaydı.
+///
+/// NEDEN VAR: platform bugün yalnızca SON DURUMU biliyordu. Salon bir seansı iptal ettiğinde,
+/// saatini değiştirdiğinde, dersi kapattığında ya da fiyatı rezervasyonlardan sonra
+/// yükselttiğinde geriye HİÇBİR İZ kalmıyordu (venueController'da tek bir log çağrısı yoktu).
+/// "Bu salon sürekli son anda mı iptal ediyor?" sorusu hiçbir veriden cevaplanamıyordu ve
+/// bu veri GERİ GETİRİLEMEZ — yazılmadığı her gün kalıcı olarak kaybediliyor.
+///
+/// ActivityLog BU DEĞİLDİR: o kullanıcının sosyal akışı, satıcı davranışını tutmaz.
+///
+/// Salon'a FK VERİLMEDİ: salon silinse de davranış kaydı kalmalı — kaydın varlık sebebi
+/// tam olarak "sonradan bakabilmek". Silinen salonun geçmişi de sorulabilir olmalı.
+model VenueOlay {
+  id        Int      @id @default(autoincrement())
+  venueId   Int
+  /// Olayı yapan: 'venue' (salon paneli) | 'admin' | 'system'
+  aktor     String   @default("venue")
+  /// 'seans_iptal' | 'seans_guncelle' | 'ders_kapat' | 'ders_guncelle'
+  olay      String
+  hedefTur  String? // 'session' | 'class'
+  hedefId   Int?
+  /// Değişimin ÖNCESİ ve SONRASI — yalnız anlamlı alanlar (saat, fiyat, kapasite, aktiflik).
+  /// Tüm nesneyi yazmıyoruz: günlük şişer ve kişisel veri sızdırabilir.
+  oncesi    Json?
+  sonrasi   Json?
+  /// Olay anında etkilenen ONAYLI/BEKLEYEN rezervasyon sayısı. Sonradan hesaplanamaz
+  /// (rezervasyonlar silinmiş olabilir) — "kaç kişiyi etkiledi" ancak o an yazılırsa bilinir.
+  etkilenen Int      @default(0)
+  /// Seansa kalan saat. "Son anda iptal" ancak bu yazılırsa ölçülebilir.
+  kalanSaat Float?
+  olusturma DateTime @default(now())
+
+  @@index([venueId, olusturma])
+  @@index([olay])
+  @@index([olusturma])
+}

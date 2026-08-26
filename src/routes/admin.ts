@@ -1,6 +1,6 @@
 import { registerNumericParams } from '../middlewares/numericParams'
 import { Router } from 'express'
-import { getStats, getAllVenues, approveVenue, getAllUsers, getAllBookings, suspendVenue, deleteVenue, banUser, getCategories, createCategory, deleteCategory, updateCategory, getPendingVenueImages, reviewVenueImages, getAllInstructors, verifyInstructor, approveInstructor, getComplaints, resolveComplaint } from '../controllers/adminController'
+import { getStats, getAllVenues, approveVenue, getAllUsers, getAllBookings, suspendVenue, deleteVenue, banUser, getCategories, createCategory, deleteCategory, updateCategory, getPendingVenueImages, reviewVenueImages, getAllInstructors, verifyInstructor, approveInstructor, getComplaints, resolveComplaint , getVenueEvents, getVenueRetention, getPlatformAnalytics } from '../controllers/adminController'
 import { getReports, resolveReport } from '../controllers/reportController'
 import { adminAuthMiddleware } from '../middlewares/adminAuth'
 
@@ -10,6 +10,10 @@ registerNumericParams(router)
 router.use(adminAuthMiddleware)
 
 router.get('/stats', getStats)
+// SATICI İZLEME (26 Ağu 2026): platform bugüne dek yalnız son durumu biliyordu.
+router.get('/venue-events', getVenueEvents)
+router.get('/venue-retention', getVenueRetention)
+router.get('/platform-analytics', getPlatformAnalytics)
 router.get('/venues', getAllVenues)
 router.put('/venues/:id/approve', approveVenue)
 router.get('/venue-images/pending', getPendingVenueImages)
