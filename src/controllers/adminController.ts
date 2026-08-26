@@ -9,6 +9,7 @@ import { sendPushNotification } from '../utils/push'
 import { reversiblePoints } from '../utils/tier'
 import { notifyFields, notifyPush } from '../utils/notifyText'
 import { Locale } from '../utils/locale'
+import { FOUNDER_BOOST_UNTIL, FOUNDER_BADGE_LIMIT } from '../utils/founder'
 
 // İstatistikler
 export const getStats = async (req: Request, res: Response) => {
@@ -36,11 +37,17 @@ export const getAllVenues = async (req: Request, res: Response) => {
       select: {
         id: true, name: true, email: true, phone: true, address: true,
         isApproved: true, avgRating: true, totalReviews: true, createdAt: true,
+        // Öncü Salon sırası (Salon Aracılık m.10): admin hangi salonun İlk 50'de olduğunu
+        // görmeden onboarding önceliğini işletemez — sıra onay anında veriliyor ve geri alınmıyor.
+        founderRank: true,
         _count: { select: { classes: true } }
       },
       orderBy: { createdAt: 'desc' }
     })
-    return res.json({ venues })
+    // Program 200 onaylı salonda kendiliğinden söner (m.10.2). Rozeti bağlamsız göstermek
+    // yanıltıcı olurdu: admin "hâlâ öncelik veriliyor mu" sorusunu ekrandan cevaplayabilmeli.
+    const onayliSayisi = await prisma.venue.count({ where: { isApproved: true } })
+    return res.json({ venues, oncuProgrami: { onayliSayisi, sinir: FOUNDER_BOOST_UNTIL, aktif: onayliSayisi < FOUNDER_BOOST_UNTIL, rozetLimiti: FOUNDER_BADGE_LIMIT } })
   } catch (err) {
     if (handlePrismaErr(err, res)) return
     console.error(err)

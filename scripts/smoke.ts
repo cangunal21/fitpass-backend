@@ -5517,6 +5517,31 @@ async function run() {
     await prisma.venue.deleteMany({ where: { id: FV } }).catch(() => {})
   })
 
+  await check('Admin: öncü salon sırası ve program durumu panele DÖNER', async () => {
+    const AV = 990451
+    await prisma.venue.deleteMany({ where: { id: AV } }).catch(() => {})
+    const enBuyuk = await prisma.venue.aggregate({ _max: { founderRank: true } })
+    const sira = (enBuyuk._max.founderRank ?? 0) + 1
+    await prisma.venue.create({ data: { id: AV, name: 'Smoke Admin Oncu', email: `ao${AV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1, founderRank: sira } })
+
+    const r = await expectOk('/api/admin/venues', { admin: true })
+    const bulunan = (r.json?.venues || []).find((v: any) => v.id === AV)
+    if (!bulunan) throw new Error('salon admin listesinde yok')
+    // Admin, onboarding önceliğini işletebilmek için hangi salonun İlk 50'de olduğunu görmeli.
+    if (bulunan.founderRank !== sira) throw new Error(`admin listesinde founderRank yok/yanlış: ${bulunan.founderRank}`)
+
+    // Rozet BAĞLAMSIZ gösterilmemeli: program 200 onaylı salonda sönüyor (m.10.2), admin
+    // "hâlâ öncelik veriliyor mu" sorusunu ekrandan cevaplayabilmeli.
+    const p = r.json?.oncuProgrami
+    if (!p) throw new Error('oncuProgrami dönmedi — rozet bağlamsız kalır')
+    if (typeof p.onayliSayisi !== 'number' || p.sinir !== 200 || p.rozetLimiti !== 50) {
+      throw new Error(`program bilgisi eksik/yanlış: ${JSON.stringify(p)}`)
+    }
+    if (p.aktif !== (p.onayliSayisi < p.sinir)) throw new Error(`aktif bayrağı sayaçla tutarsız: ${JSON.stringify(p)}`)
+
+    await prisma.venue.deleteMany({ where: { id: AV } }).catch(() => {})
+  })
+
   await check('Öncü salon: liste sıralamasında ÖNCE gelir (sözleşme m.10.1 taahhüdü)', async () => {
     // Salon Aracılık Sözleşmesi m.10.1 salon listesinde ÖNCELİKLİ SIRALAMA taahhüt ediyor.
     // m.10.3 rozetin görsel gösterimini bilerek taahhüt DIŞI bırakıyor — yani sözleşmenin
