@@ -1,7 +1,7 @@
 import { Request, Response } from 'express'
 import prisma from '../utils/prisma'
 // SATICI KAPISI — salon ya da mekânsız hoca; kapıyı elle yazma (bkz. utils/seller.ts).
-import { sellerBlocked, SELLER_SELECT } from '../utils/seller'
+import { sellerBlocked, SELLER_SELECT, saticiIletisimSec } from '../utils/seller'
 import crypto from 'crypto'
 import { sendVenueBookingNotificationEmail, sendCancellationEmail, sendVenueCancellationEmail, sendBookingConfirmationEmail, sendGroupTagNotificationEmail, sendGroupInviteEmail, sendCashbackEmail, sendTransferEmail } from '../utils/email'
 import { sendPushNotification } from '../utils/push'
@@ -14,6 +14,7 @@ import { notifyFields, notifyPush, notifyText } from '../utils/notifyText'
 import { Locale } from '../utils/locale'
 // API SÖZLEŞMESİ — üç repoda birebir aynı dosya (bkz. scripts/tip-damgasi.cjs).
 import type { MyBookingsResponse, ApiError } from '../types/api'
+import { iadeHesapla, type IadeTuru } from '../utils/iade'
 
 class BookingError extends Error {
   status: number
@@ -193,12 +194,21 @@ export const createBooking = async (req: Request, res: Response) => {
       throw e
     }
 
-    // Salon email bildirimi
+    // SATICI email bildirimi (salon VEYA bağımsız eğitmen)
+    //
+    // Eskiden burada yalnız `venue.findUnique({ id: class.venueId })` vardı. Mekânsız hocanın
+    // dersinde venueId NULL olduğu için sorgu boş dönüyor, `venue?.email` düşüyor ve dersi
+    // satan kişiye HİÇBİR BİLDİRİM GİTMİYORDU: hoca, dersinin satıldığını ancak panele
+    // kendiliğinden bakarsa öğreniyordu. Satıcının kim olduğu artık venueId'nin doluluğundan
+    // türetiliyor (bkz. utils/seller.ts — aynı ayrım orada da yapılıyor).
     try {
-      const venue = await prisma.venue.findUnique({
-        where: { id: booking.session!.class.venueId },
-        select: { email: true, name: true },
-      })
+      const dersVenueId = booking.session!.class.venueId
+      const dersInstructorId = booking.session!.class.instructorId
+
+      const venue = saticiIletisimSec(
+        dersVenueId ? await prisma.venue.findUnique({ where: { id: dersVenueId }, select: { email: true, name: true } }) : null,
+        dersInstructorId ? await prisma.instructor.findUnique({ where: { id: dersInstructorId }, select: { email: true, fullName: true } }) : null,
+      )
 
       const user = await prisma.user.findUnique({
         where: { id: userId },
@@ -261,9 +271,13 @@ export const createBooking = async (req: Request, res: Response) => {
         const startsAt = new Date(booking.session!.startsAt)
         const date = trDate(startsAt)
         const time = trTime(startsAt)
+        // Etiketlenen kişiye "nerede" bilgisi: mekânsız derste salon yok, satıcı eğitmenin
+        // adı yazılır. Boş bırakılsaydı davet e-postası yersiz bir daveti anlatırdı.
         const venueName = booking.session!.class.venueId
           ? (await prisma.venue.findUnique({ where: { id: booking.session!.class.venueId }, select: { name: true } }))?.name || ''
-          : ''
+          : booking.session!.class.instructorId
+            ? (await prisma.instructor.findUnique({ where: { id: booking.session!.class.instructorId }, select: { fullName: true } }))?.fullName || ''
+            : ''
 
         const categoryName = booking.session!.class.category || booking.session!.class.title
 
@@ -474,7 +488,9 @@ export const joinDropIn = async (req: Request, res: Response) => {
         }
         if (slot.currentPlayers >= slot.totalPlayers) throw new BookingError('Slot dolu.', 400)
 
-        const existing = await tx.dropInParticipant.findFirst({ where: { slotId, userId } })
+        // status FİLTRESİ ŞART: çıkış (leaveDropIn) satırı silmiyor, 'cancelled' damgalıyor.
+        // Filtresiz kontrol, bir kez çıkan kullanıcıyı o maça KALICI olarak kilitlerdi.
+        const existing = await tx.dropInParticipant.findFirst({ where: { slotId, userId, status: 'confirmed' } })
         if (existing) throw new BookingError('Zaten katılıyorsunuz.', 400)
 
         const created = await tx.dropInParticipant.create({
@@ -501,6 +517,86 @@ export const joinDropIn = async (req: Request, res: Response) => {
     return res.status(201).json({ message: "Drop-in'e katıldınız!", participant })
   } catch (err) {
     console.error(err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
+
+/**
+ * DROP-IN KATILIMINDAN ÇIKMA — İptal ve İade Politikası m.3.4.
+ *
+ * NEDEN YOKTU/NEDEN GEREKLİ: politika drop-in iptalini düzenliyordu ama kodda çıkış yolu hiç
+ * yoktu. Kullanıcı katıldıktan sonra vazgeçemiyor, kontenjan da ölüyordu — tam olarak ders
+ * iptalinde O12 ile çözdüğümüz sorun.
+ *
+ * KATILIMCI SATIRI SİLİNMEZ, DAMGALANIR. Silinseydi iade borcunu gösteren hiçbir kayıt kalmazdı.
+ * Sayaçların hepsi zaten `status: 'confirmed'` filtreliyor (tier, badges, streak/champion job,
+ * sosyal akış), bu yüzden 'cancelled' damgası onları kendiliğinden dışarıda bırakır.
+ */
+export const leaveDropIn = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    const slotId = parseInt(req.params.slotId as string)
+    if (isNaN(slotId)) return res.status(400).json({ error: 'Geçersiz slot.' })
+
+    let sonuc: { tur: IadeTuru; tutar: number }
+    try {
+      sonuc = await prisma.$transaction(async (tx) => {
+        // joinDropIn ile AYNI kilit: currentPlayers sayacı iki uçtan da değiştiği için,
+        // kilitsiz çalışırsak eşzamanlı katıl/çık sayacı bozar (kontenjan sızar ya da kaybolur).
+        await tx.$executeRaw`SELECT id FROM "DropInSlot" WHERE id = ${slotId} FOR UPDATE`
+
+        const slot = await tx.dropInSlot.findUnique({
+          where: { id: slotId },
+          select: { startsAt: true, pricePerPerson: true },
+        })
+        if (!slot) throw new BookingError('Slot bulunamadı.', 404)
+
+        const katilim = await tx.dropInParticipant.findFirst({
+          where: { slotId, userId, status: 'confirmed' },
+        })
+        if (!katilim) throw new BookingError('Bu maça katılımınız bulunmuyor.', 404)
+        // Check-in yapılmışsa etkinlik fiilen yaşanmıştır; geri alınamaz.
+        if (katilim.checkedIn) throw new BookingError('Giriş yapılmış bir katılım iptal edilemez.', 400)
+
+        // Ders iptaliyle ORTAK kural (utils/iade.ts). Kopyalanmadı: iki kopya ayrışırdı.
+        const iade = iadeHesapla(slot.startsAt, slot.pricePerPerson, false)
+        if (iade.gecKaldi) throw new BookingError('Maç başlamış, katılım iptal edilemez.', 400)
+
+        await tx.dropInParticipant.update({
+          where: { id: katilim.id },
+          data: {
+            status: 'cancelled',
+            cancelledAt: new Date(),
+            refundType: iade.tur,
+            refundAmount: iade.tutar,
+          },
+        })
+
+        // KONTENJAN SERBEST KALIR — iade doğmayan iptalde DE (Politika m.3.3/m.3.4).
+        // Sayaç 0'ın altına düşmesin: bozuk bir sayaç, dolu maçı açık gösterir.
+        await tx.dropInSlot.update({
+          where: { id: slotId },
+          data: { currentPlayers: { decrement: 1 } },
+        })
+        await tx.$executeRaw`UPDATE "DropInSlot" SET "currentPlayers" = 0 WHERE id = ${slotId} AND "currentPlayers" < 0`
+
+        return { tur: iade.tur, tutar: iade.tutar }
+      })
+    } catch (e: any) {
+      if (e instanceof BookingError) return res.status(e.status).json({ error: e.message })
+      throw e
+    }
+
+    const mesaj =
+      sonuc.tur === 'full'
+        ? 'Katılımın iptal edildi, ücretin tamamı iade edilecek.'
+        : sonuc.tur === 'half'
+          ? `Katılımın iptal edildi. Maça 24 saatten az kaldığı için ücretin yarısı (₺${sonuc.tutar}) iade edilecek.`
+          : 'Katılımın iptal edildi. Maça 12 saatten az kaldığı için iade yapılmadı; yerin diğer oyunculara açıldı.'
+
+    return res.json({ message: mesaj, refundType: sonuc.tur, refundAmount: sonuc.tutar })
+  } catch (err) {
+    console.error('leaveDropIn error:', err)
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
@@ -563,26 +659,21 @@ export const cancelBooking = async (req: Request, res: Response) => {
       if (!fresh || fresh.status === 'cancelled') return { kind: 'already' as const }
       if (fresh.userId !== userId) return { kind: 'forbidden' as const }
 
-      // 12-saat kapısı ve iade tutarı TAZE satırdan yeniden hesaplanır.
-      const freshHours = fresh.session?.startsAt
-        ? (new Date(fresh.session.startsAt).getTime() - Date.now()) / 3600000
-        : 999
+      // 12-saat kapısı ve iade tutarı TAZE satırdan yeniden hesaplanır (aşağıda iadeHesapla).
       // SALON ERTELEDİ → iptal penceresi kuralı uygulanmaz, iade TAM. Kullanıcı bu saati
       // seçmedi; "12 saat kala iptal yok" ve "12-24 saat yarım iade" onun kusuru değil.
       const salonErteledi = !!fresh.rescheduledAt
-      // Ders BAŞLADIYSA artık iptal edilemez (ertelenmiş olsa bile) — geçmiş seansa iade yok
-      // ve koltuğu boşaltmanın da bir anlamı kalmaz.
-      if (freshHours <= 0) return { kind: 'tooLate' as const, hoursLeft: Math.round(freshHours * 10) / 10 }
-      // ÜÇ KADEME (O12):
+      // ÜÇ KADEME (O12) — kural utils/iade.ts'te, drop-in çıkışıyla ORTAK:
       //   salon erteledi ya da 24s+  → TAM iade
       //   12–24s                     → YARIM iade
       //   <12s                       → İADE YOK, ama iptal EDİLEBİLİR → koltuk serbest kalır
       // Son kademe bilerek "reddet" değil "iadesiz kabul et": reddetmek koltuğu öldürüyordu.
-      const rType: 'full' | 'half' | 'none' =
-        (salonErteledi || freshHours >= 24) ? 'full' : (freshHours >= 12 ? 'half' : 'none')
-      const rAmount = rType === 'full' ? fresh.finalAmount
-        : rType === 'half' ? money((fresh.finalAmount || 0) / 2)
-        : 0
+      // Ders BAŞLADIYSA iptal edilemez (ertelenmiş olsa bile): geçmiş seansa iade yok ve
+      // koltuğu boşaltmanın da anlamı kalmaz.
+      const iade = iadeHesapla(fresh.session?.startsAt, fresh.finalAmount, salonErteledi)
+      if (iade.gecKaldi) return { kind: 'tooLate' as const, hoursLeft: iade.kalanSaat }
+      const rType = iade.tur
+      const rAmount = iade.tutar
 
       // CAS'i transferBooking:783 ile SİMETRİK yap: yalnız status değil, matematiği besleyen
       // alanları da pinle. Araya giren transfer bunları değiştirdiyse count=0 → hiçbir şey yapma.
@@ -687,7 +778,7 @@ export const cancelBooking = async (req: Request, res: Response) => {
         where: { id: bookingId },
         include: {
           user: { select: { fullName: true, email: true, pushToken: true, locale: true } },
-          session: { include: { class: { include: { venue: { select: { email: true, name: true } } } } } },
+          session: { include: { class: { include: { venue: { select: { email: true, name: true } }, instructor: { select: { email: true, fullName: true } } } } } },
         },
       })
 
@@ -696,7 +787,8 @@ export const cancelBooking = async (req: Request, res: Response) => {
         const date = trDate(startsAt)
         const time = trTime(startsAt)
         const classTitle = fullBooking.session!.class.title
-        const venue = fullBooking.session!.class.venue
+        // Mekânsız hocanın dersinde class.venue NULL — satıcı eğitmenin kendisidir.
+        const venue = saticiIletisimSec(fullBooking.session!.class.venue, fullBooking.session!.class.instructor)
 
         // Kullanıcıya iptal bildirimi (e-posta + push) — kullanıcının diliyle
         const cLoc = (fullBooking.user?.locale || 'tr') as Locale

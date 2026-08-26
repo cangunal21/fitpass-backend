@@ -197,3 +197,26 @@ export function parseDeliveryMode(raw: unknown): 'online' | 'in_person' | null {
  * Liderlik ve şampiyon işi bu parçayı kullanır; kural tek yerde dursun diye burada.
  */
 export const IN_PERSON_ONLY: Prisma.ClassWhereInput = { deliveryMode: 'in_person' }
+
+/**
+ * SATICI İLETİŞİMİ — dersi kim satıyorsa onun e-postası ve görünen adı.
+ *
+ * NEDEN AYRI FONKSİYON: "satıcı kim" ayrımı (venueId dolu mu?) bildirim kodunda İKİ AYRI YERDE
+ * elle yazılmıştı ve ikisi de yalnız salonu biliyordu. Mekânsız hocanın dersinde venueId NULL
+ * olduğu için her iki yerde de satıcıya hiçbir bildirim gitmiyordu: hoca dersinin satıldığını da
+ * iptal edildiğini de öğrenemiyordu. Tanım tek yerde durursa üçüncü bir çağrı yeri eklendiğinde
+ * aynı hata tekrar edilemez.
+ *
+ * Salon'da alan adı `name`, Eğitmen'de `fullName` — çağıran taraf bu farkı bilmek zorunda kalmasın.
+ */
+export type SaticiIletisim = { email: string; name: string } | null
+
+export function saticiIletisimSec(
+  venue: { email?: string | null; name?: string | null } | null | undefined,
+  instructor: { email?: string | null; fullName?: string | null } | null | undefined,
+): SaticiIletisim {
+  // Salon varsa satıcı salondur; mekânsız derste satıcı eğitmenin kendisidir.
+  if (venue?.email) return { email: venue.email, name: venue.name || '' }
+  if (instructor?.email) return { email: instructor.email, name: instructor.fullName || '' }
+  return null
+}

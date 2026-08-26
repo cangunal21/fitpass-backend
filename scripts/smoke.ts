@@ -1741,6 +1741,69 @@ async function run() {
     await prisma.venue.deleteMany({ where: { id: EV } }).catch(() => {})
   })
 
+  await check('Bildirim: satıcı seçimi mekânsız hocayı ATLAMIYOR', async () => {
+    const { saticiIletisimSec } = await import('../src/utils/seller')
+    // Salonlu ders: satıcı salon
+    const a = saticiIletisimSec({ email: 's@x.com', name: 'Salon' }, { email: 'h@x.com', fullName: 'Hoca' })
+    if (a?.email !== 's@x.com' || a?.name !== 'Salon') throw new Error(`salonlu derste satıcı yanlış: ${JSON.stringify(a)}`)
+    // MEKÂNSIZ ders (venue yok): satıcı eğitmenin KENDİSİ. Eskiden burası null dönüyor,
+    // dersi satan hoca ne rezervasyon ne iptal bildirimi alıyordu.
+    const b = saticiIletisimSec(null, { email: 'h@x.com', fullName: 'Hoca' })
+    if (b?.email !== 'h@x.com') throw new Error(`mekânsız derste satıcıya ulaşılamadı: ${JSON.stringify(b)}`)
+    if (b?.name !== 'Hoca') throw new Error(`eğitmen adı fullName'den alınmadı: ${JSON.stringify(b)}`)
+    // İkisi de yoksa null — çağıran taraf sessizce boş e-postaya göndermeye kalkmasın
+    if (saticiIletisimSec(null, null) !== null) throw new Error('satıcı yokken null dönmedi')
+    // E-postası olmayan salon, satıcı sayılmamalı (aksi halde boş adrese gönderim denenirdi)
+    const c = saticiIletisimSec({ email: null, name: 'Salon' }, { email: 'h@x.com', fullName: 'Hoca' })
+    if (c?.email !== 'h@x.com') throw new Error(`e-postasız salon satıcı sayıldı: ${JSON.stringify(c)}`)
+  })
+
+  // ---- SOHBET ASİSTANI PROMPTU (kullanıcıya otoriter bilgi olarak gidiyor) ----
+
+  await check('Asistan promptu: kaldırılmış/yanlış özellik ANLATMIYOR', async () => {
+    const { SYSTEM_PROMPT } = await import('../src/controllers/chatController')
+    const yasak: [RegExp, string][] = [
+      [/kupon/i, 'kupon sistemi 24 Ağu 2026\'da kaldırıldı'],
+      [/12 saatten az kala iptal edilemez/i, 'O12: 12 saatten az kala İPTAL EDİLEBİLİR, sadece iade yok'],
+      [/puan(ınla|larınla)? indirim/i, 'puan harcama kodda yok'],
+    ]
+    for (const [re, neden] of yasak) {
+      if (re.test(SYSTEM_PROMPT)) throw new Error(`prompt hâlâ "${re.source}" diyor — ${neden}`)
+    }
+  })
+
+  await check('Asistan promptu: canlı özellikleri ANLATIYOR (sessizce geride kalmamış)', async () => {
+    const { SYSTEM_PROMPT } = await import('../src/controllers/chatController')
+    // Prompt "sadece bunları söyle, asla uydurma" diyor: anlatmadığı özelliği asistan
+    // ya hiç bilmiyor ya da uyduruyor. Üründe VAR olan bu akışlar promptta da olmalı.
+    const gerekli: [RegExp, string][] = [
+      [/çevrim içi|online/i, 'online ders üründe var'],
+      [/bağımsız|mekânsız/i, 'salona bağlı olmayan eğitmen üründe var'],
+      [/sipsakspor\.com\/hukuk/i, 'yasal metinler yayında — asistan adresi bilmeli'],
+    ]
+    for (const [re, neden] of gerekli) {
+      if (!re.test(SYSTEM_PROMPT)) throw new Error(`prompt "${re.source}" içermiyor — ${neden}`)
+    }
+  })
+
+  await check('Asistan promptu: verdiği adresler GERÇEKTEN var olan sayfalar', async () => {
+    const { SYSTEM_PROMPT } = await import('../src/controllers/chatController')
+    const fs = await import('fs')
+    const path = await import('path')
+    const appDir = path.resolve(process.env.HOME || '', 'fitpass-web/src/app')
+    if (!fs.existsSync(appDir)) return atla('fitpass-web bu makinede yok')
+    const yollar = [...SYSTEM_PROMPT.matchAll(/sipsakspor\.com(\/[a-z0-9\-/]*)/gi)].map(m => m[1])
+    const eksik: string[] = []
+    for (const y of new Set(yollar)) {
+      const ilk = y.split('/').filter(Boolean)[0]
+      if (!ilk) continue // ana sayfa
+      if (!fs.existsSync(path.join(appDir, ilk))) eksik.push(y)
+    }
+    // Prompt kullanıcıya "şu adrese git" diyor; adres yoksa kullanıcı 404 görür ve
+    // asistan uydurmuş olur — tam olarak promptun yasakladığı şey.
+    if (eksik.length) throw new Error(`promptta OLMAYAN sayfalar: ${eksik.join(', ')}`)
+  })
+
   // ---- SÖZLEŞME / AÇIK RIZA ONAYI (KVKK ispat yükü) ----
 
   await check('Onay kapısı: sözleşme onaylanmadan kayıt AÇILMAZ (hesap da oluşmaz)', async () => {
@@ -2180,6 +2243,77 @@ async function run() {
     await prisma.dropInSlot.deleteMany({ where: { id: slot.id } }).catch(() => {})
     await prisma.user.deleteMany({ where: { id: TU } }).catch(() => {})
     await prisma.venue.deleteMany({ where: { id: TV } }).catch(() => {})
+  })
+
+  await check("Drop-in çıkış: üç kademe + KONTENJAN serbest kalır (Politika m.3.4)", async () => {
+    const DV = 990511, DU = 990511
+    await prisma.venue.upsert({ where: { id: DV }, update: { isApproved: true, isActive: true }, create: { id: DV, name: 'DropCikis', email: `dc${DV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await testPrisma.user.upsert({ where: { id: DU }, update: { isEmailVerified: true }, create: { id: DU, username: `dc_${DU}`, email: `dc_${DU}@x.com`, passwordHash: 'x', fullName: 'Drop Cikis', isEmailVerified: true } })
+    const cat = await prisma.sportCategory.findFirst({ where: { name: { equals: catName, mode: 'insensitive' } }, select: { id: true } })
+    const tok = jwt.sign({ userId: DU, email: `dc_${DU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+
+    const slotKur = async (saatSonra: number) => {
+      const t = new Date(Date.now() + saatSonra * 3600000)
+      return prisma.dropInSlot.create({ data: { venueId: DV, sportCategoryId: cat!.id, title: 'CikisMac', startsAt: t, endsAt: new Date(t.getTime() + 3600000), pricePerPerson: 100, totalPrice: 400, totalPlayers: 4, format: '2x2', status: 'open', visibility: 'open' } })
+    }
+
+    // (1) 48 saat kala → TAM iade, kontenjan geri açılır
+    const s1 = await slotKur(48)
+    const j1 = await http(`/api/bookings/dropin/${s1.id}/join`, { method: 'POST', token: tok, body: {} })
+    if (j1.status !== 201) throw new Error(`katılım ${j1.status}: ${j1.text.slice(0, 120)}`)
+    const dolu = await prisma.dropInSlot.findUnique({ where: { id: s1.id }, select: { currentPlayers: true } })
+    if (dolu?.currentPlayers !== 1) throw new Error(`katılım sonrası sayaç ${dolu?.currentPlayers} (1 bekleniyor)`)
+
+    const c1 = await http(`/api/bookings/dropin/${s1.id}/leave`, { method: 'POST', token: tok, body: {} })
+    if (c1.status !== 200) throw new Error(`çıkış ${c1.status}: ${c1.text.slice(0, 140)}`)
+    if (c1.json?.refundType !== 'full' || c1.json?.refundAmount !== 100) throw new Error(`48 saat kala iade yanlış: ${c1.json?.refundType}/${c1.json?.refundAmount}`)
+    const bosaldi = await prisma.dropInSlot.findUnique({ where: { id: s1.id }, select: { currentPlayers: true } })
+    if (bosaldi?.currentPlayers !== 0) throw new Error(`çıkış sonrası KONTENJAN serbest kalmadı: ${bosaldi?.currentPlayers}`)
+
+    // Satır SİLİNMEMELİ — iade borcunu gösteren kayıt kalmalı (ders iptalindeki O12 kuralı).
+    const damga = await prisma.dropInParticipant.findFirst({ where: { slotId: s1.id, userId: DU } })
+    if (!damga) throw new Error('katılımcı satırı SİLİNMİŞ — iade borcu kaydı kayboldu')
+    if (damga.status !== 'cancelled' || damga.refundType !== 'full' || damga.refundAmount !== 100) {
+      throw new Error(`damga eksik: ${damga.status}/${damga.refundType}/${damga.refundAmount}`)
+    }
+    // Çıkıştan sonra AYNI maça yeniden katılabilmeli: "zaten katılıyorsunuz" kontrolü
+    // iptal edilmiş satırı saymamalı, yoksa kullanıcı bir kez çıkınca kilitlenir.
+    const j1b = await http(`/api/bookings/dropin/${s1.id}/join`, { method: 'POST', token: tok, body: {} })
+    if (j1b.status !== 201) throw new Error(`çıkıştan sonra yeniden katılım ${j1b.status}: ${j1b.text.slice(0, 140)}`)
+
+    // (2) 18 saat kala → YARIM iade
+    const s2 = await slotKur(18)
+    await http(`/api/bookings/dropin/${s2.id}/join`, { method: 'POST', token: tok, body: {} })
+    const c2 = await http(`/api/bookings/dropin/${s2.id}/leave`, { method: 'POST', token: tok, body: {} })
+    if (c2.json?.refundType !== 'half' || c2.json?.refundAmount !== 50) throw new Error(`18 saat kala iade yanlış: ${c2.json?.refundType}/${c2.json?.refundAmount}`)
+
+    // (3) 3 saat kala → İADE YOK ama çıkış YAPILABİLİR ve kontenjan yine serbest kalır.
+    // Reddetseydik kontenjan ölürdü — O12'de ders tarafında düzelttiğimiz hatanın aynısı.
+    const s3 = await slotKur(3)
+    await http(`/api/bookings/dropin/${s3.id}/join`, { method: 'POST', token: tok, body: {} })
+    const c3 = await http(`/api/bookings/dropin/${s3.id}/leave`, { method: 'POST', token: tok, body: {} })
+    if (c3.status !== 200) throw new Error(`<12 saat çıkışı ${c3.status} (200 bekleniyor — iade yok ama iptal edilebilir)`)
+    if (c3.json?.refundType !== 'none' || c3.json?.refundAmount !== 0) throw new Error(`<12 saat iade yanlış: ${c3.json?.refundType}/${c3.json?.refundAmount}`)
+    const s3son = await prisma.dropInSlot.findUnique({ where: { id: s3.id }, select: { currentPlayers: true } })
+    if (s3son?.currentPlayers !== 0) throw new Error(`iadesiz çıkışta kontenjan serbest kalmadı: ${s3son?.currentPlayers}`)
+
+    // (4) BAŞLAMIŞ maç: çıkış reddedilir (no-show)
+    const s4 = await slotKur(5)
+    await http(`/api/bookings/dropin/${s4.id}/join`, { method: 'POST', token: tok, body: {} })
+    await prisma.dropInSlot.update({ where: { id: s4.id }, data: { startsAt: new Date(Date.now() - 3600000) } })
+    const c4 = await http(`/api/bookings/dropin/${s4.id}/leave`, { method: 'POST', token: tok, body: {} })
+    if (c4.status !== 400) throw new Error(`başlamış maçta çıkış ${c4.status} (400 bekleniyor)`)
+
+    // (5) Katılmadığı maçtan çıkamaz
+    const s5 = await slotKur(30)
+    const c5 = await http(`/api/bookings/dropin/${s5.id}/leave`, { method: 'POST', token: tok, body: {} })
+    if (c5.status !== 404) throw new Error(`katılmadığı maçta çıkış ${c5.status} (404 bekleniyor)`)
+
+    const ids = [s1.id, s2.id, s3.id, s4.id, s5.id]
+    await prisma.dropInParticipant.deleteMany({ where: { slotId: { in: ids } } }).catch(() => {})
+    await prisma.dropInSlot.deleteMany({ where: { id: { in: ids } } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: DU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: DV } }).catch(() => {})
   })
 
   // ================== TEST BORCU KAPATMA (turlar 12/13/18 testsiz düzeltmeler) ==================
@@ -3077,13 +3211,30 @@ async function run() {
   await check('Kopya: iptal/iade metni backend kuralıyla tutarlı (yarım-iade penceresi gizlenmiyor)', async () => {
     const fs = require('fs'), path = require('path')
     // 1) Backend kuralı hâlâ 12/24 mü? (kural değişirse metinler de gözden geçirilmeli)
-    const bc = fs.readFileSync(path.join(__dirname, '../src/controllers/bookingController.ts'), 'utf8')
-    // O12: <12s artık "iptal YOK" değil "İADE yok, koltuk serbest". Guard yeni üç kademeyi pinler;
-    // biri değişirse istemci metinleri de gözden geçirilmek zorunda kalır (guard'ın tek amacı bu).
-    if (!/freshHours\s*>=\s*12\s*\?\s*'half'\s*:\s*'none'/.test(bc)) throw new Error('12-24s yarım / <12s iadesiz kademesi bulunamadı — kural değişmişse metinler de güncellenmeli')
-    if (!/salonErteledi\s*\|\|\s*freshHours\s*>=\s*24\s*\)\s*\?\s*'full'/.test(bc)) throw new Error('24s tam iade kuralı bulunamadı — metinler gözden geçirilmeli')
-    // <12s'in REDDEDİLMEDİĞİNİ de pinle: eski davranışa sessizce dönülürse koltuk yine ölür.
-    if (/!salonErteledi\s*&&\s*freshHours\s*<\s*12\)\s*return\s*\{\s*kind:\s*'tooLate'/.test(bc)) throw new Error('<12 saat iptali yeniden REDDEDİLİYOR — O12 geri alınmış, koltuk bekleme listesine açılmıyor')
+    // Kural KAYNAK METİNDEN regex'le değil, DAVRANIŞTAN pinlenir. Önceden bookingController.ts
+    // içindeki ifadeler aranıyordu; mantık utils/iade.ts'e taşınınca guard sessizce kırıldı —
+    // oysa kural hiç değişmemişti. Davranışı çağırmak refaktöre dayanıklı ve daha güçlü:
+    // metinlerin dayandığı şey ifadenin yazılışı değil, fonksiyonun ne döndürdüğü.
+    const { iadeHesapla } = await import('../src/utils/iade')
+    const saatSonra = (h: number) => new Date(Date.now() + h * 3600000)
+
+    const tam = iadeHesapla(saatSonra(30), 100)
+    if (tam.tur !== 'full' || tam.tutar !== 100) throw new Error(`24s+ TAM iade değil: ${tam.tur}/${tam.tutar} — metinler gözden geçirilmeli`)
+
+    const yarim = iadeHesapla(saatSonra(18), 100)
+    if (yarim.tur !== 'half' || yarim.tutar !== 50) throw new Error(`12-24s YARIM iade değil: ${yarim.tur}/${yarim.tutar} — metinler gözden geçirilmeli`)
+
+    const yok = iadeHesapla(saatSonra(3), 100)
+    if (yok.tur !== 'none' || yok.tutar !== 0) throw new Error(`<12s iadesiz değil: ${yok.tur}/${yok.tutar}`)
+    // O12'nin ÇEKİRDEĞİ: <12s'te iptal REDDEDİLMEZ, yalnız iade doğmaz. Reddedilirse koltuk ölür.
+    if (yok.gecKaldi) throw new Error('<12 saat iptali yeniden REDDEDİLİYOR — O12 geri alınmış, koltuk bekleme listesine açılmıyor')
+
+    // Başlamış seans: iptal edilemez (no-show).
+    if (!iadeHesapla(saatSonra(-1), 100).gecKaldi) throw new Error('başlamış seans hâlâ iptal edilebiliyor')
+
+    // Satıcı erteledi → pencere kuralı UYGULANMAZ, iade tam (kullanıcı bu saati seçmedi).
+    const muaf = iadeHesapla(saatSonra(3), 100, true)
+    if (muaf.tur !== 'full' || muaf.tutar !== 100) throw new Error(`erteleme muafiyeti çalışmıyor: ${muaf.tur}/${muaf.tutar}`)
     // Erteleme muafiyeti kullanıcıya DUYURULMALI: hakkı bilmeyen kullanamaz.
     const nt = fs.readFileSync(path.join(__dirname, '../src/utils/notifyText.ts'), 'utf8')
     if (!/session_rescheduled[\s\S]{0,600}?ÜCRETSİZ iptal/.test(nt)) throw new Error('erteleme bildiriminde ücretsiz iptal hakkı yazmıyor — kullanıcı hakkından habersiz kalır')
@@ -5156,6 +5307,38 @@ async function run() {
     }
 
     await prisma.venue.deleteMany({ where: { id: FV } }).catch(() => {})
+  })
+
+  await check('Öncü salon: liste sıralamasında ÖNCE gelir (sözleşme m.10.1 taahhüdü)', async () => {
+    // Salon Aracılık Sözleşmesi m.10.1 salon listesinde ÖNCELİKLİ SIRALAMA taahhüt ediyor.
+    // m.10.3 rozetin görsel gösterimini bilerek taahhüt DIŞI bırakıyor — yani sözleşmenin
+    // karşılığı rozet değil, tam olarak bu sıralamadır ve testi yoktu.
+    const ONCU = 990441, NORMAL = 990442
+    await prisma.venue.deleteMany({ where: { id: { in: [ONCU, NORMAL] } } }).catch(() => {})
+    // founderRank @unique: sabit bir sayı (1) gerçek salonlarla ÇAKIŞIYOR. Boştaki ilk sırayı al.
+    // Hangi sıra olduğu önemsiz — sıralama `nulls: last` olduğu için sırası olan HER salon,
+    // sırası olmayanın önüne geçer; test tam olarak bunu ölçüyor.
+    const enBuyuk = await prisma.venue.aggregate({ _max: { founderRank: true } })
+    const bosSira = (enBuyuk._max.founderRank ?? 0) + 1
+    // Öncü salon DAHA ESKİ oluşturuluyor: ikincil sıralama createdAt DESC olduğu için,
+    // boost olmasaydı listede SONRA gelirdi. Böylece test gerçekten boost'u ölçüyor.
+    await prisma.venue.create({ data: { id: ONCU, name: 'Smoke Oncu Sira', email: `so${ONCU}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1, founderRank: bosSira, createdAt: new Date(Date.now() - 86400000) } })
+    await prisma.venue.create({ data: { id: NORMAL, name: 'Smoke Normal Sira', email: `sn${NORMAL}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1, founderRank: null } })
+
+    const r = await expectOk('/api/public/venues')
+    const ids = (r.json?.venues || []).map((v: any) => v.id)
+    const iOncu = ids.indexOf(ONCU)
+    const iNormal = ids.indexOf(NORMAL)
+    if (iOncu === -1 || iNormal === -1) throw new Error(`salonlar listede yok (oncu:${iOncu} normal:${iNormal})`)
+    if (iOncu > iNormal) throw new Error(`öncü salon SONRA geldi (oncu:${iOncu} normal:${iNormal}) — m.10.1 sıralama önceliği uygulanmıyor`)
+
+    // Boost 200 onaylı salonda kendiliğinden SÖNMELİ (m.10.2). 200 salon üretmek yerine
+    // sıralama kuralının saf hâli denetleniyor: kapalıyken founderRank'e göre sıralama YOK.
+    const { founderOrderBy } = await import('../src/utils/founder')
+    if (founderOrderBy(false).length !== 0) throw new Error('boost kapalıyken founderRank sıralaması hâlâ uygulanıyor — öncelik 200\'de sönmez')
+    if (founderOrderBy(true).length === 0) throw new Error('boost açıkken sıralama uygulanmıyor')
+
+    await prisma.venue.deleteMany({ where: { id: { in: [ONCU, NORMAL] } } }).catch(() => {})
   })
 
   await check('İptal: <12 saat kala İADE YOK ama KOLTUK SERBEST kalır (bekleme listesi devreye girebilir)', async () => {

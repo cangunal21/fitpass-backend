@@ -1,6 +1,7 @@
 import { registerNumericParams } from '../middlewares/numericParams'
 import { Router } from 'express'
-import { createBooking, getMyBookings, cancelBooking, joinDropIn, checkInBooking, checkInDropIn, getTransferOptions, transferBooking } from '../controllers/bookingController'
+import { createBooking, getMyBookings, cancelBooking, joinDropIn,
+  leaveDropIn, checkInBooking, checkInDropIn, getTransferOptions, transferBooking } from '../controllers/bookingController'
 import { authMiddleware } from '../middlewares/auth'
 // E-POSTA DOĞRULAMA KAPISI: yalnız BAŞKASINI ETKİLEYEN / KAYNAK TÜKETEN yazma uçlarında.
 // Okuma, iptal, profil ve "kod tekrar gönder" bilerek AÇIK — bkz. middlewares/requireVerified.ts
@@ -16,6 +17,9 @@ router.put('/:id/cancel', authMiddleware, cancelBooking)
 router.get('/:id/transfer-options', authMiddleware, getTransferOptions)
 router.put('/:id/transfer', authMiddleware, transferBooking)
 router.post('/dropin/:slotId/join', authMiddleware, requireVerifiedEmail, joinDropIn)
+// Çıkış (İptal ve İade Politikası m.3.4). DELETE değil POST: katılım satırı SİLİNMİYOR,
+// iptal damgası vuruluyor — iade borcunu gösteren kayıt kalmalı.
+router.post('/dropin/:slotId/leave', authMiddleware, requireVerifiedEmail, leaveDropIn)
 // venueApprovedMiddleware ŞART: venueAuthMiddleware yalnız isActive/isSuspended bakıyor,
 // isApproved'a BAKMIYOR. Admin bir salonun onayını geri aldığında (adminController.approveVenue
 // yalnız isApproved yazar; isActive true, isSuspended false kalır) salon check-in yapmaya devam
