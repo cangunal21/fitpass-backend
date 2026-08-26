@@ -983,3 +983,45 @@ model ConsentRecord {
   @@index([subjectType, subjectId])
   @@index([docSlug])
 }
+
+/// FİNANSAL KAYIT ARŞİVİ — anonimleştirilmiş, yasal saklama için.
+///
+/// NEDEN VAR: Gizlilik Politikası 11.3, "vergi ve ticaret mevzuatı gereği tutulması zorunlu
+/// işlem ve fatura kayıtları ... kimliğinizle bağlantısı koparılarak (anonimleştirilerek)
+/// yalnızca ilgili yasal süre boyunca saklanır" diyor. Oysa kod, hesap silmede ve salon
+/// ders/seans silmede bu kayıtları HARD DELETE ediyordu: geriye iade borcunu ya da tahsil
+/// edilmiş bedeli gösteren hiçbir şey kalmıyordu. Yani metin bir şey vaat ediyor, kod tersini
+/// yapıyordu.
+///
+/// GERÇEKTEN ANONİM: userId YOK, ad/e-posta YOK, User'a FK YOK. Kişiyi değil İŞLEMİ tanımlar.
+/// venueId/instructorId satıcıyı gösterir — satıcı kaydı vergi mevzuatının zaten istediği şeydir
+/// ve silinen üyeyle ilgisi yoktur.
+///
+/// SÜRESİZ DEĞİL: purgeAfter (TTK m.82 → 10 yıl) dolduğunda satır imha edilir. Metin "süre
+/// sonunda imha edilir" diyor; süresiz saklamak da vaadin ihlali olurdu.
+model FinansalKayit {
+  id               Int      @id @default(autoincrement())
+  bookingNumber    String
+  occurredAt       DateTime
+  baseAmount       Float
+  commissionAmount Float
+  userCommission   Float
+  venueCommission  Float
+  finalAmount      Float
+  venuePayout      Float
+  groupSize        Int
+  venueId          Int?
+  instructorId     Int?
+  /// Gerçekten tahsilat oldu mu (Payment satırı varsa durumu). Ödeme açılmadan önceki
+  /// kayıtlarda null — arşiv, para hareketi olmayan işlemi olmuş gibi göstermemeli.
+  paymentStatus    String?
+  refundType       String?
+  refundAmount     Float?
+  /// 'hesap_silindi' | 'seans_silindi'
+  reason           String
+  archivedAt       DateTime @default(now())
+  purgeAfter       DateTime
+
+  @@index([purgeAfter])
+  @@index([venueId])
+}

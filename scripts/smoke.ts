@@ -1758,6 +1758,93 @@ async function run() {
     if (c?.email !== 'h@x.com') throw new Error(`e-postasız salon satıcı sayıldı: ${JSON.stringify(c)}`)
   })
 
+  // ---- FİNANSAL KAYIT ARŞİVİ (Gizlilik Politikası 11.3) ----
+
+  await check('Arşiv: hesap silmede finansal kayıt ANONİMLEŞTİRİLEREK saklanır', async () => {
+    const AU = 990601, AV = 990601
+    await prisma.venue.upsert({ where: { id: AV }, update: { isApproved: true, isActive: true }, create: { id: AV, name: 'ArsivSalon', email: `av${AV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: AV }, update: {}, create: { id: AV, venueId: AV, title: 'ArsivDers', category: catName, basePrice: 250, durationMinutes: 60, capacity: 10, isActive: true } })
+    const ileri = new Date(Date.now() + 3 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: AV }, update: { startsAt: ileri }, create: { id: AV, classId: AV, startsAt: ileri, endsAt: new Date(ileri.getTime() + 3600000), capacity: 10, status: 'open' } })
+    await testPrisma.user.upsert({ where: { id: AU }, update: {}, create: { id: AU, username: `av_${AU}`, email: `av_${AU}@x.com`, passwordHash: await bcrypt.hash('ArsivSifre123', 10), fullName: 'Arsiv Uye' } })
+    await prisma.user.update({ where: { id: AU }, data: { passwordHash: await bcrypt.hash('ArsivSifre123', 10) } })
+
+    const bn = `ARS-${Date.now()}`
+    await prisma.booking.deleteMany({ where: { userId: AU } })
+    await prisma.finansalKayit.deleteMany({ where: { bookingNumber: bn } })
+    await prisma.booking.create({ data: { userId: AU, sessionId: AV, status: 'confirmed', bookingType: 'class', groupSize: 2, baseAmount: 500, commissionAmount: 0, venueCommission: 0, finalAmount: 500, venuePayout: 500, pointsEarned: 0, checkedIn: false, bookingNumber: bn } })
+
+    const tok = jwt.sign({ userId: AU, email: `av_${AU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+    const r = await http('/api/auth/account', { method: 'DELETE', token: tok, body: { password: 'ArsivSifre123' } })
+    if (r.status !== 200) throw new Error(`hesap silme ${r.status}: ${r.text.slice(0, 160)}`)
+
+    const kayit = await prisma.finansalKayit.findFirst({ where: { bookingNumber: bn } })
+    if (!kayit) throw new Error('finansal kayıt ARŞİVLENMEDİ — silinen hesabın işlem kaydı kayboldu (Gizlilik 11.3 ihlali)')
+    if (kayit.finalAmount !== 500 || kayit.venuePayout !== 500 || kayit.groupSize !== 2) {
+      throw new Error(`arşiv tutarları yanlış: ${kayit.finalAmount}/${kayit.venuePayout}/${kayit.groupSize}`)
+    }
+    if (kayit.venueId !== AV) throw new Error(`arşivde satıcı yok: ${kayit.venueId}`)
+    if (kayit.reason !== 'hesap_silindi') throw new Error(`sebep yanlış: ${kayit.reason}`)
+    // ANONİM OLMALI: modelde kişiyi gösteren alan bulunmamalı.
+    const alanlar = Object.keys(kayit)
+    for (const yasak of ['userId', 'email', 'fullName', 'username', 'phone']) {
+      if (alanlar.includes(yasak)) throw new Error(`ARŞİV ANONİM DEĞİL: "${yasak}" alanı var — kimlik bağlantısı koparılmamış`)
+    }
+    // Süresiz saklanmamalı: TTK m.82 → 10 yıl.
+    const yil = kayit.purgeAfter.getFullYear() - kayit.occurredAt.getFullYear()
+    if (yil !== 10) throw new Error(`saklama süresi ${yil} yıl (10 bekleniyor — metin "süre sonunda imha edilir" diyor)`)
+    // Kullanıcı gerçekten silinmiş olmalı (arşiv, silmeyi ERTELEMEK için değil).
+    if (await prisma.user.findUnique({ where: { id: AU } })) throw new Error('kullanıcı silinmemiş')
+
+    await prisma.finansalKayit.deleteMany({ where: { bookingNumber: bn } })
+    await prisma.class_Session.deleteMany({ where: { id: AV } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: AV } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: AV } }).catch(() => {})
+  })
+
+  await check('Arşiv: salon seansı silince iade BORCU kayıt altında kalır', async () => {
+    const BU = 990602, BV = 990602
+    await prisma.venue.upsert({ where: { id: BV }, update: { isApproved: true, isActive: true }, create: { id: BV, name: 'ArsivSalon2', email: `bv${BV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: BV }, update: {}, create: { id: BV, venueId: BV, title: 'ArsivDers2', category: catName, basePrice: 300, durationMinutes: 60, capacity: 10, isActive: true } })
+    const ileri = new Date(Date.now() + 4 * 86400000)
+    await prisma.class_Session.upsert({ where: { id: BV }, update: { startsAt: ileri }, create: { id: BV, classId: BV, startsAt: ileri, endsAt: new Date(ileri.getTime() + 3600000), capacity: 10, status: 'open' } })
+    await testPrisma.user.upsert({ where: { id: BU }, update: {}, create: { id: BU, username: `bv_${BU}`, email: `bv_${BU}@x.com`, passwordHash: 'x', fullName: 'Arsiv Uye 2' } })
+
+    const bn = `ARS2-${Date.now()}`
+    await prisma.finansalKayit.deleteMany({ where: { bookingNumber: bn } })
+    await prisma.booking.deleteMany({ where: { sessionId: BV } })
+    await prisma.booking.create({ data: { userId: BU, sessionId: BV, status: 'confirmed', bookingType: 'class', groupSize: 1, baseAmount: 300, commissionAmount: 0, venueCommission: 0, finalAmount: 300, venuePayout: 300, pointsEarned: 0, checkedIn: false, bookingNumber: bn } })
+
+    // Salon seansı siler → kullanıcıya "ödemen iade edilecektir" bildirimi gider.
+    const vtok = jwt.sign({ venueId: BV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const d = await http(`/api/venue/classes/${BV}/sessions/${BV}`, { method: 'DELETE', token: vtok })
+    if (d.status !== 200) throw new Error(`seans silme ${d.status}: ${d.text.slice(0, 160)}`)
+
+    const kayit = await prisma.finansalKayit.findFirst({ where: { bookingNumber: bn } })
+    // Bildirim borcu duyuruyor; kayıt olmazsa borç hiçbir veriden türetilemez.
+    if (!kayit) throw new Error('seans silmede finansal kayıt ARŞİVLENMEDİ — iade borcu hiçbir veriden türetilemez')
+    if (kayit.reason !== 'seans_silindi') throw new Error(`sebep yanlış: ${kayit.reason}`)
+    if (kayit.finalAmount !== 300) throw new Error(`arşiv tutarı yanlış: ${kayit.finalAmount}`)
+    if (await prisma.booking.findFirst({ where: { bookingNumber: bn } })) throw new Error('rezervasyon silinmemiş')
+
+    await prisma.finansalKayit.deleteMany({ where: { bookingNumber: bn } })
+    await prisma.class.deleteMany({ where: { id: BV } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: BU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: BV } }).catch(() => {})
+  })
+
+  await check('Arşiv: parasal içeriği OLMAYAN kayıt arşivlenmez (veri minimizasyonu)', async () => {
+    const { finansalArsivle } = await import('../src/utils/finansalArsiv')
+    const sahte = { finansalKayit: { createMany: async () => { throw new Error('yazmamalıydı') } } } as any
+    const n = await finansalArsivle(sahte, [{
+      bookingNumber: 'BOS-1', baseAmount: 0, commissionAmount: 0, userCommission: 0,
+      venueCommission: 0, finalAmount: 0, venuePayout: 0, groupSize: 1,
+    }], 'hesap_silindi')
+    // 0 TL'lik bir kaydın vergi/ticaret mevzuatı bakımından saklanacak yanı yok; hepsini
+    // arşivlemek veri minimizasyonunu ters yönden ihlal ederdi.
+    if (n !== 0) throw new Error(`parasal içeriği olmayan kayıt arşivlendi: ${n}`)
+  })
+
   // ---- SOHBET ASİSTANI PROMPTU (kullanıcıya otoriter bilgi olarak gidiyor) ----
 
   await check('Asistan promptu: kaldırılmış/yanlış özellik ANLATMIYOR', async () => {

@@ -19,6 +19,7 @@ import { notifyFields, notifyPush, NotifyParams } from '../utils/notifyText'
 import { sendPushNotification } from '../utils/push'
 import { MIN_PASSWORD, clampStr, isValidEmail, parseIntSafe } from '../utils/validate'
 import { eksikZorunluOnaylar, onaylariKaydet } from '../utils/consent'
+import { finansalArsivle } from '../utils/finansalArsiv'
 
 // KAYIT OL
 export const register = async (req: Request, res: Response) => {
@@ -554,9 +555,22 @@ export const deleteAccount = async (req: Request, res: Response) => {
         await tx.dropInSlot.update({ where: { id: dp.slotId }, data: { currentPlayers: { decrement: 1 } } }).catch(() => {})
       }
 
-      // Booking'lerin FK'lı çocukları (Payment/Commission), review'lar bookingId'ye bağlı
-      const bookings = await tx.booking.findMany({ where: { userId }, select: { id: true } })
+      // ÖNCE ARŞİVLE, SONRA SİL. Gizlilik Politikası 11.3 vergi/ticaret mevzuatı gereği
+      // saklanması zorunlu işlem kayıtlarının anonimleştirilerek saklanacağını taahhüt ediyor;
+      // burası hepsini hard-delete ediyordu. Arşiv kişiyi değil işlemi tutar (utils/finansalArsiv.ts).
+      // Arşiv ile silme AYNI transaction'da: arasında bir hata olursa ikisi de geri alınır.
+      const bookings = await tx.booking.findMany({
+        where: { userId },
+        select: {
+          id: true, bookingNumber: true, baseAmount: true, commissionAmount: true,
+          userCommission: true, venueCommission: true, finalAmount: true, venuePayout: true,
+          groupSize: true, refundType: true, refundAmount: true, createdAt: true,
+          session: { select: { startsAt: true, class: { select: { venueId: true, instructorId: true } } } },
+          payment: { select: { status: true } },
+        },
+      })
       const bookingIds = bookings.map(b => b.id)
+      await finansalArsivle(tx as any, bookings, 'hesap_silindi')
       if (bookingIds.length) {
         await tx.payment.deleteMany({ where: { bookingId: { in: bookingIds } } })
         await tx.commissionHistory.deleteMany({ where: { bookingId: { in: bookingIds } } })

@@ -17,6 +17,7 @@ import { issuePanelRefreshToken, revokeAllPanelRefreshTokens, rotatePanelAccessT
 import { notifyFields, notifyPush } from '../utils/notifyText'
 import { Locale } from '../utils/locale'
 import { eksikZorunluOnaylar, onaylariKaydet } from '../utils/consent'
+import { finansalArsivle } from '../utils/finansalArsiv'
 const money = (x: number) => Math.round(x * 100) / 100 // bookingController ile aynı 2-ondalık yuvarlama
 
 // Bir seans/ders silinirken aktif rezervasyonları GÜVENLİ kaldırır:
@@ -68,7 +69,15 @@ async function purgeBookingsForSessions(tx: any, sessionIds: number[]) {
   // defterde aynı bookingId için iki ters kayıt kalırdı).
   const bookings = await tx.booking.findMany({
     where: { sessionId: { in: sessionIds } },
-    select: { id: true, userId: true, pointsEarned: true, status: true, createdAt: true, checkedIn: true, couponId: true },
+    select: {
+      id: true, userId: true, pointsEarned: true, status: true, createdAt: true, checkedIn: true, couponId: true,
+      // Arşiv için (aşağıda finansalArsivle): silmeden önce işlem kaydı çıkarılır.
+      bookingNumber: true, baseAmount: true, commissionAmount: true, userCommission: true,
+      venueCommission: true, finalAmount: true, venuePayout: true, groupSize: true,
+      refundType: true, refundAmount: true,
+      session: { select: { startsAt: true, class: { select: { venueId: true, instructorId: true } } } },
+      payment: { select: { status: true } },
+    },
   })
   if (bookings.length === 0) return []
   const ids = bookings.map((b: any) => b.id)
@@ -112,6 +121,11 @@ async function purgeBookingsForSessions(tx: any, sessionIds: number[]) {
     const dec = Math.min(n, c?.usedCount || 0) // 0'ın altına inmesin (cancelBooking ile aynı invariant)
     if (dec > 0) await tx.coupon.update({ where: { id: couponId }, data: { usedCount: { decrement: dec } } })
   }
+
+  // ÖNCE ARŞİVLE, SONRA SİL — Gizlilik Politikası 11.3. Salon bir seansı sildiğinde kullanıcıya
+  // "ödemen iade edilecektir" bildirimi gidiyor (utils/notifyText.ts) ama geriye o BORCU gösteren
+  // tek bir kayıt kalmıyordu: rezervasyon satırı da ödeme satırı da yok oluyordu.
+  await finansalArsivle(tx, bookings, 'seans_silindi')
 
   await tx.booking.deleteMany({ where: { id: { in: ids } } })
   return bookings as { id: number; userId: number; status: string }[]
