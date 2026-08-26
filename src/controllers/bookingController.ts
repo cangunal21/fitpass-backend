@@ -174,8 +174,15 @@ export const createBooking = async (req: Request, res: Response) => {
             //    kazandırmaz. Bunun için koltuk başına satır gerekiyor: bugün etiketleme
             //    ZORUNLU DEĞİL ve taggedFriends bir JSON dizisi, "X kişisi Y salonuna kaç kez
             //    gitti" sorgulanamıyor.
-            //  • İade edilen rezervasyon kademeyi İLERLETMEZ; kısmi iadede komisyon iade
-            //    sonrası kalan tutardan YENİDEN hesaplanır (Antrenör EK-B m.1.2).
+            //  • Komisyon İADE SONRASI SALONDA KALAN TUTAR üzerinden hesaplanır (Salon m.3.2.2).
+            //    Geç iptalde iade yok → tamamı üzerinden komisyon alınır; koltuk bekleme
+            //    listesine açılıp yeniden satılırsa o da AYRI bir rezervasyondur ve kendi
+            //    komisyonunu doğurur. Yani aynı koltuktan iki kez komisyon alınır — bu
+            //    BİLİNÇLİ (kullanıcı kararı 25 Ağu 2026), salonun ikisini de almasıyla simetrik.
+            //  • TAMAMEN iade edilen rezervasyon kademeyi İLERLETMEZ (m.3.2.2). Ama geç iptal
+            //    tamamen iade DEĞİLDİR → kademeyi İLERLETİR: kullanıcı o salondaki "yeni
+            //    müşteri" hakkını harcar, salon bir sonraki gerçek rezervasyonda %7,5 öder.
+            //    Salon o koltuk için zaten %15 ödediğinden bu doğrudur.
             //  • Salon gelir raporu bugün BRÜT (statsController finalAmount topluyor) —
             //    motor açıldığı gün salon yanlış rakamı kendi geliri sanar.
             //
