@@ -29,7 +29,7 @@ export const RIZA_BELGELERI = {
   uyelik: { surum: 'Taslak 11', kind: 'sozlesme' as const, zorunlu: true },
   gizlilik: { surum: 'Taslak 10', kind: 'sozlesme' as const, zorunlu: true },
   // Salon ve eğitmen tarafı
-  'salon-araciligi': { surum: 'Taslak 11', kind: 'sozlesme' as const, zorunlu: true },
+  'salon-araciligi': { surum: 'Taslak 12', kind: 'sozlesme' as const, zorunlu: true },
   'egitmen-aydinlatma': { surum: 'Taslak 2', kind: 'sozlesme' as const, zorunlu: true },
   // 18 YAŞ BEYANI — sözleşme onayından AYRI bir kalem.
   // Gizlilik 11.4: "18 yaşınızı doldurduğunuza ilişkin beyanınız AYRI BİR ONAYLA alınır ve bu
