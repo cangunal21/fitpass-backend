@@ -160,6 +160,27 @@ export const createBooking = async (req: Request, res: Response) => {
             groupSize,
             baseAmount: money(basePrice), // money() ile yuvarla (finalAmount/venuePayout gibi) — grup×ondalık fiyatta float tozu kalmasın
             discountAmount: couponDiscount,
+            // KOMİSYON MOTORU (#79) HENÜZ YOK — hesaplanıp sıfırlanmıyor, HİÇ hesaplanmıyor.
+            // Motor yazılırken sözleşmelerin çoktan karara bağladığı kurallar ve iki kullanıcı
+            // kararı var; kaçırılırsa sessizce YANLIŞ PARA hesaplanır. Özet:
+            //
+            //  • Merdiven HER BİR KULLANICININ o salondaki sırasına göre: %15 / %7,5 / %2,5
+            //    (Salon Aracılık m.3.2). Salonun hakedişinden kesilir. Kullanıcıdan alınan
+            //    %2,5 platform hizmet bedeli AYRIDIR ve merdivenden etkilenmez — yani merdiven
+            //    müşterinin ödediğini DEĞİŞTİRMEZ, salonun eline geçeni değiştirir (m.3.2.1).
+            //  • GRUP REZERVASYONU (kullanıcı kararı 25 Ağu 2026): komisyon KİŞİ BAŞI, her
+            //    kişinin o salona kaçıncı gidişi olduğuna göre. Kimliksiz koltuk YENİ MÜŞTERİ
+            //    (%15) sayılır — en pahalı kademe olduğu için kimlik gizlemek kimseye
+            //    kazandırmaz. Bunun için koltuk başına satır gerekiyor: bugün etiketleme
+            //    ZORUNLU DEĞİL ve taggedFriends bir JSON dizisi, "X kişisi Y salonuna kaç kez
+            //    gitti" sorgulanamıyor.
+            //  • İade edilen rezervasyon kademeyi İLERLETMEZ; kısmi iadede komisyon iade
+            //    sonrası kalan tutardan YENİDEN hesaplanır (Antrenör EK-B m.1.2).
+            //  • Salon gelir raporu bugün BRÜT (statsController finalAmount topluyor) —
+            //    motor açıldığı gün salon yanlış rakamı kendi geliri sanar.
+            //
+            // Tam liste + açık kalan "çifte komisyon" sorusu: ~/.claude/…/memory/
+            // project_sipsakspor_komisyon_motoru.md
             commissionAmount: 0,
             userCommission: 0,
             venueCommission: 0,
