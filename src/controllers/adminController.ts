@@ -820,3 +820,65 @@ export const getPlatformAnalytics = async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
+
+/**
+ * GİZLİ SEANS GERİ BİLDİRİMLERİ — yalnızca yönetici.
+ *
+ * Bu veri hiçbir public uçtan dönmez ve dönmemeli: kullanıcıya "yalnızca yöneticilere iletilir"
+ * denerek toplandı. Salon/eğitmen panelinde de GÖRÜNMEZ — görünseydi kullanıcıya verilen söz
+ * bozulur ve dürüst geri bildirim gelmezdi.
+ */
+export const getSeansGeriBildirim = async (req: Request, res: Response) => {
+  try {
+    const sadeceSorunlu = String(req.query.sorunlu || '') === '1'
+    const limit = Math.min(Math.max(parseInt(String(req.query.limit || '')) || 100, 1), 300)
+
+    const kayitlar = await prisma.seansGeriBildirim.findMany({
+      where: sadeceSorunlu ? { ilanEdilenGibi: false } : {},
+      orderBy: { id: 'desc' },
+      take: limit,
+    })
+
+    // Satıcı adları AYRI çekiliyor (FK yok: seans silinse de kayıt kalmalı).
+    const vIds = [...new Set(kayitlar.map(k => k.venueId).filter((x): x is number => x != null))]
+    const iIds = [...new Set(kayitlar.map(k => k.instructorId).filter((x): x is number => x != null))]
+    const [venues, instructors] = await Promise.all([
+      vIds.length ? prisma.venue.findMany({ where: { id: { in: vIds } }, select: { id: true, name: true } }) : [],
+      iIds.length ? prisma.instructor.findMany({ where: { id: { in: iIds } }, select: { id: true, fullName: true } }) : [],
+    ])
+    const vAd = new Map(venues.map(v => [v.id, v.name]))
+    const iAd = new Map(instructors.map(i => [i.id, i.fullName]))
+
+    // SATICI BAZINDA ÖZET: tek tek okumak yerine "kimde sorun birikiyor" görünsün.
+    // Tek bir şikâyet gürültüdür; 20 dersin 15'i sinyaldir — bu yüzden oran da dönüyor.
+    const ozetMap = new Map<string, { ad: string; tur: 'salon' | 'egitmen'; toplam: number; sorunlu: number }>()
+    const tumu = await prisma.seansGeriBildirim.findMany({
+      select: { venueId: true, instructorId: true, ilanEdilenGibi: true },
+    })
+    for (const k of tumu) {
+      const anahtar = k.venueId != null ? `v${k.venueId}` : k.instructorId != null ? `i${k.instructorId}` : null
+      if (!anahtar) continue
+      const ad = k.venueId != null ? (vAd.get(k.venueId) ?? `Salon #${k.venueId}`) : (iAd.get(k.instructorId!) ?? `Eğitmen #${k.instructorId}`)
+      const o = ozetMap.get(anahtar) ?? { ad, tur: (k.venueId != null ? 'salon' : 'egitmen') as 'salon' | 'egitmen', toplam: 0, sorunlu: 0 }
+      o.toplam += 1
+      if (!k.ilanEdilenGibi) o.sorunlu += 1
+      ozetMap.set(anahtar, o)
+    }
+    const ozet = [...ozetMap.values()]
+      .map(o => ({ ...o, oran: o.toplam ? Math.round((o.sorunlu / o.toplam) * 1000) / 10 : 0 }))
+      .filter(o => o.sorunlu > 0)
+      .sort((a, b) => b.sorunlu - a.sorunlu)
+
+    return res.json({
+      kayitlar: kayitlar.map(k => ({
+        ...k,
+        saticiAd: k.venueId != null ? (vAd.get(k.venueId) ?? `Salon #${k.venueId}`) : (k.instructorId != null ? (iAd.get(k.instructorId) ?? `Eğitmen #${k.instructorId}`) : null),
+      })),
+      ozet,
+    })
+  } catch (err) {
+    if (handlePrismaErr(err, res)) return
+    console.error('getSeansGeriBildirim error:', err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}

@@ -1758,6 +1758,83 @@ async function run() {
     if (c?.email !== 'h@x.com') throw new Error(`e-postasız salon satıcı sayıldı: ${JSON.stringify(c)}`)
   })
 
+  // ---- GİZLİ SEANS GERİ BİLDİRİMİ (yalnız yöneticiye) ----
+
+  await check('Gizli geri bildirim: check-in OLMADAN da verilebilir ("hoca gelmedi" vakası)', async () => {
+    const GV = 990721, GU = 990721
+    await prisma.venue.upsert({ where: { id: GV }, update: { isApproved: true, isActive: true }, create: { id: GV, name: 'Gizli Salon', email: `gv${GV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await prisma.class.upsert({ where: { id: GV }, update: {}, create: { id: GV, venueId: GV, title: 'GizliDers', category: catName, basePrice: 100, durationMinutes: 60, capacity: 10, isActive: true } })
+    const gecmis = new Date(Date.now() - 3 * 3600000)
+    await prisma.class_Session.upsert({ where: { id: GV }, update: { startsAt: gecmis, endsAt: new Date(gecmis.getTime() + 3600000) }, create: { id: GV, classId: GV, startsAt: gecmis, endsAt: new Date(gecmis.getTime() + 3600000), capacity: 10, status: 'open' } })
+    await testPrisma.user.upsert({ where: { id: GU }, update: { isEmailVerified: true }, create: { id: GU, username: `gv_${GU}`, email: `gv_${GU}@x.com`, passwordHash: 'x', fullName: 'Gizli Uye', isEmailVerified: true } })
+    await prisma.user.update({ where: { id: GU }, data: { isEmailVerified: true } })
+    await prisma.seansGeriBildirim.deleteMany({ where: { userId: GU } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { userId: GU } })
+    // checkedIn: FALSE — hoca gelmediği için check-in hiç olmadı. Asıl yakalamak istediğimiz vaka bu.
+    const bk = await prisma.booking.create({ data: { userId: GU, sessionId: GV, status: 'confirmed', bookingType: 'class', groupSize: 1, baseAmount: 100, commissionAmount: 0, venueCommission: 0, finalAmount: 100, venuePayout: 100, pointsEarned: 0, checkedIn: false, bookingNumber: `GZL-${Date.now()}` } })
+    const tok = jwt.sign({ userId: GU, email: `gv_${GU}@x.com` }, JWT_SECRET, { expiresIn: '1h' })
+
+    // Public puanlama bu vakayı REDDEDER (checkedIn şartı) — gizli uç KABUL ETMELİ.
+    const pub = await http('/api/reviews', { method: 'POST', token: tok, body: { bookingId: bk.id, venueRating: 1 } })
+    if (pub.status !== 403) throw new Error(`public puanlama ${pub.status} (403 bekleniyor — check-in yok)`)
+
+    const r = await http('/api/reviews/gizli-geri-bildirim', { method: 'POST', token: tok, body: { bookingId: bk.id, ilanEdilenGibi: false, sebep: 'hoca_gelmedi', yorum: 'Hoca hiç bağlanmadı, 20 dk bekledim.' } })
+    if (r.status !== 201) throw new Error(`gizli geri bildirim ${r.status}: ${r.text.slice(0, 160)} — "hoca gelmedi" raporlanamıyor`)
+
+    const kayit = await prisma.seansGeriBildirim.findFirst({ where: { bookingId: bk.id } })
+    if (!kayit) throw new Error('kayıt yazılmadı')
+    if (kayit.ilanEdilenGibi !== false || kayit.sebep !== 'hoca_gelmedi') throw new Error(`kayıt yanlış: ${kayit.ilanEdilenGibi}/${kayit.sebep}`)
+    if (kayit.venueId !== GV) throw new Error('satıcı çözülmedi')
+
+    // İKİNCİ kez gönderilemez
+    const tekrar = await http('/api/reviews/gizli-geri-bildirim', { method: 'POST', token: tok, body: { bookingId: bk.id, ilanEdilenGibi: true } })
+    if (tekrar.status !== 409) throw new Error(`ikinci gönderim ${tekrar.status} (409 bekleniyor)`)
+
+    // Admin ucu görüyor + satıcı bazında özet çıkarıyor
+    const a = await expectOk('/api/admin/seans-geri-bildirim?sorunlu=1', { admin: true })
+    const bulunan = (a.json?.kayitlar || []).find((k: any) => k.bookingId === bk.id)
+    if (!bulunan) throw new Error('yönetici panelinde görünmüyor')
+    if (bulunan.saticiAd !== 'Gizli Salon') throw new Error(`satıcı adı çözülmedi: ${bulunan.saticiAd}`)
+    const ozet = (a.json?.ozet || []).find((o: any) => o.ad === 'Gizli Salon')
+    if (!ozet || ozet.sorunlu < 1) throw new Error('satıcı özeti üretilmedi — "kimde sorun birikiyor" görünmez')
+
+    await prisma.seansGeriBildirim.deleteMany({ where: { userId: GU } }).catch(() => {})
+    await prisma.booking.deleteMany({ where: { userId: GU } }).catch(() => {})
+    await prisma.class.deleteMany({ where: { id: GV } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: GU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: GV } }).catch(() => {})
+  })
+
+  await check('Gizli geri bildirim: HİÇBİR public/salon ucundan SIZMAZ', async () => {
+    // Kullanıcıya "yalnızca yöneticilere iletilir" denerek toplandı. Sızarsa verilen söz bozulur
+    // ve dürüst geri bildirim gelmez. sanitizeReview bir REDDETME listesi olduğu için Review'a
+    // kolon eklenseydi otomatik sızardı — ayrı tablo tam olarak bunu imkânsız kılıyor.
+    const SV = 990731, SU = 990731
+    await prisma.venue.upsert({ where: { id: SV }, update: { isApproved: true, isActive: true }, create: { id: SV, name: 'Sizinti Salon', email: `sv${SV}@x.com`, passwordHash: 'x', address: 'A', isApproved: true, isActive: true, neighborhoodId: V, cityId: 1 } })
+    await testPrisma.user.upsert({ where: { id: SU }, update: {}, create: { id: SU, username: `sv_${SU}`, email: `sv_${SU}@x.com`, passwordHash: 'x', fullName: 'Sizinti Uye' } })
+    await prisma.seansGeriBildirim.deleteMany({ where: { userId: SU } }).catch(() => {})
+    const GIZLI = 'GIZLI_YORUM_SIZDI_' + Date.now()
+    await prisma.seansGeriBildirim.create({ data: { bookingId: 990731, userId: SU, venueId: SV, ilanEdilenGibi: false, sebep: 'kisa_surdu', yorum: GIZLI } })
+
+    const vtok = jwt.sign({ venueId: SV, role: 'venue' }, JWT_SECRET, { expiresIn: '1h' })
+    const uctan: [string, any][] = [
+      [`/api/public/venues/${SV}`, {}],
+      [`/api/reviews/venue/${SV}`, {}],
+      ['/api/public/venues', {}],
+      ['/api/venue/reviews', { token: vtok }],
+      ['/api/venue/stats', { token: vtok }],
+    ]
+    for (const [yol, opt] of uctan) {
+      const r = await http(yol, opt)
+      if (r.text.includes(GIZLI)) throw new Error(`GİZLİ YORUM SIZDI: ${yol}`)
+      if (/ilanEdilenGibi/.test(r.text)) throw new Error(`gizli alan adı sızdı: ${yol}`)
+    }
+
+    await prisma.seansGeriBildirim.deleteMany({ where: { userId: SU } }).catch(() => {})
+    await prisma.user.deleteMany({ where: { id: SU } }).catch(() => {})
+    await prisma.venue.deleteMany({ where: { id: SV } }).catch(() => {})
+  })
+
   // ---- SATICI İZLEME: hareket günlüğü + geri dönüş oranı + platform analitiği ----
 
   await check('Hareket günlüğü: seans iptali KAYDA GEÇER (kaç kişi, kaç saat kala)', async () => {

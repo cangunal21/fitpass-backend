@@ -1,6 +1,6 @@
 import { registerNumericParams } from '../middlewares/numericParams'
 import { Router } from 'express'
-import { getStats, getAllVenues, approveVenue, getAllUsers, getAllBookings, suspendVenue, deleteVenue, banUser, getCategories, createCategory, deleteCategory, updateCategory, getPendingVenueImages, reviewVenueImages, getAllInstructors, verifyInstructor, approveInstructor, getComplaints, resolveComplaint , getVenueEvents, getVenueRetention, getPlatformAnalytics } from '../controllers/adminController'
+import { getStats, getAllVenues, approveVenue, getAllUsers, getAllBookings, suspendVenue, deleteVenue, banUser, getCategories, createCategory, deleteCategory, updateCategory, getPendingVenueImages, reviewVenueImages, getAllInstructors, verifyInstructor, approveInstructor, getComplaints, resolveComplaint , getVenueEvents, getVenueRetention, getPlatformAnalytics, getSeansGeriBildirim } from '../controllers/adminController'
 import { getReports, resolveReport } from '../controllers/reportController'
 import { adminAuthMiddleware } from '../middlewares/adminAuth'
 
@@ -14,6 +14,8 @@ router.get('/stats', getStats)
 router.get('/venue-events', getVenueEvents)
 router.get('/venue-retention', getVenueRetention)
 router.get('/platform-analytics', getPlatformAnalytics)
+// Gizli seans geri bildirimi — YALNIZ yönetici; hiçbir public/salon ucundan dönmez.
+router.get('/seans-geri-bildirim', getSeansGeriBildirim)
 router.get('/venues', getAllVenues)
 router.put('/venues/:id/approve', approveVenue)
 router.get('/venue-images/pending', getPendingVenueImages)

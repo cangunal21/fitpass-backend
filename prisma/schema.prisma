@@ -1097,3 +1097,37 @@ model VenueOlay {
   @@index([olay])
   @@index([olusturma])
 }
+
+/// GİZLİ SEANS GERİ BİLDİRİMİ — yalnızca YÖNETİCİYE iletilir, hiçbir yerde yayımlanmaz.
+///
+/// Public puanlama (Review) "ders nasıldı" sorusunu ölçüyor ve ÖZNEL: 3 yıldız hem "vasattı"
+/// hem "hoca hiç gelmedi" olabilir; veride ikisi AYIRT EDİLEMİYOR. Bu tablo ikincisini
+/// nesnel olarak ayırır.
+///
+/// NEDEN AYRI TABLO (Review'a kolon EKLENMEDİ): utils/reviews.ts'teki sanitizeReview bir
+/// REDDETME listesidir — isimli alanları çıkarıp `...rest`i olduğu gibi döndürür. Review'a
+/// eklenen her yeni kolon public uçlardan OTOMATİK SIZAR. Ayrı tabloda bu kazara mümkün değil.
+///
+/// NEDEN check-in ARANMAZ: "hoca gelmedi" vakasında check-in zaten YOKTUR. Review akışı
+/// checkedIn şartı koyuyor; aynı şartı buraya koysaydık tam olarak yakalamak istediğimiz
+/// olayı raporlanamaz kılardık.
+///
+/// FK YOK: seans/rezervasyon silinse de kayıt kalmalı — satıcı, hakkındaki sinyali dersi
+/// silerek temizleyememeli (Review'da da aynı gerekçeyle bookingId nullable tutulmuştu).
+model SeansGeriBildirim {
+  id             Int      @id @default(autoincrement())
+  bookingId      Int      @unique
+  userId         Int
+  venueId        Int?
+  instructorId   Int?
+  /// true = ilan edildiği gibi yapıldı. false = yapılmadı/eksikti.
+  ilanEdilenGibi Boolean
+  /// 'hoca_gelmedi' | 'kisa_surdu' | 'baglanti' | 'icerik_farkli' | 'diger'
+  sebep          String?
+  yorum          String?
+  olusturma      DateTime @default(now())
+
+  @@index([venueId])
+  @@index([instructorId])
+  @@index([ilanEdilenGibi])
+}

@@ -442,3 +442,69 @@ export const deleteInstructorReply = async (req: Request, res: Response) => {
     return res.status(500).json({ error: 'Sunucu hatası.' })
   }
 }
+
+/**
+ * GİZLİ SEANS GERİ BİLDİRİMİ — yalnızca yöneticiye iletilir.
+ *
+ * Public puanlamadan (createReview) AYRI bir uçtur ve check-in ARAMAZ. Sebebi: "hoca gelmedi"
+ * vakasında check-in zaten yoktur; createReview'ın checkedIn şartını buraya da koysaydık,
+ * tam olarak yakalamak istediğimiz olayı raporlanamaz kılardık.
+ *
+ * İSTEĞE BAĞLIDIR (kullanıcı kararı 26 Ağu 2026): kullanıcı bu adımı atlayabilir.
+ */
+export const gizliGeriBildirim = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).userId
+    const bookingId = parseInt(req.body?.bookingId)
+    if (!bookingId) return res.status(400).json({ error: 'Rezervasyon gerekli.' })
+
+    const ilanEdilenGibi = req.body?.ilanEdilenGibi
+    if (typeof ilanEdilenGibi !== 'boolean') {
+      return res.status(400).json({ error: 'Cevap evet/hayır olmalı.' })
+    }
+
+    const GECERLI_SEBEP = ['hoca_gelmedi', 'kisa_surdu', 'baglanti', 'icerik_farkli', 'diger']
+    const sebepRaw = typeof req.body?.sebep === 'string' ? req.body.sebep : null
+    // "Evet" cevabında sebep anlamsızdır; taşınırsa veriyi kirletir.
+    const sebep = ilanEdilenGibi ? null : (sebepRaw && GECERLI_SEBEP.includes(sebepRaw) ? sebepRaw : null)
+    const yorum = typeof req.body?.yorum === 'string' ? req.body.yorum.trim().slice(0, 1000) || null : null
+
+    const booking = await prisma.booking.findUnique({
+      where: { id: bookingId },
+      select: {
+        id: true, userId: true, status: true,
+        session: { select: { endsAt: true, class: { select: { venueId: true, instructorId: true } } } },
+      },
+    })
+    if (!booking) return res.status(404).json({ error: 'Rezervasyon bulunamadı.' })
+    // Sahiplik: başkasının dersi hakkında geri bildirim verilemez.
+    if (booking.userId !== userId) return res.status(403).json({ error: 'Yetki yok.' })
+    if (booking.status !== 'confirmed') {
+      return res.status(400).json({ error: 'Yalnızca geçerli rezervasyonlar için geri bildirim verilebilir.' })
+    }
+    // Ders BİTMEDEN "yapılmadı" denemez.
+    const endsAt = booking.session?.endsAt
+    if (!endsAt || Date.now() < new Date(endsAt).getTime()) {
+      return res.status(400).json({ error: 'Ders bitmeden geri bildirim verilemez.' })
+    }
+
+    try {
+      const kayit = await prisma.seansGeriBildirim.create({
+        data: {
+          bookingId, userId,
+          venueId: booking.session?.class?.venueId ?? null,
+          instructorId: booking.session?.class?.instructorId ?? null,
+          ilanEdilenGibi, sebep, yorum,
+        },
+      })
+      return res.status(201).json({ message: 'Geri bildiriminiz yöneticilere iletildi.', id: kayit.id })
+    } catch (e: any) {
+      // bookingId UNIQUE: aynı ders için ikinci kez gönderilemez.
+      if (e?.code === 'P2002') return res.status(409).json({ error: 'Bu ders için geri bildirim zaten gönderilmiş.' })
+      throw e
+    }
+  } catch (err) {
+    console.error('gizliGeriBildirim error:', err)
+    return res.status(500).json({ error: 'Sunucu hatası.' })
+  }
+}
